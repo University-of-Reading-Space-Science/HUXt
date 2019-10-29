@@ -1,0 +1,10 @@
+# Compiled python modules.
+*.pyc
+
+# Pycharms configuration folder
+/.idea/
+
+#Local data and figures directory
+/data/
+/figures/
+
