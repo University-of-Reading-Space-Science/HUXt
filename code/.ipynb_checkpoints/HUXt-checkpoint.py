@@ -124,12 +124,12 @@ class HUXt2D:
         #----------------------------------------------------------------------------------------
         #  Define the CME Cone
         #----------------------------------------------------------------------------------------
-        v_cme = 1000.0 * u.km / u.s #  CME nose speed
+        v_cme = 1200.0 * u.km / u.s #  CME nose speed
         width_cme = 30.0*np.pi/180.0 * u.rad #  Angular width
         radius_cme = (30.0 * u.solRad).to(u.km) * np.tan(width_cme) # Initial radius of CME
         thickness_cme = 0.5 * radius_cme #extra CME thickness (in terms of radius) to increase momentum
-        longitude_cme = np.pi * u.rad  #longitudinal launch direction of the CME
-        t_launch_cme = 0*60*60*24 * u.s #time of CME launch, after the start of the simulation
+        longitude_cme = np.pi/2.0 * u.rad  #longitudinal launch direction of the CME
+        t_launch_cme = 0.5 * 60 * 60 * 24 * u.s #time of CME launch, after the start of the simulation
         #--------------------------------------
         
         #----------------------------------------------------------------------------------------
@@ -173,7 +173,7 @@ class HUXt2D:
         #----------------------------------------------------------------------------------------
         # Main model loop
         #----------------------------------------------------------------------------------------
-        for t in range(1, nsteps):
+        for t in range(0, nsteps):
 
             #loop through each longitude and compute the the 1-d radial solution
             for n in range(self.Nphi):
@@ -233,20 +233,22 @@ class HUXt2D:
                     x = np.sqrt(y*(2*radius_cme - y)) #compute x, the distance of the current longitude from the nose
                     #convert x back to an angular separation
                     thet = np.arctan(x / rin)
+                    pos = (phiinit > (longitude_cme.value - thet.value)) & (phiinit <= (longitude_cme.value + thet.value))
+                    vcone[pos] = v_cme.value
                 elif (y >= (radius_cme + thickness_cme)) & (y <= (2*radius_cme + thickness_cme)):  # this is the back hemisphere of the spherical CME
                     y = y - thickness_cme
                     x = np.sqrt(y*(2*radius_cme - y))
                     #convert back to an angle
                     thet=np.arctan(x / rin)
+                    pos = (phiinit > (longitude_cme.value - thet.value)) & (phiinit <= (longitude_cme.value + thet.value))
+                    vcone[pos] = v_cme.value
                 elif (thickness_cme > 0*u.km) & (y >= radius_cme) & (y <= (radius_cme + thickness_cme)): #this is the "mass" between the hemispheres
                     x = radius_cme
                     #convert back to an angle
                     thet = np.arctan(x / rin)
+                    pos = (phiinit > (longitude_cme.value - thet.value)) & (phiinit <= (longitude_cme.value + thet.value))
+                    vcone[pos] = v_cme.value
                 
-                
-                pos = (phiinit > (longitude_cme.value - thet.value)) & (phiinit <= (longitude_cme.value + thet.value))
-                vcone[pos] = v_cme.value
-            
             v_update = np.interp(self.phi.value, phiinit, vcone)
             vgridt_eclip[0, :] = v_update * u.km/u.s
 
