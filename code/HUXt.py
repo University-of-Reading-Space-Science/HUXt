@@ -21,6 +21,7 @@ class HUXt2D:
         self.r, self.dr = np.linspace(rmin, rmax, self.Nr, retstep=True)
         self.r = self.r * u.solRad
         self.dr = self.dr * u.solRad
+        self.rrel = self.r - self.r[0]
 
         # Set up longitudinal coordinates - in radians
         self.Nphi = 128
@@ -33,6 +34,7 @@ class HUXt2D:
         
         # Set up time coordinates - in seconds.
         self.dt = self.dr.to(u.km) / self.vmax  # maximum timestep set by the CFL condition.
+        self.dtdr = self.dt / self.dr.to(u.km) # Gradient needd for upwind scheme
 
         # Mesh the spatial coordinates.
         self.phi_grid, self.r_grid = np.meshgrid(self.phi, self.r)
@@ -42,50 +44,56 @@ class HUXt2D:
         """
         Functon to solve Burgers equation for the time evolution of the radial wind speed, given a variable input boundary condition.
         """
-        # TODO - check input of v_boundary on size and unit.
-        
-        rrel = self.r - self.r[0] #positions relative to the inner boundary
-        # Arguments for computing the acceleration factor
-        accel_arg = -rrel[:-1] / self.r_accel
-        accel_arg_p = -rrel[1:] / self.r_accel
-        dtdr = self.dt / self.dr.to(u.km) # factor needed in the upind scheme.
-        
+        # TODO - check input of v_boundary on size and unit.        
         Nt = v_boundary.size #number of time steps
         #Initialise output speeds as 400kms everywhere
-        vout = np.ones((self.Nr, Nt)) * 400.0 * u.km / u.s
+        v_out = np.ones((self.Nr, Nt)) * 400.0 * u.km / u.s
         # Update inner boundary condition
-        vout[0, :] = v_boundary.copy()
+        v_out[0, :] = v_boundary.copy()
         
-        #loop through each boundary condition and compute the updated 1-d radial solution
+        #loop through time and compute the updated 1-d radial solution
         for t in range(1, Nt):
             # Pull out the upwind and downwind slices at current time
-            ur = vout[1:, t-1].copy()
-            urp = vout[:-1, t-1].copy()
-            # Get estimate of next timestep          
-            urnext = ur - dtdr * ur * (ur - urp)
-            # Compute the probable speed at 30rS from the observed speed at r
-            vsource = urp / (1.0 + self.alpha*(1.0 - np.exp(accel_arg)))
-            # Then compute the speed gain between r and r+dr
-            vdiff = self.alpha * vsource * (np.exp(accel_arg_p) - np.exp(accel_arg))
-            # Add the residual acceleration over this grid cell
-            urnext = urnext + (urp * dtdr * vdiff)
+            u_up = v_out[1:, t-1].copy()
+            u_dn = v_out[:-1, t-1].copy()
+            u_up_next = self.__upwind_step__(u_up, u_dn)
             # Save the updated timestep
-            vout[1:, t] = urnext.copy()
+            v_out[1:, t] = u_up_next.copy()
             
-        return vout
+        return v_out
+    
+    
+    def __upwind_step__(self, v_up, v_dn):
+        """
+        Function to compute the next step in the upwind scheme of Burgers equation of Solar Wind with added residual acceleration.
+        """
         
+        # Arguments for computing the acceleration factor
+        accel_arg = -self.rrel[:-1] / self.r_accel
+        accel_arg_p = -self.rrel[1:] / self.r_accel
+        
+        # Get estimate of next timestep          
+        v_up_next = v_up - self.dtdr * v_up * (v_up - v_dn)
+        # Compute the probable speed at 30rS from the observed speed at r
+        v_source = v_dn / (1.0 + self.alpha * (1.0 - np.exp(accel_arg)))
+        # Then compute the speed gain between r and r+dr
+        v_diff = self.alpha * v_source * (np.exp(accel_arg_p) - np.exp(accel_arg))
+        # Add the residual acceleration over this grid cell
+        v_up_next = v_up_next + (v_dn * self.dtdr * v_diff)
+        return v_up_next
+    
         
     def solve_carrington_rotation(self, v_boundary):
                 
         if v_boundary.size != 128:
             print('Warning from HUXt2D.solve_carrington_rotation: Longitudinal grid not as expected, radial grid may not be correct. ')
         
-        simtime = self.synodic_period # One CR from Earth.
-        buffertime = (5.0 * u.day).to(u.s) # spin up time in days
-        tmax = (simtime + buffertime)# full simulation time, including spin up
+        simtime = self.synodic_period #  One CR from Earth.
+        buffertime = (5.0 * u.day).to(u.s) #  spin up time
+        tmax = (simtime + buffertime) #  full simulation time
         
         twopi = 2.0 * np.pi
-        # compute the new dphi to match dt
+        # compute the longitude increment corresponding to timestep dt
         dphidt = twopi * self.dt / self.synodic_period
         # work out the phi increment to allow for the spin up
         bufferphi = twopi * buffertime / self.synodic_period
@@ -137,7 +145,7 @@ class HUXt2D:
         #----------------------------------------------------------------------------------------
         twopi = 2.0 * np.pi
         simtime = (5.0 * u.day).to(u.s) #  number of days to simulate (in seconds)
-        nsteps = np.int32(np.floor(simtime.value / self.dt.value)); # number of required time steps
+        Nt = np.int32(np.floor(simtime.value / self.dt.value)); # number of required time steps
         longRef = twopi * (1.0 - 11.0/27.0) #  this sets the Carrington longitude of phi=180. So if this is the E-S line,
                                               #  this determines time through the Carringotn rotation
     
@@ -150,62 +158,45 @@ class HUXt2D:
         vgridt_eclip_ambient = np.fliplr(vout.copy())
 
         #create matrices to store the whole t, r, phi data cubes
-        v_t_r_phi_cone = np.zeros((nsteps, self.Nr, self.Nphi))
-        v_t_r_phi_ambient = np.zeros((nsteps, self.Nr, self.Nphi))
+        v_t_r_phi_cone = np.zeros((Nt, self.Nr, self.Nphi))
+        v_t_r_phi_ambient = np.zeros((Nt, self.Nr, self.Nphi))
         
-        #compute the high resolution dphi to match dt (in order to produce time series at inner boundary)
+        #compute longitude increment that matches the timestep dt
         dphidt = twopi * self.dt/self.synodic_period
         phiinit = np.arange(self.phi.value.min(), self.phi.value.max() + dphidt, dphidt)
-        #interpolate vin_long to this new grid resolution
+        #interpolate vin_long to this timestep matched resolution
         vinit = np.interp(phiinit, self.phi.value, v_boundary, period=twopi)
 
         #----------------------------------------------------------------------------------------
         # Get parameters needed for upwind scheme
         #----------------------------------------------------------------------------------------
-        dtdr = self.dt / self.dr.to(u.km)
         rrel = self.r - self.r[0] #positions relative to the inner boundary
         # Arguments for computing the acceleration factor
         accel_arg = -rrel[:-1] / self.r_accel
         accel_arg_p = -rrel[1:] / self.r_accel
-        dtdr = self.dt / self.dr.to(u.km) # factor needed in the upind scheme.
-        
-        time = []
+                
+        time = np.arange(0, Nt) * self.dt
         #----------------------------------------------------------------------------------------
         # Main model loop
         #----------------------------------------------------------------------------------------
-        for t in range(0, nsteps):
+        for t in range(Nt):
 
             #loop through each longitude and compute the the 1-d radial solution
             for n in range(self.Nphi):
                 
-                #update v(r) for the given longitude
+                #update cone cme v(r) for the given longitude
                 #=====================================
-                ur = vgridt_eclip[1:, n].copy()
-                urp = vgridt_eclip[:-1, n].copy()
-                # Get estimate of next timestep          
-                urnext = ur - dtdr * ur * (ur - urp)
-                # Compute the probable speed at 30rS from the observed speed at r
-                vsource = urp / (1.0 + self.alpha*(1.0 - np.exp(accel_arg)))
-                # Then compute the speed gain between r and r+dr
-                vdiff = self.alpha * vsource * (np.exp(accel_arg_p) - np.exp(accel_arg))
-                # Add the residual acceleration over this grid cell
-                urnext = urnext + (urp * dtdr * vdiff)
+                u_up = vgridt_eclip[1:, n].copy()
+                u_dn = vgridt_eclip[:-1, n].copy()
+                u_up_next = self.__upwind_step__(u_up, u_dn)
                 # Save the updated timestep
-                vgridt_eclip[1:, n] = urnext.copy()
-                
-                # Repeat for ambient solution
-                ur = vgridt_eclip_ambient[1:, n].copy()
-                urp = vgridt_eclip_ambient[:-1, n].copy()
-                # Get estimate of next timestep          
-                urnext = ur - dtdr * ur * (ur - urp)
-                # Compute the probable speed at 30rS from the observed speed at r
-                vsource = urp / (1.0 + self.alpha*(1.0 - np.exp(accel_arg)))
-                # Then compute the speed gain between r and r+dr
-                vdiff = self.alpha * vsource * (np.exp(accel_arg_p) - np.exp(accel_arg))
-                # Add the residual acceleration over this grid cell
-                urnext = urnext + (urp * dtdr * vdiff)
+                vgridt_eclip[1:, n] = u_up_next.copy()
+            
+                u_up = vgridt_eclip_ambient[1:, n].copy()
+                u_dn = vgridt_eclip_ambient[:-1, n].copy()
+                u_up_next = self.__upwind_step__(u_up, u_dn)
                 # Save the updated timestep
-                vgridt_eclip_ambient[1:, n] = urnext.copy()
+                vgridt_eclip_ambient[1:, n] = u_up_next.copy()
                 
             #save the data
             v_t_r_phi_cone[t,:,:] = vgridt_eclip
@@ -222,9 +213,8 @@ class HUXt2D:
             #======================================================================
             vcone = vinit.copy()
             
-            rin = (30.0 * u.solRad).to(u.km) # TODO - this can be set from the radial array?
-            t0 = t * self.dt #time from spin-up end
-            time.append(t0.value)
+            rin = self.r.min().to(u.km) 
+            t0 = time[t] #time from spin-up end
             iscme=True
             if iscme:
                 #compute y, the height of CME nose above the 30rS surface
@@ -252,7 +242,7 @@ class HUXt2D:
             v_update = np.interp(self.phi.value, phiinit, vcone)
             vgridt_eclip[0, :] = v_update * u.km/u.s
 
-        return np.array(time), v_t_r_phi_ambient, v_t_r_phi_cone
+        return time, v_t_r_phi_ambient, v_t_r_phi_cone
         
 
     def __zerototwopi__(self, angles):
