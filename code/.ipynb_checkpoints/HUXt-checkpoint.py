@@ -2,6 +2,18 @@ import numpy as np
 import astropy.units as u
 
            
+    
+class ConeCME:
+    
+    def __init__(self):
+        self.v = 1200.0 * u.km / u.s #  CME nose speed
+        self.width = 30.0*np.pi/180.0 * u.rad #  Angular width
+        self.radius = (30.0 * u.solRad).to(u.km) * np.tan(self.width) #  Initial radius of CME
+        self.thickness = 0.5 * self.radius #  Extra CME thickness (in terms of radius) to increase momentum
+        self.longitude = np.pi/2.0 * u.rad  #  Longitudinal launch direction of the CME
+        self.t_launch = 0.5 * 60 * 60 * 24 * u.s #  Time of CME launch, after the start of the simulation
+        
+        
 class HUXt2D:
 
     def __init__(self):
@@ -132,13 +144,7 @@ class HUXt2D:
         #----------------------------------------------------------------------------------------
         #  Define the CME Cone
         #----------------------------------------------------------------------------------------
-        v_cme = 1200.0 * u.km / u.s #  CME nose speed
-        width_cme = 30.0*np.pi/180.0 * u.rad #  Angular width
-        radius_cme = (30.0 * u.solRad).to(u.km) * np.tan(width_cme) # Initial radius of CME
-        thickness_cme = 0.5 * radius_cme #extra CME thickness (in terms of radius) to increase momentum
-        longitude_cme = np.pi/2.0 * u.rad  #longitudinal launch direction of the CME
-        t_launch_cme = 0.5 * 60 * 60 * 24 * u.s #time of CME launch, after the start of the simulation
-        #--------------------------------------
+        cme = ConeCME()
         
         #----------------------------------------------------------------------------------------
         #  Setup some constants of the simulation.
@@ -153,28 +159,22 @@ class HUXt2D:
         # Initialise v from the steady-state solution - no spin up required
         #----------------------------------------------------------------------------------------
         #compute the steady-state solution, as function of time, convert to function of long
-        vout = self.solve_carrington_rotation(v_boundary)
-        vgridt_eclip = np.fliplr(vout.copy())
-        vgridt_eclip_ambient = np.fliplr(vout.copy())
-
+        v_cr = self.solve_carrington_rotation(v_boundary)
+        v_cr = np.fliplr(v_cr)
+        
         #create matrices to store the whole t, r, phi data cubes
-        v_t_r_phi_cone = np.zeros((Nt, self.Nr, self.Nphi))
-        v_t_r_phi_ambient = np.zeros((Nt, self.Nr, self.Nphi))
+        v_t_r_phi_cone = np.zeros((Nt, self.Nr, self.Nphi)) * u.km / u.s
+        v_t_r_phi_ambient = np.zeros((Nt, self.Nr, self.Nphi)) * u.km / u.s
+        
+        v_t_r_phi_cone[0, :, :] = v_cr.copy()
+        v_t_r_phi_ambient[0, :, :] = v_cr.copy()
         
         #compute longitude increment that matches the timestep dt
-        dphidt = twopi * self.dt/self.synodic_period
-        phiinit = np.arange(self.phi.value.min(), self.phi.value.max() + dphidt, dphidt)
+        dphidt = twopi * self.dt / self.synodic_period
+        phi_tstep = np.arange(self.phi.value.min(), self.phi.value.max() + dphidt, dphidt) * u.rad
         #interpolate vin_long to this timestep matched resolution
-        vinit = np.interp(phiinit, self.phi.value, v_boundary, period=twopi)
-
-        #----------------------------------------------------------------------------------------
-        # Get parameters needed for upwind scheme
-        #----------------------------------------------------------------------------------------
-        rrel = self.r - self.r[0] #positions relative to the inner boundary
-        # Arguments for computing the acceleration factor
-        accel_arg = -rrel[:-1] / self.r_accel
-        accel_arg_p = -rrel[1:] / self.r_accel
-                
+        v_boundary_tstep = np.interp(phi_tstep.value, self.phi.value, v_boundary, period=twopi)
+        
         time = np.arange(0, Nt) * self.dt
         #----------------------------------------------------------------------------------------
         # Main model loop
@@ -186,63 +186,71 @@ class HUXt2D:
                 
                 #update cone cme v(r) for the given longitude
                 #=====================================
-                u_up = vgridt_eclip[1:, n].copy()
-                u_dn = vgridt_eclip[:-1, n].copy()
+                u_up = v_t_r_phi_cone[t, 1:, n].copy()
+                u_dn = v_t_r_phi_cone[t, :-1, n].copy()
                 u_up_next = self.__upwind_step__(u_up, u_dn)
                 # Save the updated timestep
-                vgridt_eclip[1:, n] = u_up_next.copy()
+                v_t_r_phi_cone[t, 1:, n] = u_up_next.copy()
             
-                u_up = vgridt_eclip_ambient[1:, n].copy()
-                u_dn = vgridt_eclip_ambient[:-1, n].copy()
+                u_up = v_t_r_phi_ambient[t, 1:, n].copy()
+                u_dn = v_t_r_phi_ambient[t, :-1, n].copy()
                 u_up_next = self.__upwind_step__(u_up, u_dn)
                 # Save the updated timestep
-                vgridt_eclip_ambient[1:, n] = u_up_next.copy()
+                v_t_r_phi_ambient[t, 1:, n] = u_up_next.copy()
                 
-            #save the data
-            v_t_r_phi_cone[t,:,:] = vgridt_eclip
-            v_t_r_phi_ambient[t,:,:] = vgridt_eclip_ambient
-
-            #==================================================================
-            #update the inner boundary value
-            #==================================================================
-            vinit = np.roll(vinit, 1)
-            v_update = np.interp(self.phi.value, phiinit, vinit)
-            vgridt_eclip_ambient[0, :] = v_update * u.km/u.s
-
-            #add the CME
-            #======================================================================
-            vcone = vinit.copy()
             
-            rin = self.r.min().to(u.km) 
-            t0 = time[t] #time from spin-up end
-            iscme=True
-            if iscme:
-                #compute y, the height of CME nose above the 30rS surface
-                y = v_cme * (t0 - t_launch_cme)
-                if (y >= 0*u.km) & (y < radius_cme): # this is the front hemisphere of the spherical CME
-                    x = np.sqrt(y*(2*radius_cme - y)) #compute x, the distance of the current longitude from the nose
-                    #convert x back to an angular separation
-                    thet = np.arctan(x / rin)
-                    pos = (phiinit > (longitude_cme.value - thet.value)) & (phiinit <= (longitude_cme.value + thet.value))
-                    vcone[pos] = v_cme.value
-                elif (y >= (radius_cme + thickness_cme)) & (y <= (2*radius_cme + thickness_cme)):  # this is the back hemisphere of the spherical CME
-                    y = y - thickness_cme
-                    x = np.sqrt(y*(2*radius_cme - y))
-                    #convert back to an angle
-                    thet=np.arctan(x / rin)
-                    pos = (phiinit > (longitude_cme.value - thet.value)) & (phiinit <= (longitude_cme.value + thet.value))
-                    vcone[pos] = v_cme.value
-                elif (thickness_cme > 0*u.km) & (y >= radius_cme) & (y <= (radius_cme + thickness_cme)): #this is the "mass" between the hemispheres
-                    x = radius_cme
-                    #convert back to an angle
-                    thet = np.arctan(x / rin)
-                    pos = (phiinit > (longitude_cme.value - thet.value)) & (phiinit <= (longitude_cme.value + thet.value))
-                    vcone[pos] = v_cme.value
-                
-            v_update = np.interp(self.phi.value, phiinit, vcone)
-            vgridt_eclip[0, :] = v_update * u.km/u.s
+            if t < Nt-1:
+                # Prepare next step
+                v_t_r_phi_cone[t+1, :, :] = v_t_r_phi_cone[t, :, :].copy()
+                v_t_r_phi_ambient[t+1, :, :] = v_t_r_phi_ambient[t, :, :].copy()
+                #==================================================================
+                #  Update ambient solution inner boundary
+                #==================================================================
+                v_boundary_tstep = np.roll(v_boundary_tstep, 1)
+                v_boundary_update = np.interp(self.phi.value, phi_tstep, v_boundary_tstep)
+                v_t_r_phi_ambient[t+1, 0, :] = v_boundary_update * u.km / u.s
+
+                #==================================================================
+                #  Add cone CME to updated inner boundary
+                #==================================================================
+                v_boundary_cone = v_boundary_tstep.copy()
+                v_boundary_cone = self.__cone_cme_boundary__(phi_tstep, v_boundary_cone, time[t], cme)
+                v_boundary_update = np.interp(self.phi.value, phi_tstep, v_boundary_cone)
+                v_t_r_phi_cone[t+1, 0, :] = v_boundary_update * u.km / u.s
 
         return time, v_t_r_phi_ambient, v_t_r_phi_cone
+    
+    
+    def __cone_cme_boundary__(self, longitude, v_boundary, t, cme):
+        """
+        Function to update inner boundary condition with the time dependent cone cme velocity
+        """
+        
+        rin = self.r.min().to(u.km) 
+        #  Compute y, the height of CME nose above the 30rS surface
+        y = cme.v * (t - cme.t_launch)
+        if (y >= 0*u.km) & (y < cme.radius): # this is the front hemisphere of the spherical CME
+            x = np.sqrt(y*(2*cme.radius - y)) #compute x, the distance of the current longitude from the nose
+            #convert x back to an angular separation
+            theta = np.arctan(x / rin)
+            pos = (longitude > (cme.longitude - theta)) & (longitude <= (cme.longitude + theta))
+            v_boundary[pos] = cme.v.value
+        elif (y >= (cme.radius + cme.thickness)) & (y <= (2*cme.radius + cme.thickness)):  # this is the back hemisphere of the spherical CME
+            y = y - cme.thickness
+            x = np.sqrt(y*(2*cme.radius - y))
+            #convert back to an angle
+            theta = np.arctan(x / rin)
+            pos = (longitude > (cme.longitude - theta)) & (longitude <= (cme.longitude + theta))
+            v_boundary[pos] = cme.v.value
+        elif (cme.thickness > 0*u.km) & (y >= cme.radius) & (y <= (cme.radius + cme.thickness)): #this is the "mass" between the hemispheres
+            x = cme.radius
+            #convert back to an angle
+            theta = np.arctan(x / rin)
+            pos = (longitude > (cme.longitude - theta)) & (longitude <= (cme.longitude + theta))
+            v_boundary[pos] = cme.v.value
+            
+        return v_boundary
+
         
 
     def __zerototwopi__(self, angles):
