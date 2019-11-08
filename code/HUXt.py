@@ -1,30 +1,35 @@
 import numpy as np
 import astropy.units as u
 import os
+import glob
 import h5py
 
            
 class ConeCME:
     
-    def __init__(self):
-        self.v = 1200.0 * u.km / u.s #  CME nose speed
-        self.width = 30.0*np.pi/180.0 * u.rad #  Angular width
-        self.radius = (30.0 * u.solRad).to(u.km) * np.tan(self.width) #  Initial radius of CME
-        self.thickness = 0.5 * self.radius #  Extra CME thickness (in terms of radius) to increase momentum
-        self.longitude = np.pi/2.0 * u.rad  #  Longitudinal launch direction of the CME
-        self.t_launch = 0.5 * 60 * 60 * 24 * u.s #  Time of CME launch, after the start of the simulation
+    def __init__(self,t_launch=0.0, longitude=0.0, v=1000.0, width=30.0, thickness=10.0):
+        
+        self.t_launch = t_launch * u.s #  Time of CME launch, after the start of the simulation
+        self.longitude = np.deg2rad(longitude) * u.rad  #  Longitudinal launch direction of the CME
+        self.v = v * u.km / u.s #  CME nose speed
+        self.width = np.deg2rad(width) * u.rad #  Angular width
+        self.initial_height = (30.0 * u.solRad).to(u.km) # Initial height of CME (should match inner boundary of HUXt)
+        self.radius = self.initial_height * np.tan(self.width) #  Initial radius of CME
+        self.thickness = (thickness * u.solRad).to(u.km) #  Extra CME thickness
+        
+        
         
 class HUXt2D:
 
     def __init__(self):
 
-        # some constants
+        # some constants and units
         self.twopi = 2.0 * np.pi
         daysec = 24 * 60 * 60
+        self.kms = u.km / u.s
         self.alpha = 0.15  # Scale parameter for residual SW acceleration
         self.r_accel = 40 * u.solRad  # Spatial scale parameter for residual SW acceleration
         self.synodic_period = 27.2753 * daysec * u.s  # Solar Synodic rotation period from Earth.
-        self.vmax = 2000.0 * u.km / u.s  # Maximum speed expected in model, used for CFL condition
         
         # Setup radial coordinates - in solar radius
         rmin = 30.0
@@ -36,24 +41,24 @@ class HUXt2D:
         self.rrel = self.r - self.r[0]
 
         # Set up longitudinal coordinates - in radians
-        self.Nphi = 128
-        dphi = self.twopi / self.Nphi
-        phimin = dphi / 2.0
-        phimax = self.twopi - (dphi / 2.0)
-        self.phi, self.dphi = np.linspace(phimin, phimax, self.Nphi, retstep=True)
-        self.phi = self.phi * u.rad
-        self.dphi = self.dphi * u.rad
+        self.Nlon = 128
+        dlon = self.twopi / self.Nlon
+        lon_min = dlon / 2.0
+        lon_max = self.twopi - (dlon / 2.0)
+        self.lon, self.dlon = np.linspace(lon_min, lon_max, self.Nlon, retstep=True)
+        self.lon = self.lon * u.rad
+        self.dlon = self.dlon * u.rad
         
-        # Set up time coordinates - in seconds.
-        self.dt = self.dr.to(u.km) / self.vmax  # maximum timestep set by the CFL condition.
-        self.dtdr = self.dt / self.dr.to(u.km) # Gradient needd for upwind scheme
+        # Set up time timestep from the CFL condition, and gradient needed by upwind scheme
+        self.vmax = 2000.0 * self.kms  # Maximum speed expected in model, used for CFL condition
+        self.dt = self.dr.to(u.km) / self.vmax  
+        self.dtdr = self.dt / self.dr.to(u.km) 
 
         # Mesh the spatial coordinates.
-        self.phi_grid, self.r_grid = np.meshgrid(self.phi, self.r)
+        self.lon_grid, self.r_grid = np.meshgrid(self.lon, self.r)
         
-        self.__datadir__ = "C:\\Users\\yq904481\\PyCharmProjects\\HUXt\\data"
-        self.__figdir__ = "C:\\Users\\yq904481\\PyCharmProjects\\HUXt\\figures"
-        
+        # Extract paths of figure and data directories
+        self._setup_dirs_()
         
     
     def solve1D(self, v_boundary):
@@ -63,7 +68,7 @@ class HUXt2D:
         # TODO - check input of v_boundary on size and unit.        
         Nt = v_boundary.size #number of time steps
         #Initialise output speeds as 400kms everywhere
-        v_out = np.ones((self.Nr, Nt)) * 400.0 * u.km / u.s
+        v_out = np.ones((self.Nr, Nt)) * 400.0 * self.kms
         # Update inner boundary condition
         v_out[0, :] = v_boundary.copy()
         
@@ -72,7 +77,7 @@ class HUXt2D:
             # Pull out the upwind and downwind slices at current time
             u_up = v_out[1:, t-1].copy()
             u_dn = v_out[:-1, t-1].copy()
-            u_up_next = self.__upwind_step__(u_up, u_dn)
+            u_up_next = self._upwind_step_(u_up, u_dn)
             # Save the updated timestep
             v_out[1:, t] = u_up_next.copy()
             
@@ -82,20 +87,20 @@ class HUXt2D:
     def solve_carrington_rotation(self, v_boundary):
                 
         if v_boundary.size != 128:
-            print('Warning from HUXt2D.solve_carrington_rotation: Longitudinal grid not as expected, radial grid may not be correct. ')
+            print('Warning from HUXt2D.solve_carrington_rotation: Longitudinal grid not as expected, radial grid may not be correct.')
         
         simtime = self.synodic_period #  One CR from Earth.
         buffertime = (5.0 * u.day).to(u.s) #  spin up time
         tmax = (simtime + buffertime) #  full simulation time
         
         # compute the longitude increment corresponding to timestep dt
-        dphidt = self.twopi * self.dt / self.synodic_period
+        dlondt = self.twopi * self.dt / self.synodic_period
         # work out the phi increment to allow for the spin up
-        bufferphi = self.twopi * buffertime / self.synodic_period
+        bufferlon = self.twopi * buffertime / self.synodic_period
         # create the input timeseries including the spin up series, periodic in phi
-        phiint = np.arange(0, self.twopi + bufferphi + dphidt, dphidt)
-        phiinit = self.__zerototwopi__(phiint)
-        vinit = np.interp(phiinit, self.phi.value, v_boundary.value, period=self.twopi) * u.km / u.s
+        lonint = np.arange(0, self.twopi + bufferlon + dlondt, dlondt)
+        loninit = self._zerototwopi_(lonint)
+        vinit = np.interp(loninit, self.lon.value, v_boundary.value, period=self.twopi) * self.kms
         # convert from longitude to time
         vinput = np.flipud(vinit)
         times = np.arange(0.0, (tmax + self.dt).value, self.dt.value)
@@ -112,23 +117,18 @@ class HUXt2D:
         times = times - buffertime
 
         # interpolate back to the original longitudinal grid
-        times_orig = self.synodic_period * self.phi.value / self.twopi
+        times_orig = self.synodic_period * self.lon.value / self.twopi
         vout_allR = np.zeros((self.r.size, times_orig.size)) * ts_allR.unit
         for j in range(self.r.size):
             
             vout = np.interp(times_orig.value, times.value, ts_allR[j, :].value)
-            vout_allR[j, :] = vout * u.km / u.s
+            vout_allR[j, :] = vout * self.kms
         
         return vout_allR
     
     
-    def solve_cone_cme(self, v_boundary):
+    def solve_cone_cme(self, v_boundary, cme, save=False):
                 
-        #----------------------------------------------------------------------------------------
-        #  Define the CME Cone
-        #----------------------------------------------------------------------------------------
-        cme = ConeCME()
-        
         #----------------------------------------------------------------------------------------
         #  Setup some constants of the simulation.
         #----------------------------------------------------------------------------------------
@@ -145,17 +145,17 @@ class HUXt2D:
         v_cr = np.fliplr(v_cr)
         
         #create matrices to store the whole t, r, phi data cubes
-        v_t_r_phi_cone = np.zeros((Nt, self.Nr, self.Nphi)) * u.km / u.s
-        v_t_r_phi_ambient = np.zeros((Nt, self.Nr, self.Nphi)) * u.km / u.s
+        v_t_r_lon_cone = np.zeros((Nt, self.Nr, self.Nlon)) * self.kms
+        v_t_r_lon_ambient = np.zeros((Nt, self.Nr, self.Nlon)) * self.kms
         
-        v_t_r_phi_cone[0, :, :] = v_cr.copy()
-        v_t_r_phi_ambient[0, :, :] = v_cr.copy()
+        v_t_r_lon_cone[0, :, :] = v_cr.copy()
+        v_t_r_lon_ambient[0, :, :] = v_cr.copy()
         
         #compute longitude increment that matches the timestep dt
-        dphidt = self.twopi * self.dt / self.synodic_period
-        phi_tstep = np.arange(self.phi.value.min(), self.phi.value.max() + dphidt, dphidt) * u.rad
+        dlondt = self.twopi * self.dt / self.synodic_period
+        lon_tstep = np.arange(self.lon.value.min(), self.lon.value.max() + dlondt, dlondt) * u.rad
         #interpolate vin_long to this timestep matched resolution
-        v_boundary_tstep = np.interp(phi_tstep.value, self.phi.value, v_boundary, period=self.twopi)
+        v_boundary_tstep = np.interp(lon_tstep.value, self.lon.value, v_boundary, period=self.twopi)
         
         time = np.arange(0, Nt) * self.dt
         #----------------------------------------------------------------------------------------
@@ -164,43 +164,48 @@ class HUXt2D:
         for t in range(Nt):
 
             #loop through each longitude and compute the the 1-d radial solution
-            for n in range(self.Nphi):
+            for n in range(self.Nlon):
                 
                 #update cone cme v(r) for the given longitude
                 #=====================================
-                u_up = v_t_r_phi_cone[t, 1:, n].copy()
-                u_dn = v_t_r_phi_cone[t, :-1, n].copy()
-                u_up_next = self.__upwind_step__(u_up, u_dn)
+                u_up = v_t_r_lon_cone[t, 1:, n].copy()
+                u_dn = v_t_r_lon_cone[t, :-1, n].copy()
+                u_up_next = self._upwind_step_(u_up, u_dn)
                 # Save the updated timestep
-                v_t_r_phi_cone[t, 1:, n] = u_up_next.copy()
+                v_t_r_lon_cone[t, 1:, n] = u_up_next.copy()
             
-                u_up = v_t_r_phi_ambient[t, 1:, n].copy()
-                u_dn = v_t_r_phi_ambient[t, :-1, n].copy()
-                u_up_next = self.__upwind_step__(u_up, u_dn)
+                u_up = v_t_r_lon_ambient[t, 1:, n].copy()
+                u_dn = v_t_r_lon_ambient[t, :-1, n].copy()
+                u_up_next = self._upwind_step_(u_up, u_dn)
                 # Save the updated timestep
-                v_t_r_phi_ambient[t, 1:, n] = u_up_next.copy()
+                v_t_r_lon_ambient[t, 1:, n] = u_up_next.copy()
                 
             if t < Nt-1:
                 # Prepare next step
-                v_t_r_phi_cone[t+1, :, :] = v_t_r_phi_cone[t, :, :].copy()
-                v_t_r_phi_ambient[t+1, :, :] = v_t_r_phi_ambient[t, :, :].copy()
+                v_t_r_lon_cone[t+1, :, :] = v_t_r_lon_cone[t, :, :].copy()
+                v_t_r_lon_ambient[t+1, :, :] = v_t_r_lon_ambient[t, :, :].copy()
                 
                 #  Update ambient solution inner boundary
                 #==================================================================
                 v_boundary_tstep = np.roll(v_boundary_tstep, 1)
-                v_boundary_update = np.interp(self.phi.value, phi_tstep.value, v_boundary_tstep)
-                v_t_r_phi_ambient[t+1, 0, :] = v_boundary_update * u.km / u.s
+                v_boundary_update = np.interp(self.lon.value, lon_tstep.value, v_boundary_tstep)
+                v_t_r_lon_ambient[t+1, 0, :] = v_boundary_update * self.kms
 
                 #  Add cone CME to updated inner boundary
                 #==================================================================
                 v_boundary_cone = v_boundary_tstep.copy()
-                v_boundary_cone = self.__cone_cme_boundary__(phi_tstep, v_boundary_cone, time[t], cme)
-                v_boundary_update = np.interp(self.phi.value, phi_tstep.value, v_boundary_cone)
-                v_t_r_phi_cone[t+1, 0, :] = v_boundary_update * u.km / u.s
+                v_boundary_cone = self._cone_cme_boundary_(lon_tstep, v_boundary_cone, time[t], cme)
+                v_boundary_update = np.interp(self.lon.value, lon_tstep.value, v_boundary_cone)
+                v_t_r_lon_cone[t+1, 0, :] = v_boundary_update * self.kms
+                
+                
+        if save_run:
+            self.save_cone_cme_run(v_boundary, cme, time, v_t_r_lon_ambient, v_t_r_lon_cone)
 
-        return time, v_t_r_phi_ambient, v_t_r_phi_cone
+        return time, v_t_r_lon_ambient, v_t_r_lon_cone
     
-    def save(self, v_ambient, v_cone):
+    
+    def save_cone_cme_run(self, v_boundary, cme, time, v_ambient, v_cone):
         """
         Function to save output to a HDF5 file. 
         """
@@ -209,26 +214,66 @@ class HUXt2D:
         
         if os.path.isfile(out_filepath):
             # File exists, so delete and start new.
+            print("Warning: {} already exists. Overwriting".format(out_filepath))
             os.remove(out_filepath)
 
         out_file = h5py.File(out_filepath, 'w')
         
-        out_file.create_dataset("radius", data=self.r.value)
-        out_file.create_dataset("dr", data=self.dr.value)
-        out_file.create_dataset("longitude", data=self.phi.value)
-        out_file.create_dataset("dlon", data=self.dphi.value)
-        out_file.create_dataset("radius_grid", data=self.r_grid.value)
-        out_file.create_dataset("phi_grid", data=self.phi_grid.value)
-        out_file.create_dataset("v_ambient", data=v_ambient.value)
-        out_file.create_dataset("v_cone", data=v_cone.value)
+        dset = out_file.create_dataset("v_boundary", data=v_bounary.value)
+        dset.attrs['unit'] = v_boundary.unit.to_string()
+        
+        # Create a new group to store the Cone CME parameters.
+        cmegrp = out_file.create_group('ConeCME')
+        for key, value in cme.__dict__.items():
+            dset = cmegrp.create_dataset(key, data=value.value)
+            dset.attrs['unit'] = value.unit
+        
+        dset = out_file.create_dataset("time", data=time.value)
+        dset.attrs['unit'] = time.unit.to_string()
+        
+        dset = out_file.create_dataset("dt", data=self.dt.value)
+        dset.attrs['unit'] = self.dt.unit.to_string()
+        
+        dset = out_file.create_dataset("radius", data=self.r.value)
+        dset.attrs['unit'] = self.r.unit.to_string()
+        
+        dset = out_file.create_dataset("dr", data=self.dr.value)
+        dset.attrs['unit'] = self.dr.unit.to_string()
+        
+        dset = out_file.create_dataset("longitude", data=self.lon.value)
+        dset.attrs['unit'] = self.lon.unit.to_string()
+        
+        dset = out_file.create_dataset("dlon", data=self.dlon.value)
+        dset.attrs['unit'] = self.dlon.unit.to_string()
+        
+        dset = out_file.create_dataset("radius_grid", data=self.r_grid.value)
+        dset.attrs['unit'] = self.r_grid.unit.to_string()
+        dset.dims[0].label = 'radius'
+        dset.dims[1].label = 'longitude'
+        
+        dset = out_file.create_dataset("lon_grid", data=self.lon_grid.value)
+        dset.attrs['unit'] = self.lon_grid.unit.to_string()
+        dset.dims[0].label = 'radius'
+        dset.dims[1].label = 'longitude'
+        
+        dset = out_file.create_dataset("v_ambient", data=v_ambient.value)
+        dset.attrs['unit'] = v_ambient.unit.to_string()
+        dset.dims[0].label = 'time'
+        dset.dims[1].label = 'radius'
+        dset.dims[2].label = 'longitude'
+        
+        dset = out_file.create_dataset("v_cone", data=v_cone.value)
+        dset.attrs['unit'] = v_cone.unit.to_string()
+        dset.dims[0].label = 'time'
+        dset.dims[1].label = 'radius'
+        dset.dims[2].label = 'longitude'
         
         out_file.flush()
         out_file.close()
         return
         
 
-    
-    def __upwind_step__(self, v_up, v_dn):
+    def _upwind_step_(self, v_up, v_dn):
         """
         Function to compute the next step in the upwind scheme of Burgers equation with added residual acceleration of solar wind
         """
@@ -248,7 +293,7 @@ class HUXt2D:
         return v_up_next
     
     
-    def __cone_cme_boundary__(self, longitude, v_boundary, t, cme):
+    def _cone_cme_boundary_(self, longitude, v_boundary, t, cme):
         """
         Function to update inner boundary condition with the time dependent cone cme speed
         """
@@ -279,7 +324,7 @@ class HUXt2D:
         return v_boundary
 
         
-    def __zerototwopi__(self, angles):
+    def _zerototwopi_(self, angles):
         """
         Constrain angles (in rad) to 0 - 2pi domain
         """
@@ -287,3 +332,35 @@ class HUXt2D:
         a = -np.floor_divide(angles_out, self.twopi)
         angles_out = angles_out + (a * self.twopi)
         return angles_out
+    
+    
+    def _setup_dirs_(self):
+        """
+        Function to pull out the directories to save figures and output data.
+        """
+        # Find the config.dat file path
+        files = glob.glob('config.dat')
+        
+        if len(files) != 1:
+            # If too few or too many config files, guess projdirs
+            print('Error: Cannot find correct config file with project directories. Check config.txt exists')
+            print('Defaulting to current directory')
+            self.__datadir__ = os.getcwd()
+            self.__figdir__ = os.getcwd()
+
+        else:
+            # Extract data and figure directories from config.dat
+            with open(files[0], 'r') as file:
+                lines = file.read().splitlines()
+                dirs = {l.split(',')[0]: l.split(',')[1] for l in lines}
+
+            # Just check the directories exist.
+            for val in dirs.values():
+                if not os.path.exists(val):
+                    print('Error, invalid path, check config.dat: ' + val)
+                
+            self._datadir_ = dirs['data']
+            self._figuredir_ = dirs['figures']
+         
+        return
+        
