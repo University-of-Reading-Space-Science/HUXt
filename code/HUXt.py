@@ -19,9 +19,9 @@ class ConeCME:
         
         
         
-class HUXt2D:
+class HUXt2DCME:
 
-    def __init__(self):
+    def __init__(self, simtime=5.0, dt_scale=1.0):
 
         # some constants and units
         self.twopi = 2.0 * np.pi
@@ -49,16 +49,32 @@ class HUXt2D:
         self.lon = self.lon * u.rad
         self.dlon = self.dlon * u.rad
         
-        # Set up time timestep from the CFL condition, and gradient needed by upwind scheme
+        # Set up time coordinates - in seconds
+        # Get model timestep from the CFL condition, and gradient needed by upwind scheme
         self.vmax = 2000.0 * self.kms  # Maximum speed expected in model, used for CFL condition
         self.dt = self.dr.to(u.km) / self.vmax  
-        self.dtdr = self.dt / self.dr.to(u.km) 
-
+        self.dtdr = self.dt / self.dr.to(u.km)
+        
+        self.simtime = (simtime * u.day).to(u.s) #  number of days to simulate (in seconds)
+        self.Nt = np.int32(np.floor(self.simtime.value / self.dt.value)); # number of time steps in the simulation
+        self.dt_scale = np.int32(dt_scale)
+        self.dt_out = self.dt_scale * self.dt # time step of the output
+        self.Nt_out = np.int32(self.Nt / self.dt_scale) # number of time steps in the output 
+        self.longRef = self.twopi * (1.0 - 11.0/27.0) #  this sets the Carrington longitude of phi=180. So if this is the E-S line,
+                                              #  this determines time through the Carringotn rotation
+    
+        self.time = np.arange(0, self.Nt) * self.dt #  Model timesteps
+        self.time_out = np.arange(0, self.Nt_out) * self.dt_out #  Output timesteps 
+        
+        # Preallocate space for the output for the solar wind fields for the cme and ambient solution.
+        self.v_grid_cme = np.zeros((self.Nt_out, self.Nr, self.Nlon)) * self.kms
+        self.v_grid_amb = np.zeros((self.Nt_out, self.Nr, self.Nlon)) * self.kms
+        
         # Mesh the spatial coordinates.
         self.lon_grid, self.r_grid = np.meshgrid(self.lon, self.r)
         
         # Extract paths of figure and data directories
-        self._setup_dirs_()
+        self._data_dir_, self._fig_dir_ = _setup_dirs_()
         
     
     def solve1D(self, v_boundary):
@@ -77,7 +93,7 @@ class HUXt2D:
             # Pull out the upwind and downwind slices at current time
             u_up = v_out[1:, t-1].copy()
             u_dn = v_out[:-1, t-1].copy()
-            u_up_next = self._upwind_step_(u_up, u_dn)
+            u_up_next = _upwind_step_(self, u_up, u_dn)
             # Save the updated timestep
             v_out[1:, t] = u_up_next.copy()
             
@@ -99,7 +115,7 @@ class HUXt2D:
         bufferlon = self.twopi * buffertime / self.synodic_period
         # create the input timeseries including the spin up series, periodic in phi
         lonint = np.arange(0, self.twopi + bufferlon + dlondt, dlondt)
-        loninit = self._zerototwopi_(lonint)
+        loninit = _zerototwopi_(lonint)
         vinit = np.interp(loninit, self.lon.value, v_boundary.value, period=self.twopi) * self.kms
         # convert from longitude to time
         vinput = np.flipud(vinit)
@@ -127,29 +143,20 @@ class HUXt2D:
         return vout_allR
     
     
-    def solve_cone_cme(self, v_boundary, cme, save=False):
-                
-        #----------------------------------------------------------------------------------------
-        #  Setup some constants of the simulation.
-        #----------------------------------------------------------------------------------------
-        simtime = (5.0 * u.day).to(u.s) #  number of days to simulate (in seconds)
-        Nt = np.int32(np.floor(simtime.value / self.dt.value)); # number of required time steps
-        longRef = self.twopi * (1.0 - 11.0/27.0) #  this sets the Carrington longitude of phi=180. So if this is the E-S line,
-                                              #  this determines time through the Carringotn rotation
-    
-        #----------------------------------------------------------------------------------------
+    def solve_cone_cme(self, v_boundary, cme, save=False, tag=''):
+        """
+        Function to produce HDF5 file of output from HUXT2DCME run.
+        """
+
         # Initialise v from the steady-state solution - no spin up required
         #----------------------------------------------------------------------------------------
         #compute the steady-state solution, as function of time, convert to function of long
         v_cr = self.solve_carrington_rotation(v_boundary)
         v_cr = np.fliplr(v_cr)
         
-        #create matrices to store the whole t, r, phi data cubes
-        v_t_r_lon_cone = np.zeros((Nt, self.Nr, self.Nlon)) * self.kms
-        v_t_r_lon_ambient = np.zeros((Nt, self.Nr, self.Nlon)) * self.kms
-        
-        v_t_r_lon_cone[0, :, :] = v_cr.copy()
-        v_t_r_lon_ambient[0, :, :] = v_cr.copy()
+        # Initialise the output
+        self.v_grid_cme[0, :, :] = v_cr.copy()
+        self.v_grid_amb[0, :, :] = v_cr.copy()
         
         #compute longitude increment that matches the timestep dt
         dlondt = self.twopi * self.dt / self.synodic_period
@@ -157,140 +164,63 @@ class HUXt2D:
         #interpolate vin_long to this timestep matched resolution
         v_boundary_tstep = np.interp(lon_tstep.value, self.lon.value, v_boundary, period=self.twopi)
         
-        time = np.arange(0, Nt) * self.dt
         #----------------------------------------------------------------------------------------
         # Main model loop
         #----------------------------------------------------------------------------------------
-        for t in range(Nt):
+        for t in range(self.Nt):
+            
+            # Get the initial condition, which will update in the loop,
+            # and snapshots saved to output at right steps.
+            if t == 0:
+                v_cme = self.v_grid_cme[t, :, :].copy()
+                v_amb = self.v_grid_cme[t, :, :].copy()
 
             #loop through each longitude and compute the the 1-d radial solution
             for n in range(self.Nlon):
                 
                 #update cone cme v(r) for the given longitude
                 #=====================================
-                u_up = v_t_r_lon_cone[t, 1:, n].copy()
-                u_dn = v_t_r_lon_cone[t, :-1, n].copy()
-                u_up_next = self._upwind_step_(u_up, u_dn)
+                u_up = v_cme[1:, n].copy()
+                u_dn = v_cme[:-1, n].copy()
+                u_up_next = _upwind_step_(self, u_up, u_dn)
                 # Save the updated timestep
-                v_t_r_lon_cone[t, 1:, n] = u_up_next.copy()
+                v_cme[1:, n] = u_up_next.copy()
             
-                u_up = v_t_r_lon_ambient[t, 1:, n].copy()
-                u_dn = v_t_r_lon_ambient[t, :-1, n].copy()
-                u_up_next = self._upwind_step_(u_up, u_dn)
+                u_up = v_amb[1:, n].copy()
+                u_dn = v_amb[:-1, n].copy()
+                u_up_next = _upwind_step_(self, u_up, u_dn)
                 # Save the updated timestep
-                v_t_r_lon_ambient[t, 1:, n] = u_up_next.copy()
+                v_amb[1:, n] = u_up_next.copy()
                 
-            if t < Nt-1:
-                # Prepare next step
-                v_t_r_lon_cone[t+1, :, :] = v_t_r_lon_cone[t, :, :].copy()
-                v_t_r_lon_ambient[t+1, :, :] = v_t_r_lon_ambient[t, :, :].copy()
+            # Save this frame to output if is factor of output timestep
+            if np.mod(t, self.dt_scale) == 0:
+                t_out = np.int32(t / self.dt_scale) #  index of timestep in output array
+                if t_out < self.Nt_out - 1: # Model can run one step longer than output steps, so check:
+                    self.v_grid_cme[t_out, :, :] = v_cme.copy()
+                    self.v_grid_amb[t_out, :, :] = v_amb.copy()
                 
+            # Update the boundary conditions for next timestep.
+            if t < self.Nt-1:
                 #  Update ambient solution inner boundary
                 #==================================================================
                 v_boundary_tstep = np.roll(v_boundary_tstep, 1)
                 v_boundary_update = np.interp(self.lon.value, lon_tstep.value, v_boundary_tstep)
-                v_t_r_lon_ambient[t+1, 0, :] = v_boundary_update * self.kms
+                v_amb[0, :] = v_boundary_update * self.kms
 
                 #  Add cone CME to updated inner boundary
                 #==================================================================
                 v_boundary_cone = v_boundary_tstep.copy()
-                v_boundary_cone = self._cone_cme_boundary_(lon_tstep, v_boundary_cone, time[t], cme)
+                v_boundary_cone = self._cone_cme_boundary_(lon_tstep, v_boundary_cone, self.time[t], cme)
                 v_boundary_update = np.interp(self.lon.value, lon_tstep.value, v_boundary_cone)
-                v_t_r_lon_cone[t+1, 0, :] = v_boundary_update * self.kms
+                v_cme[0, :] = v_boundary_update * self.kms
+                  
+        if save:
+            if tag == '':
+                print("Warning, blank tag means file likely to be overwritten")
                 
-                
-        if save_run:
-            self.save_cone_cme_run(v_boundary, cme, time, v_t_r_lon_ambient, v_t_r_lon_cone)
+            self.save_cone_cme_run(v_boundary, cme, tag=tag)
 
-        return time, v_t_r_lon_ambient, v_t_r_lon_cone
-    
-    
-    def save_cone_cme_run(self, v_boundary, cme, time, v_ambient, v_cone):
-        """
-        Function to save output to a HDF5 file. 
-        """
-        # Open up hdf5 data file for the HI flow stats
-        out_filepath = os.path.join(self.__datadir__,"HUXt_output.hdf5")
-        
-        if os.path.isfile(out_filepath):
-            # File exists, so delete and start new.
-            print("Warning: {} already exists. Overwriting".format(out_filepath))
-            os.remove(out_filepath)
-
-        out_file = h5py.File(out_filepath, 'w')
-        
-        dset = out_file.create_dataset("v_boundary", data=v_bounary.value)
-        dset.attrs['unit'] = v_boundary.unit.to_string()
-        
-        # Create a new group to store the Cone CME parameters.
-        cmegrp = out_file.create_group('ConeCME')
-        for key, value in cme.__dict__.items():
-            dset = cmegrp.create_dataset(key, data=value.value)
-            dset.attrs['unit'] = value.unit
-        
-        dset = out_file.create_dataset("time", data=time.value)
-        dset.attrs['unit'] = time.unit.to_string()
-        
-        dset = out_file.create_dataset("dt", data=self.dt.value)
-        dset.attrs['unit'] = self.dt.unit.to_string()
-        
-        dset = out_file.create_dataset("radius", data=self.r.value)
-        dset.attrs['unit'] = self.r.unit.to_string()
-        
-        dset = out_file.create_dataset("dr", data=self.dr.value)
-        dset.attrs['unit'] = self.dr.unit.to_string()
-        
-        dset = out_file.create_dataset("longitude", data=self.lon.value)
-        dset.attrs['unit'] = self.lon.unit.to_string()
-        
-        dset = out_file.create_dataset("dlon", data=self.dlon.value)
-        dset.attrs['unit'] = self.dlon.unit.to_string()
-        
-        dset = out_file.create_dataset("radius_grid", data=self.r_grid.value)
-        dset.attrs['unit'] = self.r_grid.unit.to_string()
-        dset.dims[0].label = 'radius'
-        dset.dims[1].label = 'longitude'
-        
-        dset = out_file.create_dataset("lon_grid", data=self.lon_grid.value)
-        dset.attrs['unit'] = self.lon_grid.unit.to_string()
-        dset.dims[0].label = 'radius'
-        dset.dims[1].label = 'longitude'
-        
-        dset = out_file.create_dataset("v_ambient", data=v_ambient.value)
-        dset.attrs['unit'] = v_ambient.unit.to_string()
-        dset.dims[0].label = 'time'
-        dset.dims[1].label = 'radius'
-        dset.dims[2].label = 'longitude'
-        
-        dset = out_file.create_dataset("v_cone", data=v_cone.value)
-        dset.attrs['unit'] = v_cone.unit.to_string()
-        dset.dims[0].label = 'time'
-        dset.dims[1].label = 'radius'
-        dset.dims[2].label = 'longitude'
-        
-        out_file.flush()
-        out_file.close()
         return
-        
-
-    def _upwind_step_(self, v_up, v_dn):
-        """
-        Function to compute the next step in the upwind scheme of Burgers equation with added residual acceleration of solar wind
-        """
-        
-        # Arguments for computing the acceleration factor
-        accel_arg = -self.rrel[:-1] / self.r_accel
-        accel_arg_p = -self.rrel[1:] / self.r_accel
-        
-        # Get estimate of next timestep          
-        v_up_next = v_up - self.dtdr * v_up * (v_up - v_dn)
-        # Compute the probable speed at 30rS from the observed speed at r
-        v_source = v_dn / (1.0 + self.alpha * (1.0 - np.exp(accel_arg)))
-        # Then compute the speed gain between r and r+dr
-        v_diff = self.alpha * v_source * (np.exp(accel_arg_p) - np.exp(accel_arg))
-        # Add the residual acceleration over this grid cell
-        v_up_next = v_up_next + (v_dn * self.dtdr * v_diff)
-        return v_up_next
     
     
     def _cone_cme_boundary_(self, longitude, v_boundary, t, cme):
@@ -323,44 +253,155 @@ class HUXt2D:
             
         return v_boundary
 
-        
-    def _zerototwopi_(self, angles):
-        """
-        Constrain angles (in rad) to 0 - 2pi domain
-        """
-        angles_out = angles.copy()
-        a = -np.floor_divide(angles_out, self.twopi)
-        angles_out = angles_out + (a * self.twopi)
-        return angles_out
     
-    
-    def _setup_dirs_(self):
+    def save_cone_cme_run(self, v_boundary, cme, tag):
         """
-        Function to pull out the directories to save figures and output data.
+        Function to save output to a HDF5 file. 
         """
-        # Find the config.dat file path
-        files = glob.glob('config.dat')
+        # Open up hdf5 data file for the HI flow stats
+        filename = "HUXt2DCME_{}.hdf5".format(tag)
+        out_filepath = os.path.join(self._data_dir_, filename)
         
-        if len(files) != 1:
-            # If too few or too many config files, guess projdirs
-            print('Error: Cannot find correct config file with project directories. Check config.txt exists')
-            print('Defaulting to current directory')
-            self.__datadir__ = os.getcwd()
-            self.__figdir__ = os.getcwd()
+        if os.path.isfile(out_filepath):
+            # File exists, so delete and start new.
+            print("Warning: {} already exists. Overwriting".format(out_filepath))
+            os.remove(out_filepath)
 
-        else:
-            # Extract data and figure directories from config.dat
-            with open(files[0], 'r') as file:
-                lines = file.read().splitlines()
-                dirs = {l.split(',')[0]: l.split(',')[1] for l in lines}
-
-            # Just check the directories exist.
-            for val in dirs.values():
-                if not os.path.exists(val):
-                    print('Error, invalid path, check config.dat: ' + val)
+        out_file = h5py.File(out_filepath, 'w')
+        
+        # Save the input boundary condition
+        dset = out_file.create_dataset("v_boundary", data=v_boundary.value)
+        dset.attrs['unit'] = v_boundary.unit.to_string()
+        
+        # Save the Cone CME parameters to a new group.
+        cmegrp = out_file.create_group('ConeCME')
+        for key, value in cme.__dict__.items():
+            dset = cmegrp.create_dataset(key, data=value.value)
+            dset.attrs['unit'] = value.unit
                 
-            self._datadir_ = dirs['data']
-            self._figuredir_ = dirs['figures']
-         
+        # Loop over the attributes of model instance and save select keys/attributes.
+        keys = ['time_out', 'dt_out', 'r', 'dr', 'lon', 'dlon', 'r_grid', 'lon_grid', 'v_grid_cme', 'v_grid_amb']
+        for k, v in self.__dict__.items():
+            
+            if key in keys:
+                
+                if key in ['time_out', 'dt_out']:
+                    kn = key.split('_')[0]#loose the "_out"
+                    dset = out_file.create_dataset(k, data=v.value)
+                    dset_attrs['unit'] = v.unit.to_string()
+                else:
+                    dset = out_file.create_dataset(k, data=v.value)
+                    dset_attrs['unit'] = v.unit.to_string()
+                
+                # Add on the dimensions of the spatial grids
+                if key in ['r_grid', 'lon_grid']:
+                    dset.dims[0].label = 'radius'
+                    dset.dims[1].label = 'longtiude'
+                
+                # Add on the dimensions of the output speed fields.
+                if key in ['v_grid_cme', 'v_grid_amb']:
+                    dset.dims[0].label = 'time'
+                    dset.dims[1].label = 'radius'
+                    dset.dims[2].label = 'longtiude'
+                
+        out_file.flush()
+        out_file.close()
         return
+
+def load_cone_cme_run(self, filename):
+    """
+    Function to load saved cone run output into the class
+    """
+    # Open up hdf5 data file for the HI flow stats
+    in_filepath = os.path.join(self._data_dir_, filename)
         
+    if os.path.isfile(in_filepath):
+        
+        data = h5py.File(out_filepath, 'w')
+        
+        # Load in the inner boundary wind speed profile
+        v_boundary = data['v_boundary'] * u.Unit(data['v_boundary'].attrs['unit'])
+        
+        # Load in the CME paramters
+        cmedata = data['cme']
+        t_launch = cmedata['t_launch']
+        lon = np.rad2deg(cmedata['longitude'])
+        width = np.rad2deg(cmedata['width'])
+        thickness = (cmedata['thickness']) * u.Unit(cmedata['thickness'].attrs['unit'])
+        thickness = thickness.to('solRad').value
+        v = cmedata['v']
+        cme = ConeCME(t_launch=t_launch, longitude=lon, v=v, width=width, thickness=thickness)
+        
+        # Load in the speed solutions
+        self.v_grid_cme = data['v_grid_cme'] * u.Unit(data['v_boundary'].attrs['unit'])
+        self.v_grid_amb = data['v_grid_cme'] * u.Unit(data['v_boundary'].attrs['unit'])
+           
+    else:
+        # File doesnt exist return nothing
+        print("Warning: {} doesnt exist.".format(in_filepath))
+            
+
+    return v_boundary, cme
+
+
+def _upwind_step_(model, v_up, v_dn):
+    """
+    Function to compute the next step in the upwind scheme of Burgers equation with added residual acceleration of solar wind.
+    Model should be an instance of a HUXt model class, as it must contain the models domain and paramters.
+    """
+        
+    # Arguments for computing the acceleration factor
+    accel_arg = -model.rrel[:-1] / model.r_accel
+    accel_arg_p = -model.rrel[1:] / model.r_accel
+        
+    # Get estimate of next timestep          
+    v_up_next = v_up - model.dtdr * v_up * (v_up - v_dn)
+    # Compute the probable speed at 30rS from the observed speed at r
+    v_source = v_dn / (1.0 + model.alpha * (1.0 - np.exp(accel_arg)))
+    # Then compute the speed gain between r and r+dr
+    v_diff = model.alpha * v_source * (np.exp(accel_arg_p) - np.exp(accel_arg))
+    # Add the residual acceleration over this grid cell
+    v_up_next = v_up_next + (v_dn * model.dtdr * v_diff)
+    return v_up_next
+    
+    
+def _zerototwopi_(angles):
+    """
+    Constrain angles (in rad) to 0 - 2pi domain
+    """
+    twopi = 2.0 * np.pi
+    angles_out = angles.copy()
+    a = -np.floor_divide(angles_out, twopi)
+    angles_out = angles_out + (a * twopi)
+    return angles_out
+    
+    
+def _setup_dirs_():
+    """
+    Function to pull out the directories to save figures and output data.
+    """
+    # Find the config.dat file path
+    files = glob.glob('config.dat')
+
+    if len(files) != 1:
+        # If too few or too many config files, guess projdirs
+        print('Error: Cannot find correct config file with project directories. Check config.txt exists')
+        print('Defaulting to current directory')
+        datadir = os.getcwd()
+        figdir = os.getcwd()
+
+    else:
+        # Extract data and figure directories from config.dat
+        with open(files[0], 'r') as file:
+            lines = file.read().splitlines()
+            dirs = {l.split(',')[0]: l.split(',')[1] for l in lines}
+
+        # Just check the directories exist.
+        for val in dirs.values():
+            if not os.path.exists(val):
+                print('Error, invalid path, check config.dat: ' + val)
+
+        data_dir = dirs['data']
+        figure_dir = dirs['figures']
+        
+    return dirs['data'], dirs['figures']
