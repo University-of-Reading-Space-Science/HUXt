@@ -7,7 +7,7 @@ import h5py
            
 class ConeCME:
     
-    def __init__(self,t_launch=0.0, longitude=0.0, v=1000.0, width=30.0, thickness=10.0):
+    def __init__(self, t_launch=0.0, longitude=0.0, v=1000.0, width=30.0, thickness=10.0):
         
         self.t_launch = t_launch * u.s #  Time of CME launch, after the start of the simulation
         self.longitude = np.deg2rad(longitude) * u.rad  #  Longitudinal launch direction of the CME
@@ -16,8 +16,7 @@ class ConeCME:
         self.initial_height = (30.0 * u.solRad).to(u.km) # Initial height of CME (should match inner boundary of HUXt)
         self.radius = self.initial_height * np.tan(self.width) #  Initial radius of CME
         self.thickness = (thickness * u.solRad).to(u.km) #  Extra CME thickness
-        
-        
+            
         
 class HUXt2DCME:
 
@@ -57,9 +56,9 @@ class HUXt2DCME:
         
         self.simtime = (simtime * u.day).to(u.s) #  number of days to simulate (in seconds)
         self.Nt = np.int32(np.floor(self.simtime.value / self.dt.value)); # number of time steps in the simulation
-        self.dt_scale = np.int32(dt_scale)
+        self.dt_scale = dt_scale * u.dimensionless_unscaled
         self.dt_out = self.dt_scale * self.dt # time step of the output
-        self.Nt_out = np.int32(self.Nt / self.dt_scale) # number of time steps in the output 
+        self.Nt_out = np.int32(self.Nt / self.dt_scale.value) # number of time steps in the output 
         self.longRef = self.twopi * (1.0 - 11.0/27.0) #  this sets the Carrington longitude of phi=180. So if this is the E-S line,
                                               #  this determines time through the Carringotn rotation
     
@@ -272,76 +271,81 @@ class HUXt2DCME:
         # Save the input boundary condition
         dset = out_file.create_dataset("v_boundary", data=v_boundary.value)
         dset.attrs['unit'] = v_boundary.unit.to_string()
+        out_file.flush()
         
         # Save the Cone CME parameters to a new group.
         cmegrp = out_file.create_group('ConeCME')
-        for key, value in cme.__dict__.items():
-            dset = cmegrp.create_dataset(key, data=value.value)
-            dset.attrs['unit'] = value.unit
-                
+        for k, v in cme.__dict__.items():
+            dset = cmegrp.create_dataset(k, data=v.value)
+            dset.attrs['unit'] = v.unit.to_string()
+            out_file.flush()
+            
         # Loop over the attributes of model instance and save select keys/attributes.
-        keys = ['time_out', 'dt_out', 'r', 'dr', 'lon', 'dlon', 'r_grid', 'lon_grid', 'v_grid_cme', 'v_grid_amb']
+        keys = ['simtime', 'dt_scale', 'time_out', 'dt_out', 'r', 'dr', 'lon', 'dlon', 'r_grid', 'lon_grid', 'v_grid_cme', 'v_grid_amb']
         for k, v in self.__dict__.items():
             
-            if key in keys:
+            if k in keys:
                 
-                if key in ['time_out', 'dt_out']:
-                    kn = key.split('_')[0]#loose the "_out"
+                if k in ['time_out', 'dt_out']:
+                    kn = k.split('_')[0]#loose the "_out"
                     dset = out_file.create_dataset(k, data=v.value)
-                    dset_attrs['unit'] = v.unit.to_string()
+                    dset.attrs['unit'] = v.unit.to_string()
                 else:
                     dset = out_file.create_dataset(k, data=v.value)
-                    dset_attrs['unit'] = v.unit.to_string()
+                    dset.attrs['unit'] = v.unit.to_string()
                 
                 # Add on the dimensions of the spatial grids
-                if key in ['r_grid', 'lon_grid']:
+                if k in ['r_grid', 'lon_grid']:
                     dset.dims[0].label = 'radius'
                     dset.dims[1].label = 'longtiude'
                 
                 # Add on the dimensions of the output speed fields.
-                if key in ['v_grid_cme', 'v_grid_amb']:
+                if k in ['v_grid_cme', 'v_grid_amb']:
                     dset.dims[0].label = 'time'
                     dset.dims[1].label = 'radius'
                     dset.dims[2].label = 'longtiude'
                 
-        out_file.flush()
+                out_file.flush()
+                
         out_file.close()
         return
+    
 
-def load_cone_cme_run(self, filename):
+def load_cone_cme_run(filepath):
     """
     Function to load saved cone run output into the class
-    """
-    # Open up hdf5 data file for the HI flow stats
-    in_filepath = os.path.join(self._data_dir_, filename)
+    """    
+    if os.path.isfile(filepath):
         
-    if os.path.isfile(in_filepath):
-        
-        data = h5py.File(out_filepath, 'w')
+        data = h5py.File(filepath, 'r')
         
         # Load in the inner boundary wind speed profile
-        v_boundary = data['v_boundary'] * u.Unit(data['v_boundary'].attrs['unit'])
+        v_boundary = data['v_boundary'][()] * u.Unit(data['v_boundary'].attrs['unit'])
         
         # Load in the CME paramters
-        cmedata = data['cme']
-        t_launch = cmedata['t_launch']
-        lon = np.rad2deg(cmedata['longitude'])
-        width = np.rad2deg(cmedata['width'])
-        thickness = (cmedata['thickness']) * u.Unit(cmedata['thickness'].attrs['unit'])
+        cmedata = data['ConeCME']
+        t_launch = cmedata['t_launch'][()]
+        lon = np.rad2deg(cmedata['longitude'][()])
+        width = np.rad2deg(cmedata['width'][()])
+        thickness = cmedata['thickness'][()] * u.Unit(cmedata['thickness'].attrs['unit'])
         thickness = thickness.to('solRad').value
-        v = cmedata['v']
+        v = cmedata['v'][()]
         cme = ConeCME(t_launch=t_launch, longitude=lon, v=v, width=width, thickness=thickness)
         
-        # Load in the speed solutions
-        self.v_grid_cme = data['v_grid_cme'] * u.Unit(data['v_boundary'].attrs['unit'])
-        self.v_grid_amb = data['v_grid_cme'] * u.Unit(data['v_boundary'].attrs['unit'])
+        # Initialise the model, and check it matches what the resolution and limits of the HDF5 file.
+        simtime = data['simtime'][()] * u.Unit(data['simtime'].attrs['unit'])
+        simtime = simtime.to(u.day).value                                           
+        dt_scale = data['dt_scale'][()]
+        model = HUXt2DCME(simtime=simtime, dt_scale=dt_scale)
+        model.v_grid_cme[:,:,:] = data['v_grid_cme'][()] * u.Unit(data['v_boundary'].attrs['unit'])
+        model.v_grid_amb[:,:,:] = data['v_grid_cme'][()] * u.Unit(data['v_boundary'].attrs['unit'])
            
     else:
         # File doesnt exist return nothing
         print("Warning: {} doesnt exist.".format(in_filepath))
             
 
-    return v_boundary, cme
+    return v_boundary, cme, model
 
 
 def _upwind_step_(model, v_up, v_dn):
