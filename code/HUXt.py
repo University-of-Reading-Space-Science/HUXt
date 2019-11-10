@@ -3,6 +3,9 @@ import astropy.units as u
 import os
 import glob
 import h5py
+import matplotlib.pyplot as plt
+import moviepy.editor as mpy
+from moviepy.video.io.bindings import mplfig_to_npimage
 
            
 class ConeCME:
@@ -310,7 +313,57 @@ class HUXt2DCME:
         out_file.close()
         return
     
+    
+    def plot_frame(self, t, save=False, tag=''):
+        
+        levels = np.arange(250, 875, 25)
+        fig, ax = plt.subplots(figsize=(7, 7), subplot_kw={"projection":"polar"})
+        cnt = ax.contourf(self.lon_grid.value, self.r_grid.value, self.v_grid_cme.value[t, :, :], levels=levels)
+        ax.set_ylim(0, 230)
+        ax.set_yticklabels([])
+        fig.subplots_adjust(left=0.05, bottom=0.2, right=0.95, top=0.95)
 
+        # Add colorbar
+        pos = ax.get_position()
+        dw = 0.005
+        dh = 0.075
+        left = pos.x0 + dw
+        bottom = pos.y0 - dh
+        wid = pos.width - 2 * dw
+        cbaxes = fig.add_axes([left, bottom, wid, 0.03])
+        cbar1 = fig.colorbar(cnt, cax=cbaxes, orientation='horizontal')
+        cbar1.ax.set_xlabel("Solar Wind Speed (km/s)")
+
+        # Add label
+        time_label = "Time: {:3.2f} days".format(self.time_out[t].to(u.day).value)
+        ax.set_title(time_label, position=(0.8, -0.05))
+        
+        if save:
+            filename = "HUXt2DCME_{}_frame_{:03d}.png".format(tag, t)
+            filepath = os.path.join(self._fig_dir_, filename)
+            fig.savefig(filepath)
+            
+        return fig, ax
+    
+    
+    def animate_plot(self, tag):
+        duration = 20
+
+        def make_frame(t):
+
+            i = np.int32(self.Nt_out * t / duration)
+            fig, ax = self.plot_frame(i)
+            frame = mplfig_to_npimage(fig)
+            plt.close('all')
+            return frame
+        
+        filename = "HUXt2DCME_{}_movie.mp4".format(tag)
+        filepath = os.path.join(self._fig_dir_, filename)
+        animation = mpy.VideoClip(make_frame, duration=duration)
+        animation.write_videofile(filepath, fps=24, codec='libx264')
+        return
+    
+    
 def load_cone_cme_run(filepath):
     """
     Function to load saved cone run output into the class
