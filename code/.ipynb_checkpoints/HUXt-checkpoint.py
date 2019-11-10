@@ -145,10 +145,19 @@ class HUXt2DCME:
         return vout_allR
     
     
-    def solve_cone_cme(self, v_boundary, cme, save=False, tag=''):
+    def solve_cone_cme(self, v_boundary, cme_list, save=False, tag=''):
         """
         Function to produce HDF5 file of output from HUXT2DCME run.
         """
+        # Check only cone cmes in cme list
+        cme_list_checked = []
+        for cme in cme_list:
+            if isinstance(cme, ConeCME):
+                cme_list_checked.append(cme)
+            else:
+                print("Warning: cme_list contained objects other than ConeCME instances. These will be excluded")
+                
+                
         # Initialise v from the steady-state solution - no spin up required
         #----------------------------------------------------------------------------------------
         #compute the steady-state solution, as function of time, convert to function of long
@@ -211,7 +220,8 @@ class HUXt2DCME:
                 #  Add cone CME to updated inner boundary
                 #==================================================================
                 v_boundary_cone = v_boundary_tstep.copy()
-                v_boundary_cone = self._cone_cme_boundary_(lon_tstep, v_boundary_cone, self.time[t], cme)   
+                for cme in cme_list_checked:
+                    v_boundary_cone = self._cone_cme_boundary_(lon_tstep, v_boundary_cone, self.time[t], cme)   
                 v_boundary_update = np.interp(self.lon.value, lon_tstep.value, v_boundary_cone)
                 v_cme[0, :] = v_boundary_update * self.kms
                   
@@ -219,7 +229,7 @@ class HUXt2DCME:
             if tag == '':
                 print("Warning, blank tag means file likely to be overwritten")
                 
-            self.save_cone_cme_run(v_boundary, cme, tag=tag)
+            self.save_cone_cme_run(v_boundary, cme_list_checked, tag=tag)
 
         return
     
@@ -258,7 +268,8 @@ class HUXt2DCME:
             
         return v_boundary
     
-    def save_cone_cme_run(self, v_boundary, cme, tag):
+    
+    def save_cone_cme_run(self, v_boundary, cme_list, tag):
         """
         Function to save output to a HDF5 file. 
         """
@@ -279,11 +290,14 @@ class HUXt2DCME:
         out_file.flush()
         
         # Save the Cone CME parameters to a new group.
-        cmegrp = out_file.create_group('ConeCME')
-        for k, v in cme.__dict__.items():
-            dset = cmegrp.create_dataset(k, data=v.value)
-            dset.attrs['unit'] = v.unit.to_string()
-            out_file.flush()
+        allcmes = out_file.create_group('ConeCMEs')
+        for i, cme in enumerate(cme_list):
+            cme_name = "ConeCME_{:02d}".format(i)
+            cmegrp = allcmes.create_group(cme_name)
+            for k, v in cme.__dict__.items():
+                dset = cmegrp.create_dataset(k, data=v.value)
+                dset.attrs['unit'] = v.unit.to_string()
+                out_file.flush()
             
         # Loop over the attributes of model instance and save select keys/attributes.
         keys = ['simtime', 'dt_scale', 'time_out', 'dt_out', 'r', 'dr', 'lon', 'dlon', 'r_grid', 'lon_grid', 'v_grid_cme', 'v_grid_amb']
@@ -390,14 +404,19 @@ def load_cone_cme_run(filepath):
         v_boundary = data['v_boundary'][()] * u.Unit(data['v_boundary'].attrs['unit'])
         
         # Load in the CME paramters
-        cmedata = data['ConeCME']
-        t_launch = cmedata['t_launch'][()]
-        lon = np.rad2deg(cmedata['longitude'][()])
-        width = np.rad2deg(cmedata['width'][()])
-        thickness = cmedata['thickness'][()] * u.Unit(cmedata['thickness'].attrs['unit'])
-        thickness = thickness.to('solRad').value
-        v = cmedata['v'][()]
-        cme = ConeCME(t_launch=t_launch, longitude=lon, v=v, width=width, thickness=thickness)
+        cme_list = [] 
+        
+        allcmes = data['ConeCMEs']
+        for k in allcmes.keys():
+            cmedata = allcmes[k]
+            t_launch = cmedata['t_launch'][()]
+            lon = np.rad2deg(cmedata['longitude'][()])
+            width = np.rad2deg(cmedata['width'][()])
+            thickness = cmedata['thickness'][()] * u.Unit(cmedata['thickness'].attrs['unit'])
+            thickness = thickness.to('solRad').value
+            v = cmedata['v'][()]
+            cme = ConeCME(t_launch=t_launch, longitude=lon, v=v, width=width, thickness=thickness)
+            cme_list.append(cme)
         
         # Initialise the model, and check it matches what the resolution and limits of the HDF5 file.
         simtime = data['simtime'][()] * u.Unit(data['simtime'].attrs['unit'])
@@ -412,7 +431,7 @@ def load_cone_cme_run(filepath):
         print("Warning: {} doesnt exist.".format(in_filepath))
             
 
-    return v_boundary, cme, model
+    return v_boundary, cme_list, model
 
 
 def _upwind_step_(model, v_up, v_dn):
