@@ -149,7 +149,6 @@ class HUXt2DCME:
         """
         Function to produce HDF5 file of output from HUXT2DCME run.
         """
-
         # Initialise v from the steady-state solution - no spin up required
         #----------------------------------------------------------------------------------------
         #compute the steady-state solution, as function of time, convert to function of long
@@ -212,7 +211,7 @@ class HUXt2DCME:
                 #  Add cone CME to updated inner boundary
                 #==================================================================
                 v_boundary_cone = v_boundary_tstep.copy()
-                v_boundary_cone = self._cone_cme_boundary_(lon_tstep, v_boundary_cone, self.time[t], cme)
+                v_boundary_cone = self._cone_cme_boundary_(lon_tstep, v_boundary_cone, self.time[t], cme)   
                 v_boundary_update = np.interp(self.lon.value, lon_tstep.value, v_boundary_cone)
                 v_cme[0, :] = v_boundary_update * self.kms
                   
@@ -229,32 +228,36 @@ class HUXt2DCME:
         """
         Function to update inner boundary condition with the time dependent cone cme speed
         """
+        # Center the longitude array on CME nose, and make it run from -pi to pi, to avoid dealing with any 0/2pi crossings
+        lon_cent = longitude - cme.longitude
+        id_high = lon_cent > np.pi*u.rad
+        lon_cent[id_high] = 2.0*np.pi*u.rad - lon_cent[id_high]
         
         rin = self.r.min().to(u.km) 
         #  Compute y, the height of CME nose above the 30rS surface
-        y = cme.v * (t - cme.t_launch)
+        y = cme.v * (t - cme.t_launch) 
         if (y >= 0*u.km) & (y < cme.radius): # this is the front hemisphere of the spherical CME
             x = np.sqrt(y*(2*cme.radius - y)) #compute x, the distance of the current longitude from the nose
             #convert x back to an angular separation
             theta = np.arctan(x / rin)
-            pos = (longitude > (cme.longitude - theta)) & (longitude <= (cme.longitude + theta))
+            pos = (lon_cent > - theta) & (lon_cent <=  theta)
             v_boundary[pos] = cme.v.value
         elif (y >= (cme.radius + cme.thickness)) & (y <= (2*cme.radius + cme.thickness)):  # this is the back hemisphere of the spherical CME
             y = y - cme.thickness
             x = np.sqrt(y*(2*cme.radius - y))
             #convert back to an angle
             theta = np.arctan(x / rin)
-            pos = (longitude > (cme.longitude - theta)) & (longitude <= (cme.longitude + theta))
+            pos = (lon_cent > - theta) & (lon_cent <=  theta)
             v_boundary[pos] = cme.v.value
         elif (cme.thickness > 0*u.km) & (y >= cme.radius) & (y <= (cme.radius + cme.thickness)): #this is the "mass" between the hemispheres
             x = cme.radius
             #convert back to an angle
             theta = np.arctan(x / rin)
-            pos = (longitude > (cme.longitude - theta)) & (longitude <= (cme.longitude + theta))
+            pos = (lon_cent > - theta) & (lon_cent <=  theta)
             v_boundary[pos] = cme.v.value
             
         return v_boundary
-
+    
     
     def save_cone_cme_run(self, v_boundary, cme, tag):
         """
@@ -315,10 +318,22 @@ class HUXt2DCME:
     
     
     def plot_frame(self, t, save=False, tag=''):
+          
+        # Get plotting data, and pad out to fill the full 2pi of contouring
+        lon = self.lon_grid.value.copy()
+        rad = self.r_grid.value.copy()
+        v = self.v_grid_cme.value[t, :, :].copy()
+        
+        pad = lon[:,0].reshape((lon.shape[0],1)) + self.twopi
+        lon = np.concatenate((lon, pad),axis=1)
+        pad = rad[:,0].reshape((rad.shape[0],1))
+        rad = np.concatenate((rad,pad),axis=1)
+        pad = v[:,0].reshape((v.shape[0],1))
+        v = np.concatenate((v,pad),axis=1)      
         
         levels = np.arange(250, 875, 25)
         fig, ax = plt.subplots(figsize=(7, 7), subplot_kw={"projection":"polar"})
-        cnt = ax.contourf(self.lon_grid.value, self.r_grid.value, self.v_grid_cme.value[t, :, :], levels=levels)
+        cnt = ax.contourf(lon, rad, v, levels=levels)
         ax.set_ylim(0, 230)
         ax.set_yticklabels([])
         fig.subplots_adjust(left=0.05, bottom=0.2, right=0.95, top=0.95)
@@ -347,7 +362,7 @@ class HUXt2DCME:
     
     
     def animate_plot(self, tag):
-        duration = 20
+        duration = 10
 
         def make_frame(t):
 
