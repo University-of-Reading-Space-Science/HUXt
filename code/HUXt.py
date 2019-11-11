@@ -4,11 +4,19 @@ import os
 import glob
 import h5py
 import matplotlib.pyplot as plt
+import matplotlib as mpl
 import moviepy.editor as mpy
 from moviepy.video.io.bindings import mplfig_to_npimage
 
+mpl.rc("axes", labelsize=20)
+mpl.rc("ytick", labelsize=20)
+mpl.rc("xtick", labelsize=20)
+mpl.rc("legend", fontsize=20)
 
 class ConeCME:
+    """
+    A class to hold the parameters of a cone model cme.
+    """
 
     def __init__(self, t_launch=0.0, longitude=0.0, v=1000.0, width=30.0, thickness=10.0):
         self.t_launch = t_launch * u.s  # Time of CME launch, after the start of the simulation
@@ -224,7 +232,7 @@ class HUXt2DCME:
             if tag == '':
                 print("Warning, blank tag means file likely to be overwritten")
 
-            self.save_cone_cme_run(v_boundary, cme_list_checked, tag=tag)
+            self.save(v_boundary, cme_list_checked, tag=tag)
 
         return
 
@@ -264,7 +272,7 @@ class HUXt2DCME:
 
         return v_boundary
 
-    def save_cone_cme_run(self, v_boundary, cme_list, tag):
+    def save(self, v_boundary, cme_list, tag):
         """
         Function to save output to a HDF5 file. 
         """
@@ -325,19 +333,28 @@ class HUXt2DCME:
         out_file.close()
         return
 
-    def plot_frame(self, t, save=False, tag=''):
+    def plot(self, t, field='cme', save=False, tag=''):
         """
         Make a contour plot on polar axis of the solar wind solution at a specific time
         :param t: Integer to index the time coordinate.
+        :param field: String, either 'cme', or 'ambient', specifying which solution to plot.
         :param save: Boolean to determine if the figure is saved.
         :param tag: String to append to the filename if saving the figure.
         :return:
         """
-
+        
+        if field not in ['cme', 'ambient']:
+            print("Error, field must be either 'cme', or 'ambient'. Default to CME")
+            field = 'cme'
+            
         # Get plotting data, and pad out to fill the full 2pi of contouring
         lon = self.lon_grid.value.copy()
         rad = self.r_grid.value.copy()
-        v = self.v_grid_cme.value[t, :, :].copy()
+        if field == 'cme':
+            v = self.v_grid_cme.value[t, :, :].copy()
+        elif field == 'ambient':
+            v = self.v_grid_amb.value[t, :, :].copy()
+        
 
         pad = lon[:, 0].reshape((lon.shape[0], 1)) + self.twopi
         lon = np.concatenate((lon, pad), axis=1)
@@ -347,10 +364,11 @@ class HUXt2DCME:
         v = np.concatenate((v, pad), axis=1)
 
         levels = np.arange(250, 875, 25)
-        fig, ax = plt.subplots(figsize=(7, 7), subplot_kw={"projection": "polar"})
+        fig, ax = plt.subplots(figsize=(14, 14), subplot_kw={"projection": "polar"})
         cnt = ax.contourf(lon, rad, v, levels=levels)
         ax.set_ylim(0, 230)
         ax.set_yticklabels([])
+        ax.tick_params(axis='x', which='both', pad=15)
         fig.subplots_adjust(left=0.05, bottom=0.2, right=0.95, top=0.95)
 
         # Add colorbar
@@ -366,7 +384,7 @@ class HUXt2DCME:
 
         # Add label
         time_label = "Time: {:3.2f} days".format(self.time_out[t].to(u.day).value)
-        ax.set_title(time_label, position=(0.8, -0.05))
+        ax.set_title(time_label, position=(0.8, -0.05), fontsize=20)
 
         if save:
             filename = "HUXt2DCME_{}_frame_{:03d}.png".format(tag, t)
@@ -375,12 +393,25 @@ class HUXt2DCME:
 
         return fig, ax
 
-    def animate_plot(self, tag):
+    def animate(self, field, tag):
+        """
+        Animate the solution, and save as MP4.
+        :param field: String, either 'cme', or 'ambient', specifying which solution to animate.
+        :param tag: String to append to the filename of the animation.
+        :return:
+        """
+        if field not in ['cme', 'ambient']:
+            print("Error, field must be either 'cme', or 'ambient'. Default to CME")
+            field = 'cme'
+            
         duration = 10
 
         def make_frame(t):
+            """
+            Function to produce the frame required by MoviePy.VideoClip.
+            """
             i = np.int32(self.Nt_out * t / duration)
-            fig, ax = self.plot_frame(i)
+            fig, ax = self.plot(i, field)
             frame = mplfig_to_npimage(fig)
             plt.close('all')
             return frame
@@ -394,8 +425,8 @@ class HUXt2DCME:
 
 def load_cone_cme_run(filepath):
     """
-    Load in data form a previous run.
-    :param filepath: The full path to a HDF5 file containing the output from HUXt2DCME.save_cone_cme_run()
+    Load in data from a previous run.
+    :param filepath: The full path to a HDF5 file containing the output from HUXt2DCME.save()
     :return: v_boundary: Numpy array of the solar wind boundary condition. Unit km/s
     :return: cme_list: A list of instances of ConeCME
     :return: model: An instance of HUXt2DCME containing loaded results.
@@ -484,7 +515,7 @@ def _setup_dirs_():
     files = glob.glob('config.dat')
 
     if len(files) != 1:
-        # If too few or too many config files, guess projdirs
+        # If too few or too many config files, guess directories
         print('Error: Cannot find correct config file with project directories. Check config.txt exists')
         print('Defaulting to current directory')
         dirs = {'data': os.getcwd(), 'figures': os.getcwd()}
