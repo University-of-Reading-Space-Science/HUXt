@@ -14,6 +14,9 @@ mpl.rc("xtick", labelsize=20)
 mpl.rc("legend", fontsize=20)
 
 class ConeCME:
+    """
+    A class to hold the parameters of a cone model cme.
+    """
 
     def __init__(self, t_launch=0.0, longitude=0.0, v=1000.0, width=30.0, thickness=10.0):
         self.t_launch = t_launch * u.s  # Time of CME launch, after the start of the simulation
@@ -107,6 +110,8 @@ class HUXt2DCME:
         return v_out
 
     def solve_carrington_rotation(self, v_boundary):
+        """
+        """
 
         if v_boundary.size != 128:
             print('Warning HUXt2D.solve_carrington_rotation: v_boundary not expected size of 128.')
@@ -344,15 +349,18 @@ class HUXt2DCME:
             print("Error, field must be either 'cme', or 'ambient'. Default to CME")
             field = 'cme'
             
-        # Get plotting data, and pad out to fill the full 2pi of contouring
+        if (t<0) | (t > (self.Nt_out-1)):
+            print("Error, invalid time index t")
+            
+        # Get plotting data
         lon = self.lon_grid.value.copy()
         rad = self.r_grid.value.copy()
         if field == 'cme':
             v = self.v_grid_cme.value[t, :, :].copy()
-        else field == 'ambient':
+        elif field == 'ambient':
             v = self.v_grid_amb.value[t, :, :].copy()
         
-
+        # Pad out to fill the full 2pi of contouring
         pad = lon[:, 0].reshape((lon.shape[0], 1)) + self.twopi
         lon = np.concatenate((lon, pad), axis=1)
         pad = rad[:, 0].reshape((rad.shape[0], 1))
@@ -400,17 +408,20 @@ class HUXt2DCME:
         if field not in ['cme', 'ambient']:
             print("Error, field must be either 'cme', or 'ambient'. Default to CME")
             field = 'cme'
-            
-        duration = 10
+        
+        # Set the duration of the movie
+        # Scaled so a 5 day simultion with dt_scale=4 is a 10 second movie.
+        duration = self.simtime.value * (10 / 432000)
 
         def make_frame(t):
             """
             Function to produce the frame required by MoviePy.VideoClip.
             """
-            i = np.int32(self.Nt_out * t / duration)
+            # Get the time index closest to this fraction of movie duration
+            i = np.int32((self.Nt_out-1) * t / duration)
             fig, ax = self.plot(i, field)
             frame = mplfig_to_npimage(fig)
-            plt.close('all')
+            plt.close('all')           
             return frame
 
         filename = "HUXt2DCME_{}_movie.mp4".format(tag)
