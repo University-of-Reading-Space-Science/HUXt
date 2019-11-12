@@ -37,7 +37,7 @@ class HUXt2DCME:
         daysec = 24 * 60 * 60
         self.kms = u.km / u.s
         self.alpha = 0.15  # Scale parameter for residual SW acceleration
-        self.r_accel = 40 * u.solRad  # Spatial scale parameter for residual SW acceleration
+        self.r_accel = 50 * u.solRad  # Spatial scale parameter for residual SW acceleration
         self.synodic_period = 27.2753 * daysec * u.s  # Solar Synodic rotation period from Earth.
 
         # Setup radial coordinates - in solar radius
@@ -85,6 +85,7 @@ class HUXt2DCME:
 
         # Extract paths of figure and data directories
         self._data_dir_, self._fig_dir_ = _setup_dirs_()
+        return
 
     def solve1d(self, v_boundary):
         """
@@ -472,6 +473,9 @@ def load_cone_cme_run(filepath):
     else:
         # File doesnt exist return nothing
         print("Warning: {} doesnt exist.".format(filepath))
+        v_boundary = []
+        cme_list = []
+        model = []
 
     return v_boundary, cme_list, model
 
@@ -496,7 +500,7 @@ def _upwind_step_(model, v_up, v_dn):
     # Compute the probable speed at 30rS from the observed speed at r
     v_source = v_dn / (1.0 + model.alpha * (1.0 - np.exp(accel_arg)))
     # Then compute the speed gain between r and r+dr
-    v_diff = model.alpha * v_source * (np.exp(accel_arg_p) - np.exp(accel_arg))
+    v_diff = model.alpha * v_source * (np.exp(accel_arg) - np.exp(accel_arg_p))
     # Add the residual acceleration over this grid cell
     v_up_next = v_up_next + (v_dn * model.dtdr * v_diff)
     return v_up_next
