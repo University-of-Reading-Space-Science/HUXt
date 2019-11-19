@@ -1,11 +1,8 @@
 # Compiled python modules.
 *.pyc
-*.pickle
+
+# Setuptools distribution folder
+/dist/
 
 # Pycharms configuration folder
 /.idea/
-
-#Local data and figures directory
-/data/
-/figures/
-
