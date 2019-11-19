@@ -247,7 +247,10 @@ class HUXt2DCME:
         lon_cent = longitude - cme.longitude
         id_high = lon_cent > np.pi * u.rad
         lon_cent[id_high] = 2.0 * np.pi * u.rad - lon_cent[id_high]
+        id_low = lon_cent < -np.pi * u.rad
+        lon_cent[id_low] = lon_cent[id_low] + 2.0 * np.pi * u.rad 
 
+        
         rin = self.r.min().to(u.km)
         #  Compute y, the height of CME nose above the 30rS surface
         y = cme.v * (t - cme.t_launch)
@@ -369,7 +372,7 @@ class HUXt2DCME:
         pad = v[:, 0].reshape((v.shape[0], 1))
         v = np.concatenate((v, pad), axis=1)
 
-        levels = np.arange(250, 875, 25)
+        levels = np.arange(350, 950, 25)
         fig, ax = plt.subplots(figsize=(14, 14), subplot_kw={"projection": "polar"})
         cnt = ax.contourf(lon, rad, v, levels=levels)
         ax.set_ylim(0, 230)
