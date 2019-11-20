@@ -1,2 +1,6 @@
-data,C:\Users\yq904481\research\repos\HUXt\data
-figures,C:\Users\yq904481\research\repos\HUXt\figures
+root,C:\Users\yq904481\research\repos\HUXt
+boundary_conditions,data\boundary_conditions
+HUXt1D_data,data\HUXt1D
+HUXt2D_data,data\HUXt2D
+HUXt1D_figures,figures\HUXt1D
+HUXt2D_figures,figures\HUXt2D
