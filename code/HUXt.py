@@ -28,6 +28,9 @@ class ConeCME:
         self.thickness = (thickness*u.solRad).to(u.km)  # Extra CME thickness
 
 class HUXt1D:
+    """
+    A class containing the 1D HUXt model described in Owens et al. (2019). 
+    """
 
     def __init__(self, cr_num, lon=0.0, simtime=5.0, dt_scale=1.0):
 
@@ -132,13 +135,15 @@ class HUXt1D:
             # Update the inner boundary conditions
             v_amb[0] = vinput[t]
             v_cme[0] = vinput[t]
-            # Add in the cone CME at the boundary
-            if time >= cme.t_launch:
-                for c in cme_list_checked:
+            
+            # Compute boundary speed of each CME at this time. Set boundary to the maximum CME speed at this time.
+            if time > 0:
+                v_update_cme = np.zeros(len(cme_list_checked)) * self.kms
+                for i, c in enumerate(cme_list_checked):
                     r_boundary = self.r.min().to(u.km)
-                    v_update_cme = _cone_cme_boundary_1d_(r_boundary, self.lon, time, v_cme[0], c)
+                    v_update_cme[i] = _cone_cme_boundary_1d_(r_boundary, self.lon, time, v_cme[0], c)
 
-                v_cme[0] = v_update_cme
+                v_cme[0] = v_update_cme.max()
 
             # update cone cme v(r) for the given longitude
             # =====================================
@@ -154,7 +159,7 @@ class HUXt1D:
             # Save the updated timestep
             v_amb[1:] = u_up_next.copy()
 
-            # Save this frame to output if output timestep is a factor of time elapsed 
+            # Save this frame to output if output
             if time >= 0:
                 iter_count = iter_count + 1
                 if iter_count == self.dt_scale.value:
@@ -170,12 +175,174 @@ class HUXt1D:
             self.save(cme_list_checked, tag=tag)
         return
     
-    def save():
-        print("Saving")
+    def save(self, cme_list, tag):
+        """
+        Function to save output to a HDF5 file. 
+        """
+        # Open up hdf5 data file for the HI flow stats
+        filename = "HUXt1D_CR{:03d}_{}.hdf5".format(np.int32(self.cr_num.value), tag)
+        out_filepath = os.path.join(self._data_dir_, filename)
+
+        if os.path.isfile(out_filepath):
+            # File exists, so delete and start new.
+            print("Warning: {} already exists. Overwriting".format(out_filepath))
+            os.remove(out_filepath)
+
+        out_file = h5py.File(out_filepath, 'w')
+
+        # Save the Cone CME parameters to a new group.
+        allcmes = out_file.create_group('ConeCMEs')
+        for i, cme in enumerate(cme_list):
+            cme_name = "ConeCME_{:02d}".format(i)
+            cmegrp = allcmes.create_group(cme_name)
+            for k, v in cme.__dict__.items():
+                dset = cmegrp.create_dataset(k, data=v.value)
+                dset.attrs['unit'] = v.unit.to_string()
+                out_file.flush()
+
+        # Loop over the attributes of model instance and save select keys/attributes.
+        keys = ['cr_num', 'simtime', 'dt', 'v_max', 'r_accel', 'alpha',
+                'dt_scale', 'time_out', 'dt_out', 'r', 'dr', 'lon', 'dlon',
+                'v_grid_cme', 'v_grid_amb', 'v_boundary']
+        for k, v in self.__dict__.items():
+
+            if k in keys:
+
+                dset = out_file.create_dataset(k, data=v.value)
+                dset.attrs['unit'] = v.unit.to_string()
+                
+                # Add on the dimensions of the output speed fields.
+                if k in ['v_grid_cme', 'v_grid_amb']:
+                    dset.dims[0].label = 'time'
+                    dset.dims[1].label = 'radius'
+
+                out_file.flush()
+
+        out_file.close()
         return
+    
+    def plot_radial(self, time, field='cme', save=False, tag=''):
+        """
+        Plot the radial solar wind profile at model time closest to specified time
+        :param time: Time (in seconds) to find the closest model time step to.
+        :param field: String, either 'cme', 'ambient', or 'both' specifying which solution to plot.
+        :param save: Boolean to determine if the figure is saved.
+        :param tag: String to append to the filename if saving the figure.
+        :return:
+        """
         
+        if field not in ['cme', 'ambient', 'both']:
+            print("Error, field must be either 'cme', or 'ambient'. Default to cme")
+            field = 'cme'
+            
+        if (time < self.time_out.min()) | (time > (self.time_out.max())):
+            print("Error, input time outside span of model times. Defaulting to closest time")
+            id_t = np.argmin(np.abs(self.time_out - time))
+            time = self.time_out[id_t]
+            
+        # Get plotting data
+        rad = self.r.value.copy()
+        id_t = np.argmin(np.abs(self.time_out - time))
+        if field == 'cme':
+            v = self.v_grid_cme.value[id_t, :].copy()
+            label = 'Cone Run'
+        elif field == 'ambient':
+            v = self.v_grid_amb.value[id_t, :].copy()
+            label = 'Ambient'
+        elif field == 'both':
+            v = self.v_grid_cme.value[id_t, :].copy()
+            label = 'Cone Run'
+            v1 = self.v_grid_amb.value[id_t, :].copy()
+            label1 = 'Ambient'
+        
+        # Pad out to fill the full 2pi of contouring
+        fig, ax = plt.subplots(figsize=(14, 7))
+        ax.plot(rad, v, 'k-', label=label)
+        if field == 'both':
+            ax.plot(rad, v1, 'r--', label=label1)
+            
+        ax.set_ylim(250, 1500)
+        ax.set_ylabel('Solar Wind Speed (km/s)')
+        ax.set_xlim(rad.min(), rad.max())
+        ax.set_xlabel('Radial distance ($R_{sun}$)')
+
+        fig.subplots_adjust(left=0.1, bottom=0.1, right=0.95, top=0.95)
+
+        # Add label
+        label = "HUXt1D    Time: {:3.2f} days".format(self.time_out[id_t].to(u.day).value)
+        ax.set_title(label, fontsize=20)
+        ax.legend(loc=1)
+        if save:
+            cr_num = np.int32(self.cr_num.value)
+            filename = "HUXt1D_CR{:03d}_{}_{}_radial_profile_frame_{:03d}.png".format(cr_num, tag, field, id_t)
+            filepath = os.path.join(self._figure_dir_, filename)
+            fig.savefig(filepath)
+
+        return fig, ax
+    
+    def plot_timeseries(self, radius, field='cme', save=False, tag=''):
+        """
+        Plot the solar wind model timeseries at model radius closest to specified radius
+        :param time: Radius (in solar radii) to find the closest model radius to.
+        :param field: String, either 'cme', 'ambient', or 'both' specifying which solution to plot.
+        :param save: Boolean to determine if the figure is saved.
+        :param tag: String to append to the filename if saving the figure.
+        :return:
+        """
+        
+        if field not in ['cme', 'ambient', 'both']:
+            print("Error, field must be either 'cme', or 'ambient'. Default to cme")
+            field = 'cme'
+            
+        if (radius < self.r.min()) | (radius > (self.r.max())):
+            print("Error, specified radius outside of model radial grid")
+            
+        # Get plotting data
+        time = self.time_out.copy()
+        id_r = np.argmin(np.abs(self.r - radius))
+        if field == 'cme':
+            v = self.v_grid_cme.value[:, id_r].copy()
+            label = 'Cone Run'
+        elif field == 'ambient':
+            v = self.v_grid_amb.value[:, id_r].copy()
+            label = 'ambient'
+        elif field == 'both':
+            v = self.v_grid_cme.value[:, id_r].copy()
+            label = 'Cone Run'
+            v1 = self.v_grid_amb.value[:, id_r].copy()
+            label1 = 'ambient'
+        
+        # Pad out to fill the full 2pi of contouring
+        fig, ax = plt.subplots(figsize=(14, 7))
+        t_plot = time.to(u.day).value
+        ax.plot(t_plot, v, 'k-', label=label)
+        if field == 'both':
+            ax.plot(time.to(u.day), v1, 'r--', label=label1)
+            
+        ax.set_ylim(250, 1500)
+        ax.set_ylabel('Solar Wind Speed (km/s)')
+        ax.set_xlim(t_plot.min(), t_plot.max())
+        ax.set_xlabel('Time (days)')
+
+        fig.subplots_adjust(left=0.1, bottom=0.1, right=0.95, top=0.95)
+
+        # Add label
+        label = "HUXt1D    Radius: {:3.2f}".format(self.r[id_r].to(u.solRad).value) +  "$R_{sun}$"
+        ax.set_title(label, fontsize=20)
+        ax.legend(loc=1)
+        if save:
+            cr_num = np.int32(self.cr_num.value)
+            filename = "HUXt1D_CR{:03d}_{}_{}_time_series_radius{:03d}.png".format(cr_num, tag, field, id_r)
+            filepath = os.path.join(self._figure_dir_, filename)
+            fig.savefig(filepath)
+
+        return fig, ax
+
         
 class HUXt2D:
+    """
+    A class containing the 2D HUXt model described in Owens et al. (2019). 
+    """
 
     def __init__(self, cr_num, simtime=5.0, dt_scale=1.0):
 
@@ -581,11 +748,55 @@ def time_grid(v_max, dr, simtime, dt_scale):
                  'dt_out': dt_out, 'Nt_out': Nt_out, 'time_out': time_out}
     return time_grid_dict
 
+def load_HUXt1D_run(filepath):
+    """
+    Load in data from a previous run.
+    :param filepath: The full path to a HDF5 file containing the output from HUXt1D.save()
+    :return: cme_list: A list of instances of ConeCME
+    :return: model: An instance of HUXt1DCME containing loaded results.
+    """
+    if os.path.isfile(filepath):
+
+        data = h5py.File(filepath, 'r')
+        
+        # Load in the CME paramters
+        cme_list = []
+
+        all_cmes = data['ConeCMEs']
+        for k in all_cmes.keys():
+            cme_data = all_cmes[k]
+            t_launch = cme_data['t_launch'][()]
+            lon = np.rad2deg(cme_data['longitude'][()])
+            width = np.rad2deg(cme_data['width'][()])
+            thickness = cme_data['thickness'][()] * u.Unit(cme_data['thickness'].attrs['unit'])
+            thickness = thickness.to('solRad').value
+            v = cme_data['v'][()]
+            cme = ConeCME(t_launch=t_launch, longitude=lon, v=v, width=width, thickness=thickness)
+            cme_list.append(cme)
+
+        # Initialise the model
+        # TODO: check it matches what the resolution and limits of the HDF5 file??
+        cr_num = np.int32(data['cr_num'])
+        simtime = data['simtime'][()] * u.Unit(data['simtime'].attrs['unit'])
+        simtime = simtime.to(u.day).value
+        dt_scale = data['dt_scale'][()]
+        lon = np.rad2deg(data['lon'])
+        model = HUXt1D(cr_num, lon=lon, simtime=simtime, dt_scale=dt_scale)
+        model.v_grid_cme[:, :] = data['v_grid_cme'][()] * u.Unit(data['v_boundary'].attrs['unit'])
+        model.v_grid_amb[:, :] = data['v_grid_cme'][()] * u.Unit(data['v_boundary'].attrs['unit'])
+
+    else:
+        # File doesnt exist return nothing
+        print("Warning: {} doesnt exist.".format(filepath))
+        cme_list = []
+        model = []
+
+    return cme_list, model
+
 def load_HUXt2D_run(filepath):
     """
     Load in data from a previous run.
     :param filepath: The full path to a HDF5 file containing the output from HUXt2D.save()
-    :return: v_boundary: Numpy array of the solar wind boundary condition. Unit km/s
     :return: cme_list: A list of instances of ConeCME
     :return: model: An instance of HUXt2DCME containing loaded results.
     """
@@ -625,72 +836,6 @@ def load_HUXt2D_run(filepath):
         model = []
 
     return cme_list, model
-
-def _cone_cme_boundary_1d_(r_boundary, longitude, time, v_boundary, cme):    
-
-    # Center the longitude array on CME nose, running from -pi to pi, to avoid dealing with any 0/2pi crossings
-    lon_cent = longitude - cme.longitude
-    id_high = lon_cent > np.pi*u.rad
-    lon_cent[id_high] = 2.0*np.pi*u.rad - lon_cent[id_high]
-    id_low = lon_cent < -np.pi*u.rad
-    lon_cent[id_low] = lon_cent[id_low] + 2.0*np.pi*u.rad 
-    
-    if (lon_cent >= -cme.width/2) & (lon_cent <= cme.width/2):
-        # Longitude inside CME span.
-
-        #  Compute y, the height of CME nose above the 30rS surface
-        y = cme.v*(time - cme.t_launch)
-        x = np.NaN*y.unit
-        if (y >= 0*u.km) & (y < cme.radius):  # this is the front hemisphere of the spherical CME
-            x = np.sqrt(y*(2*cme.radius - y))  # compute x, the distance of the current longitude from the nose
-        elif (y >= (cme.radius + cme.thickness)) & (y <= (2*cme.radius + cme.thickness)):  # this is the back hemisphere of the spherical CME
-            y = y - cme.thickness
-            x = np.sqrt(y*(2*cme.radius - y))
-        elif (cme.thickness > 0*u.km) & (y >= cme.radius) & (y <= (cme.radius + cme.thickness)):  # this is the "mass" between the hemispheres
-            x = cme.radius
-            
-        theta = np.arctan(x / r_boundary)
-        if (lon_cent >= - theta) & (lon_cent <= theta):
-            v_boundary = cme.v
-            
-    return v_boundary
-
-def _cone_cme_boundary_2d_(r_boundary, longitude, v_boundary, t, cme):
-    """
-    Function to update inner speed boundary condition with the time dependent cone cme speed
-    """
-    # Center the longitude array on CME nose, running from -pi to pi, to avoid dealing with any 0/2pi crossings
-    lon_cent = longitude - cme.longitude
-    id_high = lon_cent > np.pi*u.rad
-    lon_cent[id_high] = 2.0*np.pi*u.rad - lon_cent[id_high]
-    id_low = lon_cent < -np.pi*u.rad
-    lon_cent[id_low] = lon_cent[id_low] + 2.0*np.pi*u.rad 
-    
-    #  Compute y, the height of CME nose above the 30rS surface
-    y = cme.v*(t - cme.t_launch)
-    if (y >= 0*u.km) & (y < cme.radius):  # this is the front hemisphere of the spherical CME
-        x = np.sqrt(y*(2*cme.radius - y))  # compute x, the distance of the current longitude from the nose
-        # convert x back to an angular separation
-        theta = np.arctan(x / r_boundary)
-        pos = (lon_cent > - theta) & (lon_cent <= theta)
-        v_boundary[pos] = cme.v.value
-    elif (y >= (cme.radius + cme.thickness)) & (
-        y <= (2*cme.radius + cme.thickness)):  # this is the back hemisphere of the spherical CME
-        y = y - cme.thickness
-        x = np.sqrt(y*(2*cme.radius - y))
-        # convert back to an angle
-        theta = np.arctan(x / r_boundary)
-        pos = (lon_cent > - theta) & (lon_cent <= theta)
-        v_boundary[pos] = cme.v.value
-    elif (cme.thickness > 0*u.km) & (y >= cme.radius) & (
-        y <= (cme.radius + cme.thickness)):  # this is the "mass" between the hemispheres
-        x = cme.radius
-        # convert back to an angle
-        theta = np.arctan(x / r_boundary)
-        pos = (lon_cent > - theta) & (lon_cent <= theta)
-        v_boundary[pos] = cme.v.value
-
-    return v_boundary
 
 def solve_upwind(model, v_input):
         """
@@ -738,6 +883,74 @@ def _upwind_step_(model, v_up, v_dn):
     # Add the residual acceleration over this grid cell
     v_up_next = v_up_next + (v_dn*model.dtdr*v_diff)
     return v_up_next
+
+def _cone_cme_boundary_1d_(r_boundary, longitude, time, v_boundary, cme):
+    """
+    Function to update inner speed boundary condition with the time dependent cone cme speed, for HUXt1D
+    """
+
+    # Center the longitude array on CME nose, running from -pi to pi, to avoid dealing with any 0/2pi crossings
+    lon_cent = longitude - cme.longitude
+    id_high = lon_cent > np.pi*u.rad
+    lon_cent[id_high] = 2.0*np.pi*u.rad - lon_cent[id_high]
+    id_low = lon_cent < -np.pi*u.rad
+    lon_cent[id_low] = lon_cent[id_low] + 2.0*np.pi*u.rad 
+    
+    if (lon_cent >= -cme.width/2) & (lon_cent <= cme.width/2):
+        # Longitude inside CME span.
+        #  Compute y, the height of CME nose above the 30rS surface
+        y = cme.v*(time - cme.t_launch)
+        x = np.NaN*y.unit
+        if (y >= 0*u.km) & (y < cme.radius):  # this is the front hemisphere of the spherical CME
+            x = np.sqrt(y*(2*cme.radius - y))  # compute x, the distance of the current longitude from the nose
+        elif (y >= (cme.radius + cme.thickness)) & (y <= (2*cme.radius + cme.thickness)):  # this is the back hemisphere of the spherical CME
+            y = y - cme.thickness
+            x = np.sqrt(y*(2*cme.radius - y))
+        elif (cme.thickness > 0*u.km) & (y >= cme.radius) & (y <= (cme.radius + cme.thickness)):  # this is the "mass" between the hemispheres
+            x = cme.radius
+            
+        theta = np.arctan(x / r_boundary)
+        if (lon_cent >= - theta) & (lon_cent <= theta):
+            v_boundary = cme.v
+            
+    return v_boundary
+
+def _cone_cme_boundary_2d_(r_boundary, longitude, v_boundary, t, cme):
+    """
+    Function to update inner speed boundary condition with the time dependent cone cme speed, for HUXt2D
+    """
+    # Center the longitude array on CME nose, running from -pi to pi, to avoid dealing with any 0/2pi crossings
+    lon_cent = longitude - cme.longitude
+    id_high = lon_cent > np.pi*u.rad
+    lon_cent[id_high] = 2.0*np.pi*u.rad - lon_cent[id_high]
+    id_low = lon_cent < -np.pi*u.rad
+    lon_cent[id_low] = lon_cent[id_low] + 2.0*np.pi*u.rad 
+    
+    #  Compute y, the height of CME nose above the 30rS surface
+    y = cme.v*(t - cme.t_launch)
+    if (y >= 0*u.km) & (y < cme.radius):  # this is the front hemisphere of the spherical CME
+        x = np.sqrt(y*(2*cme.radius - y))  # compute x, the distance of the current longitude from the nose
+        # convert x back to an angular separation
+        theta = np.arctan(x / r_boundary)
+        pos = (lon_cent > - theta) & (lon_cent <= theta)
+        v_boundary[pos] = cme.v.value
+    elif (y >= (cme.radius + cme.thickness)) & (
+        y <= (2*cme.radius + cme.thickness)):  # this is the back hemisphere of the spherical CME
+        y = y - cme.thickness
+        x = np.sqrt(y*(2*cme.radius - y))
+        # convert back to an angle
+        theta = np.arctan(x / r_boundary)
+        pos = (lon_cent > - theta) & (lon_cent <= theta)
+        v_boundary[pos] = cme.v.value
+    elif (cme.thickness > 0*u.km) & (y >= cme.radius) & (
+        y <= (cme.radius + cme.thickness)):  # this is the "mass" between the hemispheres
+        x = cme.radius
+        # convert back to an angle
+        theta = np.arctan(x / r_boundary)
+        pos = (lon_cent > - theta) & (lon_cent <= theta)
+        v_boundary[pos] = cme.v.value
+
+    return v_boundary
 
 def _zerototwopi_(angles):
     """
