@@ -1,7 +1,7 @@
 # HUXt - a lightweight solar wind model
 ---
 
-This repository provides an implementation of the HUXt model (Heliospheric Upwind Extrapolation with time dependence) in Python, as described by Owens et al. (2019). It's dependencies are ``numpy`` ``matplotlib`` ``astropy`` ``h5py`` and ``moviepy``. Additionally, to make animations, ``moviepy`` requires ``ffmpeg`` to be installed. 
+This repository provides an implementation of the HUXt model (Heliospheric Upwind Extrapolation with time dependence) in Python, as described by Owens et al. (2019). It's dependencies are ``numpy`` ``matplotlib`` ``astropy`` ``h5py`` and ``moviepy v1.0.1``. Currently ``moviepy v1.0.1`` is not available on ``conda``, but can be downloaded from ``pip``. Additionally, to make animations, ``moviepy`` requires ``ffmpeg`` to be installed. 
 
 Users should update ``root`` in ``code/config.dat`` to point to the local directory where HUXt is installed.
 
