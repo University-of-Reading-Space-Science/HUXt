@@ -7,6 +7,8 @@ import matplotlib.pyplot as plt
 import matplotlib as mpl
 import moviepy.editor as mpy
 from moviepy.video.io.bindings import mplfig_to_npimage
+from skimage import measure
+import scipy.ndimage as ndi
 
 mpl.rc("axes", labelsize=20)
 mpl.rc("ytick", labelsize=20)
@@ -26,6 +28,86 @@ class ConeCME:
         self.initial_height = (30.0*u.solRad).to(u.km)  # Initial height of CME (should match inner boundary of HUXt)
         self.radius = self.initial_height*np.tan(self.width)  # Initial radius of CME
         self.thickness = (thickness*u.solRad).to(u.km)  # Extra CME thickness
+        self.coords = {}
+        
+    def _track_2d_(self, model):
+        """
+        Function to track the perimiter of each ConeCME through the HUXt2D solution in model. 
+        """
+
+        # Owens defintion of CME in HUXt:
+        diff = model.v_grid_cme - model.v_grid_amb
+        cme_bool = diff >= 20*model.kms
+
+        # Find index of middle longitude for centering arrays on the CMEs
+        id_mid_lon = np.argmin(np.abs(model.lon - np.median(model.lon)))
+
+        # Workflow: Loop over each CME, center model solution on CME source lon,
+        # track CME through each timestep, find contours of boundary, save to dict.
+        # Get index of CME longitude
+        id_cme_lon = np.argmin(np.abs(model.lon - self.longitude))
+        self.coords = {j:{'lon_pix':np.array([])*u.pix, 'r_pix':np.array([])*u.pix,
+                          'lon':np.array([])*model.lon.unit,'r':np.array([])*model.r.unit} for j in range(model.Nt_out)}
+        first_frame = True
+        for j, t in enumerate(model.time_out):
+                               
+            if t < self.t_launch:
+                continue
+
+            cme_bool_t = cme_bool[j, :, :]
+            # Center the solution on the CME longitude to avoid edge effects
+            center_shift = id_mid_lon - id_cme_lon
+            cme_bool_t = np.roll(cme_bool_t, center_shift, axis=1)
+
+            # measure seperate CME regions.
+            cme_label, n_cme = measure.label(cme_bool_t.astype(int), connectivity=1, background=0, return_num=True)
+            cme_tags = [i for i in range(1,n_cme+1)]
+
+            if first_frame:
+                # Find only the label in the origin region of this CME   
+                target = np.zeros(cme_bool_t.shape)
+                half_width = self.width / (2*model.dlon)
+                left_edge = np.int32(id_mid_lon - half_width)
+                right_edge = np.int32(id_mid_lon + half_width)
+                target[0,left_edge:right_edge] = 1
+                first_frame = False
+                # Find the CME label that intersects this region
+            
+            matches = []
+            for label in cme_tags:
+                this_label = cme_label == label
+                id_matches = np.any(np.logical_and(target, this_label))
+                if id_matches:
+                    matches.append(label)
+
+            # Check only one match
+            #TODO could select the match with the largest overlap with the target?
+            if len(matches) != 1:
+                print("Warning, more than one match found, taking first match only")
+
+            # Find the coordinates of this region and stash 
+            match_id = matches[0]
+            cme_id = cme_label==match_id
+            # Fill holes in the labelled region
+            cme_id_filled = ndi.binary_fill_holes(cme_id)
+            coords = measure.find_contours(cme_id_filled, 0.5)
+
+            # Contour can be broken at inner and outer boundary, so stack broken contours
+            if len(coords) == 1:
+                coord_array = coords[0]
+            elif len(coords) > 1:
+                coord_array = np.vstack(coords)   
+
+            r_pix = coord_array[:, 0]
+            # Remove centering and correct wraparound indices
+            lon_pix = coord_array[:, 1] - center_shift
+            lon_pix[lon_pix<0] += model.Nlon
+            self.coords[j]['lon_pix'] = lon_pix * u.pix
+            self.coords[j]['r_pix'] = r_pix * u.pix
+            self.coords[j]['r'] = np.interp(r_pix, np.arange(0,model.Nr), model.r)
+            self.coords[j]['lon'] = np.interp(lon_pix, np.arange(0,model.Nlon), model.lon)
+            target = cme_id.copy()
+        return
 
 class HUXt1D:
     """
@@ -399,6 +481,9 @@ class HUXt2D:
 
         # Mesh the spatial coordinates.
         self.lon_grid, self.r_grid = np.meshgrid(self.lon, self.r)
+        
+        # Empty dictionary for storing the coordinates of CME boundaries.
+        self.cmes = []
         return
 
     def solve(self, cme_list, save=False, tag=''):
@@ -415,7 +500,8 @@ class HUXt2D:
                 cme_list_checked.append(cme)
             else:
                 print("Warning: cme_list contained objects other than ConeCME instances. These will be excluded")
-                
+        
+        self.cmes = cme_list_checked
         # Initialise v from the steady-state solution - no spin up required
         # ----------------------------------------------------------------------------------------
         # compute the steady-state solution, as function of time, convert to function of long
@@ -480,20 +566,28 @@ class HUXt2D:
             #  Cone CME bondary
             # ==================================================================
             v_boundary_cone = v_boundary_tstep.copy()
-            for cme in cme_list_checked:
+            for cme in self.cmes:
                 r_boundary = self.r.min().to(u.km)
                 v_boundary_cone = _cone_cme_boundary_2d_(r_boundary, lon_tstep, v_boundary_cone, self.time[t], cme)
                     
             v_boundary_update = np.interp(self.lon.value, lon_tstep.value, v_boundary_cone)
             v_cme[0, :] = v_boundary_update #* self.kms # same comment as L478
-
+            
+        # Update CME positions
+        updated_cmes = []
+        for cme in self.cmes:
+            cme._track_2d_(self)
+            updated_cmes.append(cme)
+        
+        self.cmes = updated_cmes
+        
         if save:
             if tag == '':
                 print("Warning, blank tag means file likely to be overwritten")
-            self.save(cme_list_checked, tag=tag)
+            self.save(tag=tag)
         return
 
-    def save(self, cme_list, tag):
+    def save(self, tag=''):
         """
         Function to save output to a HDF5 file. 
         """
@@ -510,13 +604,24 @@ class HUXt2D:
 
         # Save the Cone CME parameters to a new group.
         allcmes = out_file.create_group('ConeCMEs')
-        for i, cme in enumerate(cme_list):
+        for i, cme in enumerate(self.cmes):
             cme_name = "ConeCME_{:02d}".format(i)
             cmegrp = allcmes.create_group(cme_name)
             for k, v in cme.__dict__.items():
-                dset = cmegrp.create_dataset(k, data=v.value)
-                dset.attrs['unit'] = v.unit.to_string()
-                out_file.flush()
+                if k != "coords":
+                    dset = cmegrp.create_dataset(k, data=v.value)
+                    dset.attrs['unit'] = v.unit.to_string()
+                    out_file.flush()
+                # Now handle the dictionary of CME boundary coordinates coords > time_out > position
+                if k == "coords":
+                    coordgrp = cmegrp.create_group(k)
+                    for time, position in v.items():
+                        time_label = "t_out_{:03d}".format(time)
+                        timegrp = coordgrp.create_group(time_label)
+                        for pos_label, pos_data in position.items():
+                            dset = timegrp.create_dataset(pos_label, data=pos_data.value)
+                            dset.attrs['unit'] = pos_data.unit.to_string()
+                            out_file.flush()
 
         # Loop over the attributes of model instance and save select keys/attributes.
         keys = ['cr_num', 'simtime', 'dt', 'v_max', 'r_accel', 'alpha',
@@ -583,9 +688,15 @@ class HUXt2D:
         mymap.set_over([1, 1, 1])
         mymap.set_under([0, 0, 0])
         dv = 10
-        levels = np.arange(200, 1000+dv, dv)
+        levels = np.arange(200, 800+dv, dv)
         fig, ax = plt.subplots(figsize=(14, 14), subplot_kw={"projection": "polar"})
         cnt = ax.contourf(lon, rad, v, levels=levels, cmap=mymap, extend='both')
+        # Add on CME boundaries
+        cme_colors = ['r', 'c', 'm', 'y', 'white', 'darkorange', 'deeppink']
+        for j, cme in enumerate(self.cmes):
+            cid = np.mod(j, len(cme_colors))
+            ax.plot(cme.coords[t]['lon'], cme.coords[t]['r'], '--', color=cme_colors[cid], linewidth=4)
+            
         ax.set_ylim(0, 230)
         ax.set_yticklabels([])
         ax.tick_params(axis='x', which='both', pad=15)
@@ -601,8 +712,9 @@ class HUXt2D:
         wid = pos.width - 2*dw
         cbaxes = fig.add_axes([left, bottom, wid, 0.03])
         cbar1 = fig.colorbar(cnt, cax=cbaxes, orientation='horizontal')
-        cbar1.ax.set_xlabel("Solar Wind Speed (km/s)")
-        
+        cbar1.set_label("Solar Wind Speed (km/s)")
+        cbar1.set_ticks(np.arange(200,900,100))
+
         # Add label
         label = "Time: {:3.2f} days".format(self.time_out[t].to(u.day).value)
         fig.text(0.675, 0.17, label, fontsize=20)
@@ -991,4 +1103,3 @@ def _setup_dirs_():
                 print('Error, invalid path, check config.dat: ' + val)
 
     return dirs
-
