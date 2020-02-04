@@ -692,10 +692,10 @@ class HUXt2D:
         fig, ax = plt.subplots(figsize=(14, 14), subplot_kw={"projection": "polar"})
         cnt = ax.contourf(lon, rad, v, levels=levels, cmap=mymap, extend='both')
         # Add on CME boundaries
-        cme_colors = ['r', 'c', 'm', 'y', 'white', 'darkorange', 'deeppink']
+        cme_colors = ['r', 'c', 'm', 'y', 'deeppink', 'darkorange', 'white']
         for j, cme in enumerate(self.cmes):
             cid = np.mod(j, len(cme_colors))
-            ax.plot(cme.coords[t]['lon'], cme.coords[t]['r'], '--', color=cme_colors[cid], linewidth=4)
+            ax.plot(cme.coords[t]['lon'], cme.coords[t]['r'], '-', color=cme_colors[cid], linewidth=3)
             
         ax.set_ylim(0, 230)
         ax.set_yticklabels([])
