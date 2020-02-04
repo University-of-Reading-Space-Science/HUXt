@@ -475,7 +475,7 @@ class HUXt2D:
             # ==================================================================
             v_boundary_tstep = np.roll(v_boundary_tstep, 1)
             v_boundary_update = np.interp(self.lon.value, lon_tstep.value, v_boundary_tstep)
-            v_amb[0, :] = v_boundary_update * self.kms
+            v_amb[0, :] = v_boundary_update# * self.kms #This line failed after update. Does interp handle units now?
 
             #  Cone CME bondary
             # ==================================================================
@@ -485,7 +485,7 @@ class HUXt2D:
                 v_boundary_cone = _cone_cme_boundary_2d_(r_boundary, lon_tstep, v_boundary_cone, self.time[t], cme)
                     
             v_boundary_update = np.interp(self.lon.value, lon_tstep.value, v_boundary_cone)
-            v_cme[0, :] = v_boundary_update * self.kms
+            v_cme[0, :] = v_boundary_update #* self.kms # same comment as L478
 
         if save:
             if tag == '':
@@ -933,7 +933,7 @@ def _cone_cme_boundary_2d_(r_boundary, longitude, v_boundary, t, cme):
         # convert x back to an angular separation
         theta = np.arctan(x / r_boundary)
         pos = (lon_cent > - theta) & (lon_cent <= theta)
-        v_boundary[pos] = cme.v.value
+        v_boundary[pos] = cme.v # Edited here as unit was hanging after update. Was cme.v.value
     elif (y >= (cme.radius + cme.thickness)) & (
         y <= (2*cme.radius + cme.thickness)):  # this is the back hemisphere of the spherical CME
         y = y - cme.thickness
@@ -941,14 +941,14 @@ def _cone_cme_boundary_2d_(r_boundary, longitude, v_boundary, t, cme):
         # convert back to an angle
         theta = np.arctan(x / r_boundary)
         pos = (lon_cent > - theta) & (lon_cent <= theta)
-        v_boundary[pos] = cme.v.value
+        v_boundary[pos] = cme.v # Edited here as unit was hanging after update. Was cme.v.value
     elif (cme.thickness > 0*u.km) & (y >= cme.radius) & (
         y <= (cme.radius + cme.thickness)):  # this is the "mass" between the hemispheres
         x = cme.radius
         # convert back to an angle
         theta = np.arctan(x / r_boundary)
         pos = (lon_cent > - theta) & (lon_cent <= theta)
-        v_boundary[pos] = cme.v.value
+        v_boundary[pos] = cme.v # Edited here as unit was hanging after update. Was cme.v.value
 
     return v_boundary
 
