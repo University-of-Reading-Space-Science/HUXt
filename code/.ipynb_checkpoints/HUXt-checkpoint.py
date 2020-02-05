@@ -64,7 +64,8 @@ class ConeCME:
             cme_tags = [i for i in range(1,n_cme+1)]
 
             if first_frame:
-                # Find only the label in the origin region of this CME   
+                # Find only the label in the origin region of this CME
+                # Use a binary mask over the source region of the CME.
                 target = np.zeros(cme_bool_t.shape)
                 half_width = self.width / (2*model.dlon)
                 left_edge = np.int32(id_mid_lon - half_width)
@@ -106,6 +107,7 @@ class ConeCME:
             self.coords[j]['r_pix'] = r_pix * u.pix
             self.coords[j]['r'] = np.interp(r_pix, np.arange(0,model.Nr), model.r)
             self.coords[j]['lon'] = np.interp(lon_pix, np.arange(0,model.Nlon), model.lon)
+            # Update the target, so next iteration finds CME that overlaps with this frame.
             target = cme_id.copy()
         return
 
@@ -916,9 +918,18 @@ def load_HUXt2D_run(filepath):
 
         data = h5py.File(filepath, 'r')
         
-        # Load in the CME paramters
+        # Initialise the model
+        # TODO: check it matches the resolution and limits of the HDF5 file??
+        cr_num = np.int32(data['cr_num'])
+        simtime = data['simtime'][()] * u.Unit(data['simtime'].attrs['unit'])
+        simtime = simtime.to(u.day).value
+        dt_scale = data['dt_scale'][()]
+        model = HUXt2D(cr_num, simtime=simtime, dt_scale=dt_scale)
+        model.v_grid_cme[:, :, :] = data['v_grid_cme'][()] * u.Unit(data['v_boundary'].attrs['unit'])
+        model.v_grid_amb[:, :, :] = data['v_grid_cme'][()] * u.Unit(data['v_boundary'].attrs['unit'])
+        
+        # Create list of the ConeCMEs
         cme_list = []
-
         all_cmes = data['ConeCMEs']
         for k in all_cmes.keys():
             cme_data = all_cmes[k]
@@ -929,17 +940,25 @@ def load_HUXt2D_run(filepath):
             thickness = thickness.to('solRad').value
             v = cme_data['v'][()]
             cme = ConeCME(t_launch=t_launch, longitude=lon, v=v, width=width, thickness=thickness)
-            cme_list.append(cme)
 
-        # Initialise the model
-        # TODO: check it matches what the resolution and limits of the HDF5 file??
-        cr_num = np.int32(data['cr_num'])
-        simtime = data['simtime'][()] * u.Unit(data['simtime'].attrs['unit'])
-        simtime = simtime.to(u.day).value
-        dt_scale = data['dt_scale'][()]
-        model = HUXt2D(cr_num, simtime=simtime, dt_scale=dt_scale)
-        model.v_grid_cme[:, :, :] = data['v_grid_cme'][()] * u.Unit(data['v_boundary'].attrs['unit'])
-        model.v_grid_amb[:, :, :] = data['v_grid_cme'][()] * u.Unit(data['v_boundary'].attrs['unit'])
+            # Now sort out coordinates.
+            # Use the same dictionary structure as defined in ConeCME._track_2d_
+            coords_group = cme_data['coords']
+            coords_data = {j:{'lon_pix':np.array([])*u.pix, 'r_pix':np.array([])*u.pix,
+                         'lon':np.array([])*model.lon.unit,'r':np.array([])*model.r.unit} for j in range(len(coords_group))}
+
+            for time_key, pos in coords_group.items():
+                t = np.int(time_key.split("_")[2])
+                coords_data[t]['lon_pix'] = pos['lon_pix'][()] * u.Unit(pos['lon_pix'].attrs['unit'])
+                coords_data[t]['r_pix'] = pos['r_pix'][()] * u.Unit(pos['r_pix'].attrs['unit'])
+                coords_data[t]['lon'] = pos['lon'][()] * u.Unit(pos['lon'].attrs['unit'])
+                coords_data[t]['r'] = pos['r'][()] * u.Unit(pos['r'].attrs['unit'])
+
+            cme.coords = coords_data
+            cme_list.append(cme)
+            
+        # Update CMEs in model output
+        model.cmes = cme_list
 
     else:
         # File doesnt exist return nothing
@@ -1045,7 +1064,7 @@ def _cone_cme_boundary_2d_(r_boundary, longitude, v_boundary, t, cme):
         # convert x back to an angular separation
         theta = np.arctan(x / r_boundary)
         pos = (lon_cent > - theta) & (lon_cent <= theta)
-        v_boundary[pos] = cme.v # Edited here as unit was hanging after update. Was cme.v.value
+        v_boundary[pos] = cme.v 
     elif (y >= (cme.radius + cme.thickness)) & (
         y <= (2*cme.radius + cme.thickness)):  # this is the back hemisphere of the spherical CME
         y = y - cme.thickness
@@ -1053,14 +1072,14 @@ def _cone_cme_boundary_2d_(r_boundary, longitude, v_boundary, t, cme):
         # convert back to an angle
         theta = np.arctan(x / r_boundary)
         pos = (lon_cent > - theta) & (lon_cent <= theta)
-        v_boundary[pos] = cme.v # Edited here as unit was hanging after update. Was cme.v.value
+        v_boundary[pos] = cme.v 
     elif (cme.thickness > 0*u.km) & (y >= cme.radius) & (
         y <= (cme.radius + cme.thickness)):  # this is the "mass" between the hemispheres
         x = cme.radius
         # convert back to an angle
         theta = np.arctan(x / r_boundary)
         pos = (lon_cent > - theta) & (lon_cent <= theta)
-        v_boundary[pos] = cme.v # Edited here as unit was hanging after update. Was cme.v.value
+        v_boundary[pos] = cme.v 
 
     return v_boundary
 
