@@ -30,6 +30,60 @@ class ConeCME:
         self.thickness = (thickness*u.solRad).to(u.km)  # Extra CME thickness
         self.coords = {}
         
+    def _track_1d_(self, model):
+        """
+        Function to track the length of each ConeCME through the HUXt1D solution in model.
+        """
+        # Owens defintion of CME in HUXt:
+        diff = model.v_grid_cme - model.v_grid_amb
+        cme_bool = diff >= 20*model.kms
+
+        # Workflow: Loop over each CME, track CME through each timestep,
+        # find contours of boundary, save to dict.
+        self.coords = {j:{'r_pix':np.array([])*u.pix, 'r':np.array([])*model.r.unit} for j in range(model.Nt_out)}
+        first_frame = True
+        for j, t in enumerate(model.time_out):
+
+            if t < self.t_launch:
+                continue
+
+            cme_bool_t = cme_bool[j, :]
+            # Center the solution on the CME longitude to avoid edge effects
+
+            # measure seperate CME regions.
+            cme_label, n_cme = measure.label(cme_bool_t.astype(int), connectivity=1, background=0, return_num=True)
+            cme_tags = [i for i in range(1,n_cme+1)]
+
+            if first_frame:
+                # Find only the label in the origin region of this CME
+                # Use a binary mask over the source region of the CME.
+                target = np.zeros(cme_bool_t.shape)
+                target[0] = 1
+                first_frame = False
+                # Find the CME label that intersects this region
+
+            matches = []
+            for label in cme_tags:
+                this_label = cme_label == label
+                id_matches = np.any(np.logical_and(target, this_label))
+                if id_matches:
+                    matches.append(label)
+
+            if len(matches) != 1:
+                print("Warning, more than one match found, taking first match only")
+
+            # Find the coordinates of this region and stash 
+            match_id = matches[0]
+            cme_id = cme_label==match_id
+            r_pix = np.argwhere(cme_id)
+
+            self.coords[j]['r_pix'] = r_pix * u.pix
+            self.coords[j]['r'] = np.interp(r_pix, np.arange(0,model.Nr), model.r)
+
+            # Update the target, so next iteration finds CME that overlaps with this frame.
+            target = cme_id.copy()
+        return
+    
     def _track_2d_(self, model):
         """
         Function to track the perimiter of each ConeCME through the HUXt2D solution in model. 
@@ -166,6 +220,9 @@ class HUXt1D:
         # Preallocate space for the output for the solar wind fields for the cme and ambient solution.
         self.v_grid_cme = np.zeros((self.Nt_out, self.Nr)) * self.kms
         self.v_grid_amb = np.zeros((self.Nt_out, self.Nr)) * self.kms
+        
+        # Make an empty dictionary for storing ConeCMEs into
+        self.cmes = []
         return
     
     def solve(self, cme_list, save=False, tag=''):
@@ -182,6 +239,8 @@ class HUXt1D:
                 cme_list_checked.append(cme)
             else:
                 print("Warning: cme_list contained objects other than ConeCME instances. These will be excluded")
+        
+        self.cmes = cme_list_checked
                 
         buffersteps = np.fix( (5.0*u.day).to(u.s) / self.dt)
         buffertime = buffersteps*self.dt
@@ -252,7 +311,15 @@ class HUXt1D:
                         self.v_grid_amb[t_out, :] = v_amb.copy()
                         t_out = t_out + 1
                         iter_count = 0
-
+        
+        # Update CMEs positions by tracking through the solution.
+        updated_cmes = []
+        for cme in self.cmes:
+            cme._track_1d_(self)
+            updated_cmes.append(cme)
+        
+        self.cmes = updated_cmes
+        
         if save:
             if tag == '':
                 print("Warning, blank tag means file likely to be overwritten")
