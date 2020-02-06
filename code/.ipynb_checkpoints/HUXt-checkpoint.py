@@ -323,10 +323,10 @@ class HUXt1D:
         if save:
             if tag == '':
                 print("Warning, blank tag means file likely to be overwritten")
-            self.save(cme_list_checked, tag=tag)
+            self.save(tag=tag)
         return
     
-    def save(self, cme_list, tag):
+    def save(self, tag=''):
         """
         Function to save output to a HDF5 file. 
         """
@@ -340,28 +340,35 @@ class HUXt1D:
             os.remove(out_filepath)
 
         out_file = h5py.File(out_filepath, 'w')
-
-        # Save the Cone CME parameters to a new group.
+        
         allcmes = out_file.create_group('ConeCMEs')
-        for i, cme in enumerate(cme_list):
+        for i, cme in enumerate(self.cmes):
             cme_name = "ConeCME_{:02d}".format(i)
             cmegrp = allcmes.create_group(cme_name)
             for k, v in cme.__dict__.items():
-                dset = cmegrp.create_dataset(k, data=v.value)
-                dset.attrs['unit'] = v.unit.to_string()
-                out_file.flush()
-
+                if k != "coords":
+                    dset = cmegrp.create_dataset(k, data=v.value)
+                    dset.attrs['unit'] = v.unit.to_string()
+                    out_file.flush()
+                # Now handle the dictionary of CME boundary coordinates coords > time_out > position
+                if k == "coords":
+                    coordgrp = cmegrp.create_group(k)
+                    for time, position in v.items():
+                        time_label = "t_out_{:03d}".format(time)
+                        timegrp = coordgrp.create_group(time_label)
+                        for pos_label, pos_data in position.items():
+                            dset = timegrp.create_dataset(pos_label, data=pos_data.value)
+                            dset.attrs['unit'] = pos_data.unit.to_string()
+                            out_file.flush()
+                            
         # Loop over the attributes of model instance and save select keys/attributes.
         keys = ['cr_num', 'simtime', 'dt', 'v_max', 'r_accel', 'alpha',
                 'dt_scale', 'time_out', 'dt_out', 'r', 'dr', 'lon', 'dlon',
                 'v_grid_cme', 'v_grid_amb', 'v_boundary']
         for k, v in self.__dict__.items():
-
             if k in keys:
-
                 dset = out_file.create_dataset(k, data=v.value)
                 dset.attrs['unit'] = v.unit.to_string()
-                
                 # Add on the dimensions of the output speed fields.
                 if k in ['v_grid_cme', 'v_grid_amb']:
                     dset.dims[0].label = 'time'
@@ -390,31 +397,34 @@ class HUXt1D:
             print("Error, input time outside span of model times. Defaulting to closest time")
             id_t = np.argmin(np.abs(self.time_out - time))
             time = self.time_out[id_t]
-            
+        
+        fig, ax = plt.subplots(figsize=(14, 7))
         # Get plotting data
-        rad = self.r.value.copy()
         id_t = np.argmin(np.abs(self.time_out - time))
         if field == 'cme':
-            v = self.v_grid_cme.value[id_t, :].copy()
             label = 'Cone Run'
+            ax.plot(self.r, self.v_grid_cme[id_t,:], 'k-', label=label)
         elif field == 'ambient':
-            v = self.v_grid_amb.value[id_t, :].copy()
             label = 'Ambient'
+            ax.plot(self.r, self.v_grid_amb[id_t,:], 'r--', label=label)
         elif field == 'both':
-            v = self.v_grid_cme.value[id_t, :].copy()
             label = 'Cone Run'
-            v1 = self.v_grid_amb.value[id_t, :].copy()
-            label1 = 'Ambient'
-        
-        # Pad out to fill the full 2pi of contouring
-        fig, ax = plt.subplots(figsize=(14, 7))
-        ax.plot(rad, v, 'k-', label=label)
-        if field == 'both':
-            ax.plot(rad, v1, 'r--', label=label1)
+            ax.plot(self.r, self.v_grid_cme[id_t,:], 'k-', label=label)
+            label = 'Ambient'
+            ax.plot(self.r, self.v_grid_amb[id_t,:], 'r--', label=label)
             
+        # Plot the CME points on if needed
+        if field in ['cme', 'both']:
+            colors = ['c', 'm', 'b', 'darkorange']
+            for c, cme in enumerate(self.cmes):
+                cc = np.mod(c, len(colors))
+                id_r = np.int32(cme.coords[id_t]['r_pix'].value)
+                label = "CME {:02d}".format(c)
+                ax.plot(self.r[id_r], self.v_grid_cme[id_t, id_r], '.', color=colors[cc], label=label)
+
         ax.set_ylim(250, 1500)
         ax.set_ylabel('Solar Wind Speed (km/s)')
-        ax.set_xlim(rad.min(), rad.max())
+        ax.set_xlim(self.r.value.min(), self.r.value.max())
         ax.set_xlabel('Radial distance ($R_{sun}$)')
 
         fig.subplots_adjust(left=0.1, bottom=0.1, right=0.95, top=0.95)
@@ -434,7 +444,7 @@ class HUXt1D:
     def plot_timeseries(self, radius, field='cme', save=False, tag=''):
         """
         Plot the solar wind model timeseries at model radius closest to specified radius
-        :param time: Radius (in solar radii) to find the closest model radius to.
+        :param radius: Radius (in solar radii) to find the closest model radius to.
         :param field: String, either 'cme', 'ambient', or 'both' specifying which solution to plot.
         :param save: Boolean to determine if the figure is saved.
         :param tag: String to append to the filename if saving the figure.
@@ -447,32 +457,40 @@ class HUXt1D:
             
         if (radius < self.r.min()) | (radius > (self.r.max())):
             print("Error, specified radius outside of model radial grid")
-            
-        # Get plotting data
-        time = self.time_out.copy()
-        id_r = np.argmin(np.abs(self.r - radius))
-        if field == 'cme':
-            v = self.v_grid_cme.value[:, id_r].copy()
-            label = 'Cone Run'
-        elif field == 'ambient':
-            v = self.v_grid_amb.value[:, id_r].copy()
-            label = 'ambient'
-        elif field == 'both':
-            v = self.v_grid_cme.value[:, id_r].copy()
-            label = 'Cone Run'
-            v1 = self.v_grid_amb.value[:, id_r].copy()
-            label1 = 'ambient'
         
-        # Pad out to fill the full 2pi of contouring
         fig, ax = plt.subplots(figsize=(14, 7))
-        t_plot = time.to(u.day).value
-        ax.plot(t_plot, v, 'k-', label=label)
-        if field == 'both':
-            ax.plot(time.to(u.day), v1, 'r--', label=label1)
+        # Get plotting data
+        id_r = np.argmin(np.abs(self.r - radius))
+        t_day = self.time_out.to(u.day)
+        if field == 'cme':
+            label = 'Cone Run'
+            ax.plot(t_day, self.v_grid_cme[:, id_r], 'k-', label=label)
+        elif field == 'ambient':
+            label = 'ambient'
+            ax.plot(t_day, self.v_grid_amb[:, id_r], 'r--', label=label)
+        elif field == 'both':
+            label = 'Cone Run'
+            ax.plot(t_day, self.v_grid_cme[:, id_r], 'k-', label=label)
+            label1 = 'ambient'
+            ax.plot(t_day, self.v_grid_amb[:, id_r], 'r--', label=label)
+        
+        # Plot CMEs if needed
+        colors = ['c', 'm', 'b', 'darkorange']
+        r_find = self.r[id_r]
+        for c, cme in enumerate(self.cmes):
+            cc = np.mod(c, len(colors))
+            label = "CME {:02d}".format(c)
+            # Find those times where CME coordinates match select radius.
+            id_t = []
+            for k,coord in cme.coords.items():
+                if np.any(coord['r']==r_find):
+                    id_t.append(k)
+
+            ax.plot(t_day[id_t],  self.v_grid_cme[id_t, id_r], '.', color=colors[cc], label=label)
             
         ax.set_ylim(250, 1500)
         ax.set_ylabel('Solar Wind Speed (km/s)')
-        ax.set_xlim(t_plot.min(), t_plot.max())
+        ax.set_xlim(t_day.value.min(), t_day.value.max())
         ax.set_xlabel('Time (days)')
 
         fig.subplots_adjust(left=0.1, bottom=0.1, right=0.95, top=0.95)
@@ -940,6 +958,17 @@ def load_HUXt1D_run(filepath):
 
         data = h5py.File(filepath, 'r')
         
+        # Initialise the model
+        # TODO: check it matches what the resolution and limits of the HDF5 file??
+        cr_num = np.int32(data['cr_num'])
+        simtime = data['simtime'][()] * u.Unit(data['simtime'].attrs['unit'])
+        simtime = simtime.to(u.day).value
+        dt_scale = data['dt_scale'][()]
+        lon = np.rad2deg(data['lon'])
+        model = HUXt1D(cr_num, lon=lon, simtime=simtime, dt_scale=dt_scale)
+        model.v_grid_cme[:, :] = data['v_grid_cme'][()] * u.Unit(data['v_boundary'].attrs['unit'])
+        model.v_grid_amb[:, :] = data['v_grid_amb'][()] * u.Unit(data['v_boundary'].attrs['unit'])
+        
         # Load in the CME paramters
         cme_list = []
 
@@ -953,26 +982,27 @@ def load_HUXt1D_run(filepath):
             thickness = thickness.to('solRad').value
             v = cme_data['v'][()]
             cme = ConeCME(t_launch=t_launch, longitude=lon, v=v, width=width, thickness=thickness)
+            
+            coords_group = cme_data['coords']
+            coords_data = {j:{'r_pix':np.array([])*u.pix,'r':np.array([])*model.r.unit} for j in range(len(coords_group))}
+
+            for time_key, pos in coords_group.items():
+                t = np.int(time_key.split("_")[2])
+                coords_data[t]['r_pix'] = pos['r_pix'][()] * u.Unit(pos['r_pix'].attrs['unit'])
+                coords_data[t]['r'] = pos['r'][()] * u.Unit(pos['r'].attrs['unit'])
+
+            cme.coords = coords_data
             cme_list.append(cme)
-
-        # Initialise the model
-        # TODO: check it matches what the resolution and limits of the HDF5 file??
-        cr_num = np.int32(data['cr_num'])
-        simtime = data['simtime'][()] * u.Unit(data['simtime'].attrs['unit'])
-        simtime = simtime.to(u.day).value
-        dt_scale = data['dt_scale'][()]
-        lon = np.rad2deg(data['lon'])
-        model = HUXt1D(cr_num, lon=lon, simtime=simtime, dt_scale=dt_scale)
-        model.v_grid_cme[:, :] = data['v_grid_cme'][()] * u.Unit(data['v_boundary'].attrs['unit'])
-        model.v_grid_amb[:, :] = data['v_grid_cme'][()] * u.Unit(data['v_boundary'].attrs['unit'])
-
+            
+        # Update CMEs in model output
+        model.cmes = cme_list
     else:
         # File doesnt exist return nothing
         print("Warning: {} doesnt exist.".format(filepath))
         cme_list = []
         model = []
 
-    return cme_list, model
+    return model, cme_list
 
 def load_HUXt2D_run(filepath):
     """
@@ -993,7 +1023,7 @@ def load_HUXt2D_run(filepath):
         dt_scale = data['dt_scale'][()]
         model = HUXt2D(cr_num, simtime=simtime, dt_scale=dt_scale)
         model.v_grid_cme[:, :, :] = data['v_grid_cme'][()] * u.Unit(data['v_boundary'].attrs['unit'])
-        model.v_grid_amb[:, :, :] = data['v_grid_cme'][()] * u.Unit(data['v_boundary'].attrs['unit'])
+        model.v_grid_amb[:, :, :] = data['v_grid_amb'][()] * u.Unit(data['v_boundary'].attrs['unit'])
         
         # Create list of the ConeCMEs
         cme_list = []
@@ -1033,7 +1063,7 @@ def load_HUXt2D_run(filepath):
         cme_list = []
         model = []
 
-    return cme_list, model
+    return model, cme_list
 
 def solve_upwind(model, v_input):
         """
