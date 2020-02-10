@@ -167,10 +167,12 @@ class ConeCME:
 
 class HUXt1D:
     """
-    A class containing the 1D HUXt model described in Owens et al. (2019). 
+    A class containing the 2D HUXt model described in Owens et al. (2020).
+    Users must specify the solar wind speed boundary condition through either the v_boundary, or cr_num keyword arguments.
+    Failure to do so defaults to a 400 km/s boundary. v_boundary takes presidence over cr_num, so specifying both results in only v_boundary being         used.
     """
 
-    def __init__(self, cr_num, lon=0.0, simtime=5.0, dt_scale=1.0):
+    def __init__(self, v_boundary=None, cr_num=None, lon=0.0, simtime=5.0, dt_scale=1.0):
 
         # some constants and units
         constants = huxt_constants()
@@ -181,7 +183,6 @@ class HUXt1D:
         self.r_accel = constants['r_accel']  # Spatial scale parameter for residual SW acceleration
         self.synodic_period = constants['synodic_period']  # Solar Synodic rotation period from Earth.
         self.v_max = constants['v_max']
-        self.cr_num = cr_num * u.dimensionless_unscaled
         self.lon = np.deg2rad(lon) * u.rad
         del constants
         
@@ -191,16 +192,28 @@ class HUXt1D:
         self._data_dir_ = dirs['HUXt1D_data']
         self._figure_dir_ = dirs['HUXt1D_figures']
         
-        # Find and load in the boundary condition file
-        cr_tag = "CR{:03d}.hdf5".format(np.int32(self.cr_num.value))
-        boundary_file = os.path.join(self._boundary_dir_, cr_tag)
-        if os.path.exists(boundary_file):
-            data = h5py.File(boundary_file, 'r')
-            self.v_boundary = data['v_boundary'] * u.Unit(data['v_boundary'].attrs['unit'])
-            data.close()
-        else:
-            print("Warning: {} not found. Defaulting to 400 km/s boundary".format(boundary_file))
+        # Determine the boundary conditions from input v_boundary and cr_num
+        if (v_boundary is None) & (cr_num is None):
+            print("Warning: No boudary conditions supplied. Defaulting to 400 km/s boundary")
             self.v_boundary = 400 * np.ones(128) * self.kms
+        elif (v_boundary is not None):
+            assert v_boundary.unit == self.kms
+            assert v_boundary.size == 128
+            self.v_boundary = v_boundary
+            # Set dummy number for cr_num
+            self.cr_num = 9999 * u.dimensionless_unscaled
+        elif (cr_num is not None):
+            # Find and load in the boundary condition file
+            self.cr_num = cr_num * u.dimensionless_unscaled
+            cr_tag = "CR{:03d}.hdf5".format(np.int32(self.cr_num.value))
+            boundary_file = os.path.join(self._boundary_dir_, cr_tag)
+            if os.path.exists(boundary_file):
+                data = h5py.File(boundary_file, 'r')
+                self.v_boundary = data['v_boundary'] * u.Unit(data['v_boundary'].attrs['unit'])
+                data.close()
+            else:
+                print("Warning: {} not found. Defaulting to 400 km/s boundary".format(boundary_file))
+                self.v_boundary = 400 * np.ones(128) * self.kms
         
         # Setup radial coordinates - in solar radius
         self.r, self.dr, self.rrel, self.Nr = radial_grid()
@@ -510,10 +523,12 @@ class HUXt1D:
         
 class HUXt2D:
     """
-    A class containing the 2D HUXt model described in Owens et al. (2019). 
+    A class containing the 2D HUXt model described in Owens et al. (2020).
+    Users must specify the solar wind speed boundary condition through either the v_boundary, or cr_num keyword arguments.
+    Failure to do so defaults to a 400 km/s boundary. v_boundary takes presidence over cr_num, so specifying both results in only v_boundary being         used.
     """
 
-    def __init__(self, cr_num, simtime=5.0, dt_scale=1.0):
+    def __init__(self, v_boundary=None, cr_num=None, simtime=5.0, dt_scale=1.0):
 
         # some constants and units
         constants = huxt_constants()
@@ -524,7 +539,6 @@ class HUXt2D:
         self.r_accel = constants['r_accel']  # Spatial scale parameter for residual SW acceleration
         self.synodic_period = constants['synodic_period']  # Solar Synodic rotation period from Earth.
         self.v_max = constants['v_max']
-        self.cr_num = cr_num * u.dimensionless_unscaled
         del constants
         
         # Extract paths of figure and data directories
@@ -533,16 +547,28 @@ class HUXt2D:
         self._data_dir_ = dirs['HUXt2D_data']
         self._figure_dir_ = dirs['HUXt2D_figures']
         
-        # Find and load in the boundary condition file
-        cr_tag = "CR{:03d}.hdf5".format(np.int32(self.cr_num.value))
-        boundary_file = os.path.join(self._boundary_dir_, cr_tag)
-        if os.path.exists(boundary_file):
-            data = h5py.File(boundary_file, 'r')
-            self.v_boundary = data['v_boundary'] * u.Unit(data['v_boundary'].attrs['unit'])
-            data.close()
-        else:
-            print("Warning: {} not found. Defaulting to 400 km/s boundary".format(boundary_file))
+        # Determine the boundary conditions from input v_boundary and cr_num
+        if (v_boundary is None) & (cr_num is None):
+            print("Warning: No boudary conditions supplied. Defaulting to 400 km/s boundary")
             self.v_boundary = 400 * np.ones(128) * self.kms
+        elif (v_boundary is not None):
+            assert v_boundary.unit == self.kms
+            assert v_boundary.size == 128
+            self.v_boundary = v_boundary
+            # Set dummy number for cr_num
+            self.cr_num = 9999 * u.dimensionless_unscaled
+        elif (cr_num is not None):
+            # Find and load in the boundary condition file
+            self.cr_num = cr_num * u.dimensionless_unscaled
+            cr_tag = "CR{:03d}.hdf5".format(np.int32(self.cr_num.value))
+            boundary_file = os.path.join(self._boundary_dir_, cr_tag)
+            if os.path.exists(boundary_file):
+                data = h5py.File(boundary_file, 'r')
+                self.v_boundary = data['v_boundary'] * u.Unit(data['v_boundary'].attrs['unit'])
+                data.close()
+            else:
+                print("Warning: {} not found. Defaulting to 400 km/s boundary".format(boundary_file))
+                self.v_boundary = 400 * np.ones(128) * self.kms
         
         # Setup radial coordinates - in solar radius
         self.r, self.dr, self.rrel, self.Nr = radial_grid()
@@ -778,11 +804,13 @@ class HUXt2D:
         levels = np.arange(200, 800+dv, dv)
         fig, ax = plt.subplots(figsize=(14, 14), subplot_kw={"projection": "polar"})
         cnt = ax.contourf(lon, rad, v, levels=levels, cmap=mymap, extend='both')
+        
         # Add on CME boundaries
-        cme_colors = ['r', 'c', 'm', 'y', 'deeppink', 'darkorange', 'white']
-        for j, cme in enumerate(self.cmes):
-            cid = np.mod(j, len(cme_colors))
-            ax.plot(cme.coords[t]['lon'], cme.coords[t]['r'], '-', color=cme_colors[cid], linewidth=3)
+        if field=='cme':
+            cme_colors = ['r', 'c', 'm', 'y', 'deeppink', 'darkorange', 'white']
+            for j, cme in enumerate(self.cmes):
+                cid = np.mod(j, len(cme_colors))
+                ax.plot(cme.coords[t]['lon'], cme.coords[t]['r'], '-', color=cme_colors[cid], linewidth=3)
             
         ax.set_ylim(0, 230)
         ax.set_yticklabels([])
