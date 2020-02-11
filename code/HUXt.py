@@ -201,6 +201,33 @@ class HUXt1D:
     Users must specify the solar wind speed boundary condition through either the v_boundary, or cr_num keyword
     arguments. Failure to do so defaults to a 400 km/s boundary. v_boundary takes precedence over cr_num, so specifying
     both results in only v_boundary being used.
+    
+    Attributes:
+        cmes: A list of ConeCME instances used in the model solution.
+        cr_num: If provided, this gives the Carrington rotation number of the selected period, else 9999.
+        daysec: seconds in a day.
+        dr: Radial grid spacing (in km).
+        dt: Model time step (in seconds), set by the CFL condition with v_max and dr.
+        dt_out: Output model time step (in seconds).
+        dt_scale: Integer scaling number to set the model output time step relative to the models CFL time step.
+        dtdr: Ratio of the model time step and radial grid step (in seconds/km).
+        kms: astropy.unit instance of km/s.       
+        lon: Model source longtidue (in radians).
+        Nr: Number of radial grid points.
+        Nt: Total number of model time steps, including spin up.
+        Nt_out: Number of output model time steps.
+        r_accel: Scale parameter determining the residual solar wind acceleration.
+        r: Radial grid (in km).
+        rrel: Radial grid relative to first grid point (in km).
+        simtime: Simulation time (in seconds).
+        synodic_period: Solar Synodic rotation period from Earth (in seconds).
+        time: Array of model time steps, including spin up (in seconds).
+        time_out: Array of output model time steps (in seconds).
+        twopi: two pi radians
+        v_boundary: Inner boundary solar wind speed profile (in km/s).
+        v_grid_amb: Array of ambient model solution excluding ConeCMEs for each time and radius (in km/s).
+        v_grid_cme: Array of model solution inlcuding ConeCMEs for each time and radius (in km/s).
+        v_max: Maximum model speed (in km/s), used with the CFL condition to set the model time step. 
     """
 
     def __init__(self, v_boundary=None, cr_num=None, lon=0.0, simtime=5.0, dt_scale=1.0):
@@ -211,7 +238,7 @@ class HUXt1D:
         :param cr_num: Integer Carrington rotation number. Used to lookup the longitudinal solar wind speed profile
                        at the solar equator from HelioMAS. This is then used as the inner boundary condition.
         :param simtime: Duration of the simulation window, in days.
-        :param dt_scale: Integer scaling number to set the model output time step relative to the models CFL time.
+        :param dt_scale: Integer scaling number to set the model output time step relative to the models CFL time step.
         """
         # some constants and units
         constants = huxt_constants()
@@ -575,6 +602,37 @@ class HUXt2D:
     Users must specify the solar wind speed boundary condition through either the v_boundary, or cr_num keyword
     arguments. Failure to do so defaults to a 400 km/s boundary. v_boundary takes precedence over cr_num, so specifying
     both results in only v_boundary being used.
+    
+    Attributes:
+        cmes: A list of ConeCME instances used in the model solution.
+        cr_num: If provided, this gives the Carrington rotation number of the selected period, else 9999.
+        daysec: seconds in a day.
+        dlon: Longitudinal grid spacing (in radians)
+        dr: Radial grid spacing (in km).
+        dt: Model time step (in seconds), set by the CFL condition with v_max and dr.
+        dt_out: Output model time step (in seconds).
+        dt_scale: Integer scaling number to set the model output time step relative to the models CFL time step.
+        dtdr: Ratio of the model time step and radial grid step (in seconds/km).
+        kms: astropy.unit instance of km/s.       
+        lon: Array of model longtidues (in radians).
+        r_grid: Array of longitudinal coordinates meshed with the radial coordinates (in radians).
+        Nlon: Number of longitudinal grid points.
+        Nr: Number of radial grid points.
+        Nt: Total number of model time steps, including spin up.
+        Nt_out: Number of output model time steps.
+        r_accel: Scale parameter determining the residual solar wind acceleration.
+        r: Radial grid (in km).
+        r_grid: Array of radial coordinates meshed with the longitudinal coordinates (in km).
+        rrel: Radial grid relative to first grid point (in km).
+        simtime: Simulation time (in seconds).
+        synodic_period: Solar Synodic rotation period from Earth (in seconds).
+        time: Array of model time steps, including spin up (in seconds).
+        time_out: Array of output model time steps (in seconds).
+        twopi: two pi radians
+        v_boundary: Inner boundary solar wind speed profile (in km/s).
+        v_grid_amb: Array of ambient model solution excluding ConeCMEs for each time, radius, and longitude (in km/s).
+        v_grid_cme: Array of model solution inlcuding ConeCMEs for each time, radius, and longitude (in km/s).
+        v_max: Maximum model speed (in km/s), used with the CFL condition to set the model time step. 
     """
 
     def __init__(self, v_boundary=None, cr_num=None, simtime=5.0, dt_scale=1.0):
