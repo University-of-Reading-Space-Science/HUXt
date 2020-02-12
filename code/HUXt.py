@@ -492,21 +492,21 @@ class HUXt1D:
             ax.plot(self.r, self.v_grid_cme[id_t, :], 'k-', label=label)
         elif field == 'ambient':
             label = 'Ambient'
-            ax.plot(self.r, self.v_grid_amb[id_t, :], 'r--', label=label)
+            ax.plot(self.r, self.v_grid_amb[id_t, :], '--', color='slategrey', label=label)
         elif field == 'both':
             label = 'Cone Run'
             ax.plot(self.r, self.v_grid_cme[id_t, :], 'k-', label=label)
             label = 'Ambient'
-            ax.plot(self.r, self.v_grid_amb[id_t, :], 'r--', label=label)
+            ax.plot(self.r, self.v_grid_amb[id_t, :], '--', color='slategrey', label=label)
             
         # Plot the CME points on if needed
         if field in ['cme', 'both']:
-            colors = ['c', 'm', 'b', 'darkorange']
+            cme_colors = ['r', 'c', 'm', 'y', 'deeppink', 'darkorange']
             for c, cme in enumerate(self.cmes):
-                cc = np.mod(c, len(colors))
+                cc = np.mod(c, len(cme_colors))
                 id_r = np.int32(cme.coords[id_t]['r_pix'].value)
                 label = "CME {:02d}".format(c)
-                ax.plot(self.r[id_r], self.v_grid_cme[id_t, id_r], '.', color=colors[cc], label=label)
+                ax.plot(self.r[id_r], self.v_grid_cme[id_t, id_r], '.', color=cme_colors[cc], label=label)
 
         ax.set_ylim(250, 1500)
         ax.set_ylabel('Solar Wind Speed (km/s)')
@@ -553,27 +553,13 @@ class HUXt1D:
             label = 'Cone Run'
             ax.plot(t_day, self.v_grid_cme[:, id_r], 'k-', label=label)
         elif field == 'ambient':
-            label = 'ambient'
-            ax.plot(t_day, self.v_grid_amb[:, id_r], 'r--', label=label)
+            label = 'Ambient'
+            ax.plot(t_day, self.v_grid_amb[:, id_r], '--', color='slategrey', label=label)
         elif field == 'both':
             label = 'Cone Run'
             ax.plot(t_day, self.v_grid_cme[:, id_r], 'k-', label=label)
-            label = 'ambient'
-            ax.plot(t_day, self.v_grid_amb[:, id_r], 'r--', label=label)
-        
-        # Plot CMEs if needed
-        colors = ['c', 'm', 'b', 'darkorange']
-        r_find = self.r[id_r]
-        for c, cme in enumerate(self.cmes):
-            cc = np.mod(c, len(colors))
-            label = "CME {:02d}".format(c)
-            # Find those times where CME coordinates match select radius.
-            id_t = []
-            for k, coord in cme.coords.items():
-                if np.any(coord['r'] == r_find):
-                    id_t.append(k)
-
-            ax.plot(t_day[id_t],  self.v_grid_cme[id_t, id_r], '.', color=colors[cc], label=label)
+            label = 'Ambient'
+            ax.plot(t_day, self.v_grid_amb[:, id_r], '--', color='slategrey', label=label)
             
         ax.set_ylim(250, 1500)
         ax.set_ylabel('Solar Wind Speed (km/s)')
@@ -928,7 +914,7 @@ class HUXt2D:
         
         # Add on CME boundaries
         if field == 'cme':
-            cme_colors = ['r', 'c', 'm', 'y', 'deeppink', 'darkorange', 'white']
+            cme_colors = ['r', 'c', 'm', 'y', 'deeppink', 'darkorange']
             for j, cme in enumerate(self.cmes):
                 cid = np.mod(j, len(cme_colors))
                 ax.plot(cme.coords[t]['lon'], cme.coords[t]['r'], '-', color=cme_colors[cid], linewidth=3)
