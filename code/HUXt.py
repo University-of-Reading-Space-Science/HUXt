@@ -77,35 +77,37 @@ class ConeCME:
             # measure separate CME regions.
             cme_label, n_cme = measure.label(cme_bool_t.astype(int), connectivity=1, background=0, return_num=True)
             cme_tags = [i for i in range(1, n_cme+1)]
+            
+            if n_cme != 0:
+                if first_frame:
+                    # Find only the label in the origin region of this CME
+                    # Use a binary mask over the source region of the CME.
+                    target = np.zeros(cme_bool_t.shape)
+                    target[0] = 1
+                    first_frame = False
+                    # Find the CME label that intersects this region
+            
+                matches = []
+                for label in cme_tags:
+                    this_label = cme_label == label
+                    id_matches = np.any(np.logical_and(target, this_label))
+                    if id_matches:
+                        matches.append(label)
+                
+                if len(matches) != 0:
+                    if len(matches) > 1:
+                        print("Warning, more than one match found, taking first match only")
 
-            if first_frame:
-                # Find only the label in the origin region of this CME
-                # Use a binary mask over the source region of the CME.
-                target = np.zeros(cme_bool_t.shape)
-                target[0] = 1
-                first_frame = False
-                # Find the CME label that intersects this region
+                    # Find the coordinates of this region and stash 
+                    match_id = matches[0]
+                    cme_id = cme_label == match_id
+                    r_pix = np.argwhere(cme_id)
 
-            matches = []
-            for label in cme_tags:
-                this_label = cme_label == label
-                id_matches = np.any(np.logical_and(target, this_label))
-                if id_matches:
-                    matches.append(label)
+                    self.coords[j]['r_pix'] = r_pix * u.pix
+                    self.coords[j]['r'] = np.interp(r_pix, np.arange(0, model.Nr), model.r)
 
-            if len(matches) != 1:
-                print("Warning, more than one match found, taking first match only")
-
-            # Find the coordinates of this region and stash 
-            match_id = matches[0]
-            cme_id = cme_label == match_id
-            r_pix = np.argwhere(cme_id)
-
-            self.coords[j]['r_pix'] = r_pix * u.pix
-            self.coords[j]['r'] = np.interp(r_pix, np.arange(0, model.Nr), model.r)
-
-            # Update the target, so next iteration finds CME that overlaps with this frame.
-            target = cme_id.copy()
+                    # Update the target, so next iteration finds CME that overlaps with this frame.
+                    target = cme_id.copy()
         return
     
     def _track_2d_(self, model):
@@ -144,53 +146,55 @@ class ConeCME:
             # measure separate CME regions.
             cme_label, n_cme = measure.label(cme_bool_t.astype(int), connectivity=1, background=0, return_num=True)
             cme_tags = [i for i in range(1, n_cme+1)]
-
-            if first_frame:
-                # Find only the label in the origin region of this CME
-                # Use a binary mask over the source region of the CME.
-                target = np.zeros(cme_bool_t.shape)
-                half_width = self.width / (2*model.dlon)
-                left_edge = np.int32(id_mid_lon - half_width)
-                right_edge = np.int32(id_mid_lon + half_width)
-                target[0, left_edge:right_edge] = 1
-                first_frame = False
-                # Find the CME label that intersects this region
             
-            matches = []
-            for label in cme_tags:
-                this_label = cme_label == label
-                id_matches = np.any(np.logical_and(target, this_label))
-                if id_matches:
-                    matches.append(label)
+            if n_cme != 0:
+                if first_frame:
+                    # Find only the label in the origin region of this CME
+                    # Use a binary mask over the source region of the CME.
+                    target = np.zeros(cme_bool_t.shape)
+                    half_width = self.width / (2*model.dlon)
+                    left_edge = np.int32(id_mid_lon - half_width)
+                    right_edge = np.int32(id_mid_lon + half_width)
+                    target[0, left_edge:right_edge] = 1
+                    first_frame = False
+                    # Find the CME label that intersects this region
 
-            # Check only one match
-            # TODO could select the match with the largest overlap with the target?
-            if len(matches) != 1:
-                print("Warning, more than one match found, taking first match only")
+                matches = []
+                for label in cme_tags:
+                    this_label = cme_label == label
+                    id_matches = np.any(np.logical_and(target, this_label))
+                    if id_matches:
+                        matches.append(label)
 
-            # Find the coordinates of this region and stash 
-            match_id = matches[0]
-            cme_id = cme_label == match_id
-            # Fill holes in the labelled region
-            cme_id_filled = ndi.binary_fill_holes(cme_id)
-            coords = measure.find_contours(cme_id_filled, 0.5)
+                if len(matches) != 0:
+                    # Check only one match
+                    # TODO could select the match with the largest overlap with the target?            
+                    if len(matches) > 1:
+                        print("Warning, more than one match found, taking first match only")
 
-            # Contour can be broken at inner and outer boundary, so stack broken contours
-            if len(coords) == 1:
-                coord_array = coords[0]
-            elif len(coords) > 1:
-                coord_array = np.vstack(coords)   
+                    # Find the coordinates of this region and stash 
+                    match_id = matches[0]
+                    cme_id = cme_label == match_id
+                    # Fill holes in the labelled region
+                    cme_id_filled = ndi.binary_fill_holes(cme_id)
+                    coords = measure.find_contours(cme_id_filled, 0.5)
 
-            r_pix = coord_array[:, 0]
-            # Remove centering and correct wraparound indices
-            lon_pix = coord_array[:, 1] - center_shift
-            lon_pix[lon_pix < 0] += model.Nlon
-            self.coords[j]['lon_pix'] = lon_pix * u.pix
-            self.coords[j]['r_pix'] = r_pix * u.pix
-            self.coords[j]['r'] = np.interp(r_pix, np.arange(0,model.Nr), model.r)
-            self.coords[j]['lon'] = np.interp(lon_pix, np.arange(0,model.Nlon), model.lon)
-            # Update the target, so next iteration finds CME that overlaps with this frame.
-            target = cme_id.copy()
+                    # Contour can be broken at inner and outer boundary, so stack broken contours
+                    if len(coords) == 1:
+                        coord_array = coords[0]
+                    elif len(coords) > 1:
+                        coord_array = np.vstack(coords)   
+
+                    r_pix = coord_array[:, 0]
+                    # Remove centering and correct wraparound indices
+                    lon_pix = coord_array[:, 1] - center_shift
+                    lon_pix[lon_pix < 0] += model.Nlon
+                    self.coords[j]['lon_pix'] = lon_pix * u.pix
+                    self.coords[j]['r_pix'] = r_pix * u.pix
+                    self.coords[j]['r'] = np.interp(r_pix, np.arange(0,model.Nr), model.r)
+                    self.coords[j]['lon'] = np.interp(lon_pix, np.arange(0,model.Nlon), model.lon)
+                    # Update the target, so next iteration finds CME that overlaps with this frame.
+                    target = cme_id.copy()
         return
 
 
@@ -463,7 +467,7 @@ class HUXt1D:
                 out_file.flush()
 
         out_file.close()
-        return
+        return out_filepath
     
     def plot_radial(self, time, field='cme', save=False, tag=''):
         """
@@ -781,16 +785,18 @@ class HUXt2D:
             v_boundary_tstep = np.roll(v_boundary_tstep, 1)
             v_boundary_update = np.interp(self.lon.value, lon_tstep.value, v_boundary_tstep)
             v_amb[0, :] = v_boundary_update
-
+            
             #  Cone CME boundary
             if len(self.cmes) != 0:
                 v_boundary_cone = v_boundary_tstep.copy()
                 for cme in self.cmes:
                     r_boundary = self.r.min().to(u.km)
                     v_boundary_cone = _cone_cme_boundary_2d_(r_boundary, lon_tstep, v_boundary_cone, self.time[t], cme)
+                    v_boundary_update = np.interp(self.lon.value, lon_tstep.value, v_boundary_cone)
             else:
                 v_boundary_update = np.interp(self.lon.value, lon_tstep.value, v_boundary_tstep)
-                v_cme[0, :] = v_boundary_update
+            
+            v_cme[0, :] = v_boundary_update
             
         # Update CME positions
         updated_cmes = []
@@ -869,7 +875,7 @@ class HUXt2D:
                 out_file.flush()
 
         out_file.close()
-        return
+        return out_filepath
 
     def plot(self, t, field='cme', save=False, tag=''):
         """
@@ -1405,3 +1411,4 @@ def _setup_dirs_():
                 print('Error, invalid path, check config.dat: ' + val)
 
     return dirs
+
