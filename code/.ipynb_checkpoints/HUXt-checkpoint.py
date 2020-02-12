@@ -364,12 +364,13 @@ class HUXt1D:
             
             # Compute boundary speed of each CME at this time. Set boundary to the maximum CME speed at this time.
             if time > 0:
-                v_update_cme = np.zeros(len(cme_list_checked)) * self.kms
-                for i, c in enumerate(cme_list_checked):
-                    r_boundary = self.r.min().to(u.km)
-                    v_update_cme[i] = _cone_cme_boundary_1d_(r_boundary, self.lon, time, v_cme[0], c)
+                if len(cme_list_checked) != 0:
+                    v_update_cme = np.zeros(len(cme_list_checked)) * self.kms
+                    for i, c in enumerate(cme_list_checked):
+                        r_boundary = self.r.min().to(u.km)
+                        v_update_cme[i] = _cone_cme_boundary_1d_(r_boundary, self.lon, time, v_cme[0], c)
 
-                v_cme[0] = v_update_cme.max()
+                    v_cme[0] = v_update_cme.max()
 
             # update cone cme v(r) for the given longitude
             # =====================================
@@ -782,13 +783,14 @@ class HUXt2D:
             v_amb[0, :] = v_boundary_update
 
             #  Cone CME boundary
-            v_boundary_cone = v_boundary_tstep.copy()
-            for cme in self.cmes:
-                r_boundary = self.r.min().to(u.km)
-                v_boundary_cone = _cone_cme_boundary_2d_(r_boundary, lon_tstep, v_boundary_cone, self.time[t], cme)
-                    
-            v_boundary_update = np.interp(self.lon.value, lon_tstep.value, v_boundary_cone)
-            v_cme[0, :] = v_boundary_update
+            if len(self.cmes) != 0:
+                v_boundary_cone = v_boundary_tstep.copy()
+                for cme in self.cmes:
+                    r_boundary = self.r.min().to(u.km)
+                    v_boundary_cone = _cone_cme_boundary_2d_(r_boundary, lon_tstep, v_boundary_cone, self.time[t], cme)
+            else:
+                v_boundary_update = np.interp(self.lon.value, lon_tstep.value, v_boundary_tstep)
+                v_cme[0, :] = v_boundary_update
             
         # Update CME positions
         updated_cmes = []
@@ -1111,7 +1113,12 @@ def load_HUXt1D_run(filepath):
         simtime = simtime.to(u.day).value
         dt_scale = data['dt_scale'][()]
         lon = np.rad2deg(data['lon'])
-        model = HUXt1D(cr_num, lon=lon, simtime=simtime, dt_scale=dt_scale)
+        v_boundary = data['v_boundary'][()] * u.Unit(data['v_boundary'].attrs['unit'])
+        if cr_num != 9999:
+            model = HUXt1D(cr_num=cr_num, lon=lon, simtime=simtime, dt_scale=dt_scale)
+        else:
+            model = HUXt1D(v_boundary=v_boundary, lon=lon, simtime=simtime, dt_scale=dt_scale)
+        
         model.v_grid_cme[:, :] = data['v_grid_cme'][()] * u.Unit(data['v_boundary'].attrs['unit'])
         model.v_grid_amb[:, :] = data['v_grid_amb'][()] * u.Unit(data['v_boundary'].attrs['unit'])
         
@@ -1170,7 +1177,12 @@ def load_HUXt2D_run(filepath):
         simtime = data['simtime'][()] * u.Unit(data['simtime'].attrs['unit'])
         simtime = simtime.to(u.day).value
         dt_scale = data['dt_scale'][()]
-        model = HUXt2D(cr_num, simtime=simtime, dt_scale=dt_scale)
+        v_boundary = data['v_boundary'][()] * u.Unit(data['v_boundary'].attrs['unit'])
+        if cr_num != 9999:
+            model = HUXt2D(cr_num=cr_num, simtime=simtime, dt_scale=dt_scale)
+        else:
+            model = HUXt2D(v_boundary=v_boundary, simtime=simtime, dt_scale=dt_scale)
+        
         model.v_grid_cme[:, :, :] = data['v_grid_cme'][()] * u.Unit(data['v_boundary'].attrs['unit'])
         model.v_grid_amb[:, :, :] = data['v_grid_amb'][()] * u.Unit(data['v_boundary'].attrs['unit'])
         
