@@ -87,19 +87,23 @@ class ConeCME:
                     first_frame = False
                     # Find the CME label that intersects this region
             
-                matches = []
+                matches_id = []
+                matches_level = []
                 for label in cme_tags:
                     this_label = cme_label == label
-                    id_matches = np.any(np.logical_and(target, this_label))
-                    if id_matches:
-                        matches.append(label)
-                
-                if len(matches) != 0:
-                    if len(matches) > 1:
-                        print("Warning, more than one match found, taking first match only")
+                    overlap = np.sum(np.logical_and(target, this_label))
+                    if overlap > 0:
+                        matches_id.append(label)
+                        matches_level.append(overlap)
 
-                    # Find the coordinates of this region and stash 
-                    match_id = matches[0]
+                if len(matches_id) != 0:
+                    # Check only one match, if not find closest match.
+                    if len(matches_id) == 1:
+                        match_id = matches_id[0]
+                    else:
+                        print("Warning, multiple matches found, selecting match with greatest target overlap")
+                        match_id = matches_id[np.argmax(matches_level)]
+
                     cme_id = cme_label == match_id
                     r_pix = np.argwhere(cme_id)
 
@@ -159,21 +163,24 @@ class ConeCME:
                     first_frame = False
                     # Find the CME label that intersects this region
 
-                matches = []
+                matches_id = []
+                matches_level = []
                 for label in cme_tags:
                     this_label = cme_label == label
-                    id_matches = np.any(np.logical_and(target, this_label))
-                    if id_matches:
-                        matches.append(label)
+                    overlap = np.sum(np.logical_and(target, this_label))
+                    if overlap > 0:
+                        matches_id.append(label)
+                        matches_level.append(overlap)
 
-                if len(matches) != 0:
-                    # Check only one match
-                    # TODO could select the match with the largest overlap with the target?            
-                    if len(matches) > 1:
-                        print("Warning, more than one match found, taking first match only")
+                if len(matches_id) != 0:
+                    # Check only one match, if not find closest match.
+                    if len(matches_id) == 1:
+                        match_id = matches_id[0]
+                    else:
+                        print("Warning, multiple matches found, selecting match with greatest target overlap")
+                        match_id = matches_id[np.argmax(matches_level)]
 
-                    # Find the coordinates of this region and stash 
-                    match_id = matches[0]
+                    # Find the coordinates of this region and store 
                     cme_id = cme_label == match_id
                     # Fill holes in the labelled region
                     cme_id_filled = ndi.binary_fill_holes(cme_id)
@@ -189,6 +196,7 @@ class ConeCME:
                     # Remove centering and correct wraparound indices
                     lon_pix = coord_array[:, 1] - center_shift
                     lon_pix[lon_pix < 0] += model.Nlon
+                    lon_pix[lon_pix > model.Nlon] -= model.Nlon
                     self.coords[j]['lon_pix'] = lon_pix * u.pix
                     self.coords[j]['r_pix'] = r_pix * u.pix
                     self.coords[j]['r'] = np.interp(r_pix, np.arange(0,model.Nr), model.r)
