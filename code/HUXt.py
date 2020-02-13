@@ -485,7 +485,8 @@ class HUXt1D:
         :param field: String, either 'cme', 'ambient', or 'both' specifying which solution to plot.
         :param save: Boolean to determine if the figure is saved.
         :param tag: String to append to the filename if saving the figure.
-        :return:
+        :return: fig: Figure handle
+        :return: ax: Axes handle
         """
         
         if field not in ['cme', 'ambient', 'both']:
@@ -548,7 +549,8 @@ class HUXt1D:
         :param field: String, either 'cme', 'ambient', or 'both' specifying which solution to plot.
         :param save: Boolean to determine if the figure is saved.
         :param tag: String to append to the filename if saving the figure.
-        :return:
+        :return: fig: Figure handle
+        :return: ax: Axes handle
         """
         
         if field not in ['cme', 'ambient', 'both']:
@@ -825,6 +827,7 @@ class HUXt2D:
         Save model output to a HDF5 file.
 
         :param tag: identifying string to append to the filename
+        :return out_filepath: Full path to the saved file.
         """
         # Open up hdf5 data file for the HI flow stats
         filename = "HUXt2D_CR{:03d}_{}.hdf5".format(np.int32(self.cr_num.value), tag)
@@ -1005,6 +1008,7 @@ class HUXt2D:
     def _solve_carrington_rotation_(self):
         """
         Solve the steady-state ambient solution.
+        
         :return:
         """
         simtime = self.synodic_period  # One CR from Earth.
@@ -1245,6 +1249,7 @@ def load_HUXt2D_run(filepath):
 def solve_upwind(model, v_input):
     """
     Solve the upwind scheme for Burgers equation for the time evolution of the radial wind speed.
+    
     :param model: An instance of HUXt1D or HUXt2D.
     :param v_input: Time series of inner boundary solar wind speeds, in km/s.
     :return:
