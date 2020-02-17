@@ -31,8 +31,14 @@ class ConeCME:
         coords: Dictionary containing the radial and longitudinal (for HUXT2D) coordinates of the of Cone CME for each
                 model time step.
     """
-
-    def __init__(self, t_launch=0.0, longitude=0.0, v=1000.0, width=30.0, thickness=10.0):
+    
+    # Some decorators for checking the units of input arguments
+    @u.quantity_input(t_launch=u.s)
+    @u.quantity_input(longitude=u.deg)
+    @u.quantity_input(v=(u.km/u.s))
+    @u.quantity_input(width=u.deg)
+    @u.quantity_input(thickness=u.solRad)
+    def __init__(self, t_launch=0.0*u.s, longitude=0.0*u.deg, v=1000.0*(u.km/u.s), width=30.0*u.deg, thickness=5.0*u.solRad):
         """
         Set up a Cone CME with specified parameters.
 
@@ -42,13 +48,13 @@ class ConeCME:
         :param width: Angular width of the CME, in degrees.
         :param thickness: Thickness of the CME cone, in solar radii
         """
-        self.t_launch = t_launch*u.s  # Time of CME launch, after the start of the simulation
-        self.longitude = np.deg2rad(longitude) * u.rad  # Longitudinal launch direction of the CME
-        self.v = v * u.km / u.s  # CME nose speed
-        self.width = np.deg2rad(width) * u.rad  # Angular width
-        self.initial_height = (30.0*u.solRad).to(u.km)  # Initial height of CME (should match inner boundary of HUXt)
+        self.t_launch = t_launch  # Time of CME launch, after the start of the simulation
+        self.longitude = longitude # Longitudinal launch direction of the CME
+        self.v = v # CME nose speed
+        self.width = width # Angular width
+        self.initial_height = 30.0*u.solRad  # Initial height of CME (should match inner boundary of HUXt)
         self.radius = self.initial_height*np.tan(self.width/2.0)  # Initial radius of CME
-        self.thickness = (thickness*u.solRad).to(u.km)  # Extra CME thickness
+        self.thickness = thickness  # Extra CME thickness
         self.coords = {}
         
     def _track_1d_(self, model):
@@ -241,8 +247,10 @@ class HUXt1D:
         v_grid_cme: Array of model solution inlcuding ConeCMEs for each time and radius (in km/s).
         v_max: Maximum model speed (in km/s), used with the CFL condition to set the model time step. 
     """
-
-    def __init__(self, v_boundary=None, cr_num=None, lon=0.0, simtime=5.0, dt_scale=1.0):
+    @u.quantity_input(v_boundary=(u.km/u.s))
+    @u.quantity_input(lon=u.deg)
+    @u.quantity_input(simtime=u.day)
+    def __init__(self, v_boundary=np.NaN*(u.km/u.s), cr_num=np.NaN, lon=0.0*u.deg, simtime=5.0*u.day, dt_scale=1.0):
         """
         Initialise the HUXt1D instance.
 
@@ -261,7 +269,7 @@ class HUXt1D:
         self.r_accel = constants['r_accel']  # Spatial scale parameter for residual SW acceleration
         self.synodic_period = constants['synodic_period']  # Solar Synodic rotation period from Earth.
         self.v_max = constants['v_max']
-        self.lon = np.deg2rad(lon) * u.rad
+        self.lon = lon.to('rad')
         del constants
         
         # Extract paths of figure and data directories
@@ -271,16 +279,15 @@ class HUXt1D:
         self._figure_dir_ = dirs['HUXt1D_figures']
         
         # Determine the boundary conditions from input v_boundary and cr_num
-        if (v_boundary is None) & (cr_num is None):
+        if np.all(np.isnan(v_boundary)) & np.isnan(cr_num):
             print("Warning: No boudary conditions supplied. Defaulting to 400 km/s boundary")
             self.v_boundary = 400 * np.ones(128) * self.kms
-        elif v_boundary is not None:
-            assert v_boundary.unit == self.kms
+        elif not np.all(np.isnan(v_boundary)):
             assert v_boundary.size == 128
             self.v_boundary = v_boundary
             # Set dummy number for cr_num
             self.cr_num = 9999 * u.dimensionless_unscaled
-        elif cr_num is not None:
+        elif not np.isnan(cr_num):
             # Find and load in the boundary condition file
             self.cr_num = cr_num * u.dimensionless_unscaled
             cr_tag = "CR{:03d}.hdf5".format(np.int32(self.cr_num.value))
@@ -296,7 +303,7 @@ class HUXt1D:
         # Setup radial coordinates - in solar radius
         self.r, self.dr, self.rrel, self.Nr = radial_grid()
         
-        self.simtime = (simtime * u.day).to(u.s)  # number of days to simulate (in seconds)
+        self.simtime = simtime.to('s')  # number of days to simulate (in seconds)
         self.dt_scale = dt_scale * u.dimensionless_unscaled
         time_grid_dict = time_grid(self.v_max, self.dr, self.simtime, self.dt_scale)
         self.dtdr = time_grid_dict['dtdr']
@@ -316,7 +323,7 @@ class HUXt1D:
         self.cmes = []
         return
     
-    def solve(self, cme_list, save=False, tag=''):
+    def solve(self, cme_list=[], save=False, tag=''):
         """
         Solve HUXt1D for the specified inner boundary condition and list of cone cmes.
 
@@ -339,7 +346,7 @@ class HUXt1D:
                 
         buffersteps = np.fix((5.0*u.day).to(u.s) / self.dt)
         buffertime = buffersteps*self.dt
-        model_time = np.arange(-buffertime.value, self.simtime.value + self.dt.value, self.dt.value) * self.dt.unit
+        model_time = np.arange(-buffertime.value, (self.simtime.to('s') + self.dt).value, self.dt.value) * self.dt.unit
 
         dlondt = self.twopi * self.dt / self.synodic_period
         lon, dlon, Nlon = longitude_grid()
@@ -635,8 +642,10 @@ class HUXt2D:
         v_grid_cme: Array of model solution inlcuding ConeCMEs for each time, radius, and longitude (in km/s).
         v_max: Maximum model speed (in km/s), used with the CFL condition to set the model time step. 
     """
-
-    def __init__(self, v_boundary=None, cr_num=None, simtime=5.0, dt_scale=1.0):
+    # Decorators to check units on input arguments
+    @u.quantity_input(v_boundary=(u.km/u.s))
+    @u.quantity_input(simtime=u.day)
+    def __init__(self, v_boundary=np.NaN*(u.km/u.s), cr_num=np.NaN, simtime=5.0*u.day, dt_scale=1.0):
         """
         Initialise the HUXt2D instance.
 
@@ -665,16 +674,15 @@ class HUXt2D:
         self._figure_dir_ = dirs['HUXt2D_figures']
         
         # Determine the boundary conditions from input v_boundary and cr_num
-        if (v_boundary is None) & (cr_num is None):
+        if np.all(np.isnan(v_boundary)) & np.isnan(cr_num):
             print("Warning: No boudary conditions supplied. Defaulting to 400 km/s boundary")
             self.v_boundary = 400 * np.ones(128) * self.kms
-        elif v_boundary is not None:
-            assert v_boundary.unit == self.kms
+        elif not np.all(np.isnan(v_boundary)):
             assert v_boundary.size == 128
             self.v_boundary = v_boundary
             # Set dummy number for cr_num
             self.cr_num = 9999 * u.dimensionless_unscaled
-        elif cr_num is not None:
+        elif not np.isnan(cr_num):
             # Find and load in the boundary condition file
             self.cr_num = cr_num * u.dimensionless_unscaled
             cr_tag = "CR{:03d}.hdf5".format(np.int32(self.cr_num.value))
@@ -693,7 +701,7 @@ class HUXt2D:
         # Setup longitude coordinates - in radians.
         self.lon, self.dlon, self.Nlon = longitude_grid()
         
-        self.simtime = (simtime * u.day).to(u.s)  # number of days to simulate (in seconds)
+        self.simtime = simtime.to('s')  # number of days to simulate (in seconds)
         self.dt_scale = dt_scale * u.dimensionless_unscaled
         time_grid_dict = time_grid(self.v_max, self.dr, self.simtime, self.dt_scale)
         self.dtdr = time_grid_dict['dtdr']
@@ -716,7 +724,7 @@ class HUXt2D:
         self.cmes = []
         return
 
-    def solve(self, cme_list, save=False, tag=''):
+    def solve(self, cme_list=[], save=False, tag=''):
         """
         Solve HUXt2D for the specified inner boundary condition and list of cone cmes.
 
@@ -888,11 +896,12 @@ class HUXt2D:
         out_file.close()
         return out_filepath
 
-    def plot(self, t, field='cme', save=False, tag=''):
+    @u.quantity_input(time=u.day)
+    def plot(self, time, field='cme', save=False, tag=''):
         """
         Make a contour plot on polar axis of the solar wind solution at a specific time.
 
-        :param t: Integer to index the time coordinate.
+        :param time: Time to look up closet model time to (with an astropy.unit of time). 
         :param field: String, either 'cme', or 'ambient', specifying which solution to plot.
         :param save: Boolean to determine if the figure is saved.
         :param tag: String to append to the filename if saving the figure.
@@ -904,16 +913,18 @@ class HUXt2D:
             print("Error, field must be either 'cme', or 'ambient'. Default to CME")
             field = 'cme'
             
-        if (t < 0) | (t > (self.Nt_out-1)):
-            print("Error, invalid time index t")
+        if (time < self.time_out.min()) | (time > (self.time_out.max())):
+            print("Error, input time outside span of model times. Defaulting to closest time")
+           
+        id_t = np.argmin(np.abs(self.time_out - time))
             
         # Get plotting data
         lon = self.lon_grid.value.copy()
         rad = self.r_grid.value.copy()
         if field == 'cme':
-            v = self.v_grid_cme.value[t, :, :].copy()
+            v = self.v_grid_cme.value[id_t, :, :].copy()
         elif field == 'ambient':
-            v = self.v_grid_amb.value[t, :, :].copy()
+            v = self.v_grid_amb.value[id_t, :, :].copy()
         
         # Pad out to fill the full 2pi of contouring
         pad = lon[:, 0].reshape((lon.shape[0], 1)) + self.twopi
@@ -924,7 +935,7 @@ class HUXt2D:
         v = np.concatenate((v, pad), axis=1)
         
         mymap = mpl.cm.viridis
-        mymap.set_over([1, 1, 1])
+        mymap.set_over('lightgrey')
         mymap.set_under([0, 0, 0])
         dv = 10
         levels = np.arange(200, 800+dv, dv)
@@ -936,7 +947,7 @@ class HUXt2D:
             cme_colors = ['r', 'c', 'm', 'y', 'deeppink', 'darkorange']
             for j, cme in enumerate(self.cmes):
                 cid = np.mod(j, len(cme_colors))
-                ax.plot(cme.coords[t]['lon'], cme.coords[t]['r'], '-', color=cme_colors[cid], linewidth=3)
+                ax.plot(cme.coords[id_t]['lon'], cme.coords[id_t]['r'], '-', color=cme_colors[cid], linewidth=3)
             
         ax.set_ylim(0, 230)
         ax.set_yticklabels([])
@@ -957,7 +968,7 @@ class HUXt2D:
         cbar1.set_ticks(np.arange(200, 900, 100))
 
         # Add label
-        label = "Time: {:3.2f} days".format(self.time_out[t].to(u.day).value)
+        label = "Time: {:3.2f} days".format(self.time_out[id_t].to(u.day).value)
         fig.text(0.675, 0.17, label, fontsize=20)
         label = "HUXt2D"
         fig.text(0.175, 0.17, label, fontsize=20)
@@ -993,7 +1004,7 @@ class HUXt2D:
             """
             # Get the time index closest to this fraction of movie duration
             i = np.int32((self.Nt_out-1) * t / duration)
-            fig, ax = self.plot(i, field)
+            fig, ax = self.plot(self.time_out[i], field)
             frame = mplfig_to_npimage(fig)
             plt.close('all')           
             return frame
@@ -1097,14 +1108,14 @@ def time_grid(v_max, dr, simtime, dt_scale):
     """
     Define the model timestep and time grid based on CFL condition and specified simulation time.
     """
-    dt = dr.to(u.km) / v_max
-    dtdr = dt / dr.to(u.km)
+    dt = (dr / v_max).to('s')
+    dtdr = dt / dr
 
-    Nt = np.int32(np.floor(simtime.value / dt.value))  # number of time steps in the simulation
+    Nt = np.int32(np.floor(simtime.to(dt.unit) / dt))  # number of time steps in the simulation
     time = np.arange(0, Nt)*dt  # Model time steps
     
     dt_out = dt_scale*dt  # time step of the output
-    Nt_out = np.int32(Nt / dt_scale.value)  # number of time steps in the output   
+    Nt_out = np.int32(Nt / dt_scale)  # number of time steps in the output   
     time_out = np.arange(0, Nt_out)*dt_out  # Output time steps
     
     time_grid_dict = {'dt': dt, 'dtdr': dtdr, 'Nt': Nt, 'time': time,
@@ -1128,9 +1139,9 @@ def load_HUXt1D_run(filepath):
         # TODO: check it matches what the resolution and limits of the HDF5 file??
         cr_num = np.int32(data['cr_num'])
         simtime = data['simtime'][()] * u.Unit(data['simtime'].attrs['unit'])
-        simtime = simtime.to(u.day).value
+        simtime = simtime.to(u.day)
         dt_scale = data['dt_scale'][()]
-        lon = np.rad2deg(data['lon'])
+        lon = data['lon'][()] * u.Unit(data['lon'].attrs['unit'])
         v_boundary = data['v_boundary'][()] * u.Unit(data['v_boundary'].attrs['unit'])
         if cr_num != 9999:
             model = HUXt1D(cr_num=cr_num, lon=lon, simtime=simtime, dt_scale=dt_scale)
@@ -1146,12 +1157,12 @@ def load_HUXt1D_run(filepath):
         all_cmes = data['ConeCMEs']
         for k in all_cmes.keys():
             cme_data = all_cmes[k]
-            t_launch = cme_data['t_launch'][()]
-            lon = np.rad2deg(cme_data['longitude'][()])
-            width = np.rad2deg(cme_data['width'][()])
+            t_launch = cme_data['t_launch'][()] * u.Unit(cme_data['t_launch'].attrs['unit'])
+            lon = cme_data['lon'][()] * u.Unit(cme_data['lon'].attrs['unit'])
+            width = cme_data['width'][()] * u.Unit(cme_data['width'].attrs['unit'])
             thickness = cme_data['thickness'][()] * u.Unit(cme_data['thickness'].attrs['unit'])
-            thickness = thickness.to('solRad').value
-            v = cme_data['v'][()]
+            thickness = thickness.to('solRad')
+            v = cme_data['v'][()] * u.Unit(cme_data['v'].attrs['unit'])
             cme = ConeCME(t_launch=t_launch, longitude=lon, v=v, width=width, thickness=thickness)
             
             coords_group = cme_data['coords']
@@ -1193,7 +1204,7 @@ def load_HUXt2D_run(filepath):
         # TODO: check it matches the resolution and limits of the HDF5 file??
         cr_num = np.int32(data['cr_num'])
         simtime = data['simtime'][()] * u.Unit(data['simtime'].attrs['unit'])
-        simtime = simtime.to(u.day).value
+        simtime = simtime.to(u.day)
         dt_scale = data['dt_scale'][()]
         v_boundary = data['v_boundary'][()] * u.Unit(data['v_boundary'].attrs['unit'])
         if cr_num != 9999:
@@ -1209,12 +1220,12 @@ def load_HUXt2D_run(filepath):
         all_cmes = data['ConeCMEs']
         for k in all_cmes.keys():
             cme_data = all_cmes[k]
-            t_launch = cme_data['t_launch'][()]
-            lon = np.rad2deg(cme_data['longitude'][()])
-            width = np.rad2deg(cme_data['width'][()])
+            t_launch = cme_data['t_launch'][()] * u.Unit(cme_data['t_launch'].attrs['unit'])
+            lon = cme_data['longitude'][()] * u.Unit(cme_data['longitude'].attrs['unit'])
+            width = cme_data['width'][()] * u.Unit(cme_data['width'].attrs['unit'])
             thickness = cme_data['thickness'][()] * u.Unit(cme_data['thickness'].attrs['unit'])
-            thickness = thickness.to('solRad').value
-            v = cme_data['v'][()]
+            thickness = thickness.to('solRad')
+            v = cme_data['v'][()] * u.Unit(cme_data['v'].attrs['unit'])
             cme = ConeCME(t_launch=t_launch, longitude=lon, v=v, width=width, thickness=thickness)
 
             # Now sort out coordinates.
