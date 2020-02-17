@@ -47,7 +47,7 @@ class ConeCME:
         self.v = v * u.km / u.s  # CME nose speed
         self.width = np.deg2rad(width) * u.rad  # Angular width
         self.initial_height = (30.0*u.solRad).to(u.km)  # Initial height of CME (should match inner boundary of HUXt)
-        self.radius = self.initial_height*np.tan(self.width)  # Initial radius of CME
+        self.radius = self.initial_height*np.tan(self.width/2.0)  # Initial radius of CME
         self.thickness = (thickness*u.solRad).to(u.km)  # Extra CME thickness
         self.coords = {}
         
