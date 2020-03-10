@@ -214,7 +214,7 @@ class ConeCME:
 
 class HUXt1D:
     """
-    A class containing the 1D HUXt model described in Owens et al. (2020).
+    A class containing the 1D HUXt model described in Owens et al. (2020, DOI: 10.1007/s11207-020-01605-3)
 
     Users must specify the solar wind speed boundary condition through either the v_boundary, or cr_num keyword
     arguments. Failure to do so defaults to a 400 km/s boundary. v_boundary takes precedence over cr_num, so specifying
@@ -247,6 +247,7 @@ class HUXt1D:
         v_grid_cme: Array of model solution inlcuding ConeCMEs for each time and radius (in km/s).
         v_max: Maximum model speed (in km/s), used with the CFL condition to set the model time step. 
     """
+    
     @u.quantity_input(v_boundary=(u.km/u.s))
     @u.quantity_input(lon=u.deg)
     @u.quantity_input(simtime=u.day)
@@ -257,6 +258,7 @@ class HUXt1D:
         :param v_boundary: Inner solar wind speed boundary condition. Must be an array of size 128 with units of km/s.
         :param cr_num: Integer Carrington rotation number. Used to lookup the longitudinal solar wind speed profile
                        at the solar equator from HelioMAS. This is then used as the inner boundary condition.
+        :param lon: Carrington longitude of interest, in degrees. 
         :param simtime: Duration of the simulation window, in days.
         :param dt_scale: Integer scaling number to set the model output time step relative to the models CFL time step.
         """
@@ -605,11 +607,13 @@ class HUXt1D:
         
 class HUXt2D:
     """
-    A class containing the 2D HUXt model described in Owens et al. (2020).
+    A class containing the 2D HUXt model described in Owens et al. (2020, DOI: 10.1007/s11207-020-01605-3)
 
     Users must specify the solar wind speed boundary condition through either the v_boundary, or cr_num keyword
     arguments. Failure to do so defaults to a 400 km/s boundary. v_boundary takes precedence over cr_num, so specifying
     both results in only v_boundary being used.
+    
+    Model coordinate system is HEEQ radius and longitude.
     
     Attributes:
         cmes: A list of ConeCME instances used in the model solution.
@@ -642,16 +646,19 @@ class HUXt2D:
         v_grid_cme: Array of model solution inlcuding ConeCMEs for each time, radius, and longitude (in km/s).
         v_max: Maximum model speed (in km/s), used with the CFL condition to set the model time step. 
     """
+    
     # Decorators to check units on input arguments
     @u.quantity_input(v_boundary=(u.km/u.s))
     @u.quantity_input(simtime=u.day)
-    def __init__(self, v_boundary=np.NaN*(u.km/u.s), cr_num=np.NaN, simtime=5.0*u.day, dt_scale=1.0):
+    @u.quantity_input(lon_init=u.deg)
+    def __init__(self, v_boundary=np.NaN*(u.km/u.s), cr_num=np.NaN, lon_init=0.0*u.deg, simtime=5.0*u.day, dt_scale=1.0):
         """
         Initialise the HUXt2D instance.
 
         :param v_boundary: Inner solar wind speed boundary condition. Must be an array of size 128 with units of km/s.
         :param cr_num: Integer Carrington rotation number. Used to lookup the longitudinal solar wind speed profile
                        at the solar equator from HelioMAS. This is then used as the inner boundary condition.
+        :param lon_init: Carrington longitude of Earth at model initialisation, in degrees. 
         :param simtime: Duration of the simulation window, in days.
         :param dt_scale: Integer scaling number to set the model output time step relative to the models CFL time.
         """
@@ -673,7 +680,32 @@ class HUXt2D:
         self._data_dir_ = dirs['HUXt2D_data']
         self._figure_dir_ = dirs['HUXt2D_figures']
         
-        # Determine the boundary conditions from input v_boundary and cr_num
+        # Setup radial coordinates - in solar radius
+        self.r, self.dr, self.rrel, self.Nr = radial_grid()
+        
+        # Setup longitude coordinates - in radians.
+        self.lon, self.dlon, self.Nlon = longitude_grid()
+        
+        # Setup time coords - in seconds
+        self.simtime = simtime.to('s')  # number of days to simulate (in seconds)
+        self.dt_scale = dt_scale * u.dimensionless_unscaled
+        time_grid_dict = time_grid(self.v_max, self.dr, self.simtime, self.dt_scale)
+        self.dtdr = time_grid_dict['dtdr']
+        self.Nt = time_grid_dict['Nt']
+        self.dt = time_grid_dict['dt']
+        self.time = time_grid_dict['time']
+        self.Nt_out = time_grid_dict['Nt_out']
+        self.dt_out = time_grid_dict['dt_out']
+        self.time_out = time_grid_dict['time_out']
+        del time_grid_dict
+        
+        # Check lon_init, make sure in 0-2pi range.
+        self.lon_init = lon_init.to('rad')
+        if (self.lon_init < 0.0*u.rad) | (self.lon_init > self.twopi*u.rad):
+            print("Warning: specified lon_init={}, outside expected range. Rectifying to 0-2pi.".format(lon_init))
+            self.lon_init = _zerototwopi_(lon_init.value) * u.rad
+        
+        # Determine the boundary conditions from input v_boundary and cr_num, and lon_init
         if np.all(np.isnan(v_boundary)) & np.isnan(cr_num):
             print("Warning: No boudary conditions supplied. Defaulting to 400 km/s boundary")
             self.v_boundary = 400 * np.ones(128) * self.kms
@@ -691,27 +723,17 @@ class HUXt2D:
                 data = h5py.File(boundary_file, 'r')
                 self.v_boundary = data['v_boundary'] * u.Unit(data['v_boundary'].attrs['unit'])
                 data.close()
+                
+                # Rotate the boundary condition as required by lon_init.
+                if self.lon_init != 0*u.rad:
+                    lon_shifted = _zerototwopi_((self.lon - self.lon_init).value) 
+                    id_sort = np.argsort(lon_shifted)
+                    lon_shifted = lon_shifted[id_sort]
+                    v_b_shifted = self.v_boundary[id_sort]
+                    self.v_boundary = np.interp(self.lon.value, lon_shifted, v_b_shifted, period=self.twopi)
             else:
                 print("Warning: {} not found. Defaulting to 400 km/s boundary".format(boundary_file))
                 self.v_boundary = 400 * np.ones(128) * self.kms
-        
-        # Setup radial coordinates - in solar radius
-        self.r, self.dr, self.rrel, self.Nr = radial_grid()
-        
-        # Setup longitude coordinates - in radians.
-        self.lon, self.dlon, self.Nlon = longitude_grid()
-        
-        self.simtime = simtime.to('s')  # number of days to simulate (in seconds)
-        self.dt_scale = dt_scale * u.dimensionless_unscaled
-        time_grid_dict = time_grid(self.v_max, self.dr, self.simtime, self.dt_scale)
-        self.dtdr = time_grid_dict['dtdr']
-        self.Nt = time_grid_dict['Nt']
-        self.dt = time_grid_dict['dt']
-        self.time = time_grid_dict['time']
-        self.Nt_out = time_grid_dict['Nt_out']
-        self.dt_out = time_grid_dict['dt_out']
-        self.time_out = time_grid_dict['time_out']
-        del time_grid_dict
         
         # Preallocate space for the output for the solar wind fields for the cme and ambient solution.
         self.v_grid_cme = np.zeros((self.Nt_out, self.Nr, self.Nlon)) * self.kms
@@ -974,7 +996,7 @@ class HUXt2D:
         fig.text(0.175, 0.17, label, fontsize=20)
         if save:
             cr_num = np.int32(self.cr_num.value)
-            filename = "HUXt2D_CR{:03d}_{}_frame_{:03d}.png".format(cr_num, tag, t)
+            filename = "HUXt2D_CR{:03d}_{}_frame_{:03d}.png".format(cr_num, tag, id_t)
             filepath = os.path.join(self._figure_dir_, filename)
             fig.savefig(filepath)
 
