@@ -1,5 +1,7 @@
 import numpy as np
 import astropy.units as u
+from astropy.time import Time
+from sunpy.coordinates import sun
 import os
 import glob
 import h5py
@@ -10,10 +12,10 @@ from moviepy.video.io.bindings import mplfig_to_npimage
 from skimage import measure
 import scipy.ndimage as ndi
 
-mpl.rc("axes", labelsize=20)
-mpl.rc("ytick", labelsize=20)
-mpl.rc("xtick", labelsize=20)
-mpl.rc("legend", fontsize=20)
+mpl.rc("axes", labelsize=16)
+mpl.rc("ytick", labelsize=16)
+mpl.rc("xtick", labelsize=16)
+mpl.rc("legend", fontsize=16)
 
 
 class ConeCME:
@@ -240,6 +242,7 @@ class HUXt1D:
         simtime: Simulation time (in seconds).
         synodic_period: Solar Synodic rotation period from Earth (in seconds).
         time: Array of model time steps, including spin up (in seconds).
+        time_init: The UTC time corresonding to the initial Carrington rotation number and longitude. Else, NaN. 
         time_out: Array of output model time steps (in seconds).
         twopi: two pi radians
         v_boundary: Inner boundary solar wind speed profile (in km/s).
@@ -301,6 +304,13 @@ class HUXt1D:
             else:
                 print("Warning: {} not found. Defaulting to 400 km/s boundary".format(boundary_file))
                 self.v_boundary = 400 * np.ones(128) * self.kms
+                
+        # Compute model UTC initalisation time, if using Carrington map boundary.
+        if self.cr_num.value != 9999:
+            cr_frac = self.cr_num.value + ((self.twopi - self.lon.value)/self.twopi)
+            self.time_init = sun.carrington_rotation_time(cr_frac)
+        else:
+            self.time_init = np.NaN
         
         # Setup radial coordinates - in solar radius
         self.r, self.dr, self.rrel, self.Nr = radial_grid()
@@ -639,6 +649,7 @@ class HUXt2D:
         simtime: Simulation time (in seconds).
         synodic_period: Solar Synodic rotation period from Earth (in seconds).
         time: Array of model time steps, including spin up (in seconds).
+        time_init: The UTC time corresonding to the initial Carrington rotation number and longitude. Else, NaN. 
         time_out: Array of output model time steps (in seconds).
         twopi: two pi radians
         v_boundary: Inner boundary solar wind speed profile (in km/s).
@@ -679,6 +690,7 @@ class HUXt2D:
         self._boundary_dir_ = dirs['boundary_conditions']
         self._data_dir_ = dirs['HUXt2D_data']
         self._figure_dir_ = dirs['HUXt2D_figures']
+        self._ephemeris_file = dirs['ephemeris']
         
         # Setup radial coordinates - in solar radius
         self.r, self.dr, self.rrel, self.Nr = radial_grid()
@@ -734,6 +746,13 @@ class HUXt2D:
             else:
                 print("Warning: {} not found. Defaulting to 400 km/s boundary".format(boundary_file))
                 self.v_boundary = 400 * np.ones(128) * self.kms
+                
+        # Compute model UTC initalisation time, if using Carrington map boundary.
+        if self.cr_num.value != 9999:
+            cr_frac = self.cr_num.value + ((self.twopi - self.lon_init.value)/self.twopi)
+            self.time_init = sun.carrington_rotation_time(cr_frac)
+        else:
+            self.time_init = np.NaN
         
         # Preallocate space for the output for the solar wind fields for the cme and ambient solution.
         self.v_grid_cme = np.zeros((self.Nt_out, self.Nr, self.Nlon)) * self.kms
@@ -961,7 +980,7 @@ class HUXt2D:
         mymap.set_under([0, 0, 0])
         dv = 10
         levels = np.arange(200, 800+dv, dv)
-        fig, ax = plt.subplots(figsize=(14, 14), subplot_kw={"projection": "polar"})
+        fig, ax = plt.subplots(figsize=(10, 10), subplot_kw={"projection": "polar"})
         cnt = ax.contourf(lon, rad, v, levels=levels, cmap=mymap, extend='both')
         
         # Add on CME boundaries
@@ -970,17 +989,23 @@ class HUXt2D:
             for j, cme in enumerate(self.cmes):
                 cid = np.mod(j, len(cme_colors))
                 ax.plot(cme.coords[id_t]['lon'], cme.coords[id_t]['r'], '-', color=cme_colors[cid], linewidth=3)
+                
+        # Add on observers
+        for body, style in zip(['EARTH', 'VENUS', 'MERCURY', 'STA', 'STB'],['co', 'mo', 'ko', 'rs', 'y^']):
+            obs = self.get_observer(body)
+            ax.plot(obs.lon[id_t], obs.r[id_t], style, markersize=16, label=body)
             
         ax.set_ylim(0, 230)
         ax.set_yticklabels([])
-        ax.tick_params(axis='x', which='both', pad=15)
+        ax.set_xticklabels([])
         ax.patch.set_facecolor('slategrey')
-        fig.subplots_adjust(left=0.05, bottom=0.2, right=0.95, top=0.95)
+        fig.legend(ncol=5, loc='lower center', frameon=False, handletextpad=0.2, columnspacing=1.0)
+        fig.subplots_adjust(left=0.05, bottom=0.16, right=0.95, top=0.99)
 
         # Add color bar
         pos = ax.get_position()
         dw = 0.005
-        dh = 0.075
+        dh = 0.045
         left = pos.x0 + dw
         bottom = pos.y0 - dh
         wid = pos.width - 2*dw
@@ -991,9 +1016,10 @@ class HUXt2D:
 
         # Add label
         label = "Time: {:3.2f} days".format(self.time_out[id_t].to(u.day).value)
-        fig.text(0.675, 0.17, label, fontsize=20)
+        fig.text(0.675, pos.y0, label, fontsize=16)
         label = "HUXt2D"
-        fig.text(0.175, 0.17, label, fontsize=20)
+        fig.text(0.175, pos.y0, label, fontsize=16)
+
         if save:
             cr_num = np.int32(self.cr_num.value)
             filename = "HUXt2D_CR{:03d}_{}_frame_{:03d}.png".format(cr_num, tag, id_t)
@@ -1037,6 +1063,25 @@ class HUXt2D:
         animation = mpy.VideoClip(make_frame, duration=duration)
         animation.write_videofile(filepath, fps=24, codec='libx264')
         return
+    
+    def get_observer(self, body):
+        """
+        Returns an observer object giving the HEEQ and Carrington coordinates at each model timestep.
+        
+        This is only well defined if the model was initialised with a Carrington rotation number. 
+        """
+        
+        if body in ["EARTH", "VENUS", "MERCURY", "STA", "STB"]:
+            self.body = body
+        else:               
+            print("Warning, body {} not recognised.".format(body))
+            print("Defaulting to Earth")
+            self.body = "EARTH"
+            
+        times = self.time_init + self.time_out
+        obs = Observer(body, times)
+        return obs
+        
 
     def _solve_carrington_rotation_(self):
         """
@@ -1079,6 +1124,65 @@ class HUXt2D:
             vout_allR[j, :] = vout * self.kms
 
         return vout_allR
+    
+class Observer:
+    """
+    A class returning the HEEQ and Carrington coordinates of a specified Planet or spacecraft, for a given set of times.
+    Allowed bodies are Earth, Venus, Mercury, STEREO-A and STEREO-B.
+    """
+    
+    def __init__(self, body, times):
+        """
+        
+        """
+        
+        if body in ["EARTH", "VENUS", "MERCURY", "STA", "STB"]:
+            self.body = body
+        else:               
+            print("Warning, body {} not recognised.".format(body))
+            print("Defaulting to Earth")
+            self.body = "EARTH"
+        
+        # Get path to ephemeris file and open
+        dirs = _setup_dirs_()
+        ephem = h5py.File(dirs['ephemeris'], 'r')
+        
+        # Now get observers coordinates
+        all_time = Time(ephem[self.body]['HEEQ']['time'], format='jd')
+        id_epoch = (all_time >= times.min()) & (all_time <= times.max())
+        epoch_time = all_time[id_epoch]
+        self.time = times
+        
+        r = ephem[self.body]['HEEQ']['radius'][id_epoch]
+        self.r = np.interp(times.jd, epoch_time.jd, r)
+        self.r = (self.r * u.km).to(u.solRad)
+        
+        lon = np.deg2rad(ephem[self.body]['HEEQ']['longitude'][id_epoch])
+        lon = np.unwrap(lon)
+        self.lon = np.interp(times.jd, epoch_time.jd, lon)
+        self.lon = _zerototwopi_(self.lon)
+        self.lon = self.lon * u.rad
+        
+        lat = np.deg2rad(ephem[self.body]['HEEQ']['latitude'][id_epoch])
+        self.lat = np.interp(times.jd, epoch_time.jd, lat)
+        self.lat = self.lat * u.rad
+        
+        r = ephem[self.body]['CARR']['radius'][id_epoch]
+        self.r_c = np.interp(times.jd, epoch_time.jd, r)
+        self.r_c = (self.r_c * u.km).to(u.solRad)
+        
+        lon = np.deg2rad(ephem[self.body]['CARR']['longitude'][id_epoch])
+        lon = np.unwrap(lon)
+        self.lon_c = np.interp(times.jd, epoch_time.jd, lon)
+        self.lon_c = _zerototwopi_(self.lon_c)
+        self.lon_c = self.lon_c * u.rad
+        
+        lat = np.deg2rad(ephem[self.body]['CARR']['latitude'][id_epoch])
+        self.lat_c = np.interp(times.jd, epoch_time.jd, lat)
+        self.lat_c = self.lat_c * u.rad
+        
+        ephem.close()
+        return
 
 
 def huxt_constants():
@@ -1432,18 +1536,21 @@ def _zerototwopi_(angles):
 
 def _setup_dirs_():
     """
-    Function to pull out the directories to save figures and output data.
+    Function to pull out the directories of boundary conditions, ephemeris, and to save figures and output data.
     """
     # Find the config.dat file path
     files = glob.glob('config.dat')
 
     if len(files) != 1:
-        # If too few or too many config files, guess directories
+        # If wrong number of config files, guess directories
         print('Error: Cannot find correct config file with project directories. Check config.txt exists')
         print('Defaulting to current directory')
         dirs = {'root': os.getcwd()}
-        for rel_path in ['boundary_conditions', 'HUXt1D_data', 'HUXt2D_data', 'HUXt1D_figures', 'HUXt2D_figures']:
-            dirs[rel_path] = os.getcwd()
+        for rel_path in ['boundary_conditions', 'ephemeris', 'HUXt1D_data', 'HUXt2D_data', 'HUXt1D_figures', 'HUXt2D_figures']:
+            if rel_path == 'ephemeris':
+                dirs[rel_path] = os.path.join(os.getcwd(), "ephemeris.hdf5")
+            else:
+                dirs[rel_path] = os.getcwd()
     else:
         # Extract data and figure directories from config.dat
         with open(files[0], 'r') as file:
