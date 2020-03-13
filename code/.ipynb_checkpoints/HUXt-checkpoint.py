@@ -990,16 +990,17 @@ class HUXt2D:
                 cid = np.mod(j, len(cme_colors))
                 ax.plot(cme.coords[id_t]['lon'], cme.coords[id_t]['r'], '-', color=cme_colors[cid], linewidth=3)
                 
-        # Add on observers
-        for body, style in zip(['EARTH', 'VENUS', 'MERCURY', 'STA', 'STB'],['co', 'mo', 'ko', 'rs', 'y^']):
-            obs = self.get_observer(body)
-            ax.plot(obs.lon[id_t], obs.r[id_t], style, markersize=16, label=body)
-            
+        # Add on observers if looking at a Carrington rotation.
+        if self.cr_num.value != 9999:
+            for body, style in zip(['EARTH', 'VENUS', 'MERCURY', 'STA', 'STB'],['co', 'mo', 'ko', 'rs', 'y^']):
+                obs = self.get_observer(body)
+                ax.plot(obs.lon[id_t], obs.r[id_t], style, markersize=16, label=body)
+                fig.legend(ncol=5, loc='lower center', frameon=False, handletextpad=0.2, columnspacing=1.0)
+                
         ax.set_ylim(0, 230)
         ax.set_yticklabels([])
         ax.set_xticklabels([])
         ax.patch.set_facecolor('slategrey')
-        fig.legend(ncol=5, loc='lower center', frameon=False, handletextpad=0.2, columnspacing=1.0)
         fig.subplots_adjust(left=0.05, bottom=0.16, right=0.95, top=0.99)
 
         # Add color bar
