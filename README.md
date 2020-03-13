@@ -6,7 +6,7 @@
 This repository provides an implementation of the HUXt model (Heliospheric Upwind Extrapolation with time dependence) in Python, as described by [Owens et al. (2020)](https://doi.org/10.1007/s11207-020-01605-3). This is a simple 1D incompressible hydrodynamic model, which essentially solves Burgers equation using the upwind numerical scheme. For more details on the models background, refer to [Owens et al. (2020)](https://doi.org/10.1007/s11207-020-01605-3).
 
 ## Installation
- ``HUXt`` requires ``numpy`` ``matplotlib`` ``astropy`` ``h5py`` and ``moviepy v1.0.1``. Currently ``moviepy v1.0.1`` is not available on ``conda``, but can be downloaded from ``pip``. Additionally, to make animations, ``moviepy`` requires ``ffmpeg`` to be installed. 
+ ``HUXt`` is written in Python 3.7.3 and requires ``numpy``, ``scipy``, ``scikit-image``, ``matplotlib``, ``astropy``, ``sunpy``, ``h5py``, and ``moviepy v1.0.1``. Currently ``moviepy v1.0.1`` is not available on ``conda``, but can be downloaded from ``pip``. Additionally, to make animations, ``moviepy`` requires ``ffmpeg`` to be installed. 
 
 After cloning or downloading ``HUXt``, users should update [``code/config.dat``](code/config.dat) so that ``root`` points to the local directory where HUXt is installed.
 
@@ -20,6 +20,4 @@ Please contact either [Mathew Owens](https://github.com/mathewjowens) or [Luke B
 
 ## Citation
 Please cite this software as Owens et al. (2020),  *A Computationally Efficient, Time-Dependent Model of the Solar Wind for Use as a Surrogate to Three-Dimensional Numerical Magnetohydrodynamic Simulations*,  Sol Phys, DOI: [10.1007/s11207-020-01605-3](https://doi.org/10.1007/s11207-020-01605-3)
-
-## Notes 
 
