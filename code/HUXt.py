@@ -51,8 +51,8 @@ class ConeCME:
         :param thickness: Thickness of the CME cone, in solar radii
         """
         self.t_launch = t_launch  # Time of CME launch, after the start of the simulation
-        self.longitude = longitude # Longitudinal launch direction of the CME
-        self.v = v # CME nose speed
+        self.longitude = longitude  # Longitudinal launch direction of the CME
+        self.v = v  # CME nose speed
         self.width = width # Angular width
         self.initial_height = 30.0*u.solRad  # Initial height of CME (should match inner boundary of HUXt)
         self.radius = self.initial_height*np.tan(self.width/2.0)  # Initial radius of CME
@@ -603,7 +603,7 @@ class HUXt1D:
         fig.subplots_adjust(left=0.1, bottom=0.1, right=0.95, top=0.95)
 
         # Add label
-        label = "HUXt1D    Radius: {:3.2f}".format(self.r[id_r].to(u.solRad).value) +  "$R_{sun}$"
+        label = "HUXt1D    Radius: {:3.2f}".format(self.r[id_r].to(u.solRad).value) + "$R_{sun}$"
         ax.set_title(label, fontsize=20)
         ax.legend(loc=1)
         if save:
@@ -992,7 +992,7 @@ class HUXt2D:
                 
         # Add on observers if looking at a Carrington rotation.
         if self.cr_num.value != 9999:
-            for body, style in zip(['EARTH', 'VENUS', 'MERCURY', 'STA', 'STB'],['co', 'mo', 'ko', 'rs', 'y^']):
+            for body, style in zip(['EARTH', 'VENUS', 'MERCURY', 'STA', 'STB'], ['co', 'mo', 'ko', 'rs', 'y^']):
                 obs = self.get_observer(body)
                 ax.plot(obs.lon[id_t], obs.r[id_t], style, markersize=16, label=body)
                 fig.legend(ncol=5, loc='lower center', frameon=False, handletextpad=0.2, columnspacing=1.0)
@@ -1067,22 +1067,14 @@ class HUXt2D:
     
     def get_observer(self, body):
         """
-        Returns an observer object giving the HEEQ and Carrington coordinates at each model timestep.
-        
-        This is only well defined if the model was initialised with a Carrington rotation number. 
+        Returns an instance of the Observer class, giving the HEEQ and Carrington coordinates at each model timestep.
+        This is only well defined if the model was initialised with a Carrington rotation number.
+
+        :param body: String specifying which body to look up. Valid bodies are Earth, Venus, Mercury, STA, and STB.
         """
-        
-        if body in ["EARTH", "VENUS", "MERCURY", "STA", "STB"]:
-            self.body = body
-        else:               
-            print("Warning, body {} not recognised.".format(body))
-            print("Defaulting to Earth")
-            self.body = "EARTH"
-            
         times = self.time_init + self.time_out
         obs = Observer(body, times)
         return obs
-        
 
     def _solve_carrington_rotation_(self):
         """
@@ -1126,21 +1118,26 @@ class HUXt2D:
 
         return vout_allR
     
+
 class Observer:
     """
     A class returning the HEEQ and Carrington coordinates of a specified Planet or spacecraft, for a given set of times.
+    The positions are linearly interpolated from a 2-hour resolution ephemeris that spans 1974-01-01 until 2020-01-01.
     Allowed bodies are Earth, Venus, Mercury, STEREO-A and STEREO-B.
     """
     
     def __init__(self, body, times):
         """
-        
+
+        :param body: String indicating which body to look up the positions of .
+        :param times: A list/array of Astropy Times to interpolate the coordinate of the selected body.
         """
-        
-        if body in ["EARTH", "VENUS", "MERCURY", "STA", "STB"]:
-            self.body = body
+        bodies = ["EARTH", "VENUS", "MERCURY", "STA", "STB"]
+        if body.upper() in bodies:
+            self.body = body.upper()
         else:               
             print("Warning, body {} not recognised.".format(body))
+            print("Only {} are valid.".format(bodies))
             print("Defaulting to Earth")
             self.body = "EARTH"
         
@@ -1565,4 +1562,3 @@ def _setup_dirs_():
                 print('Error, invalid path, check config.dat: ' + val)
 
     return dirs
-

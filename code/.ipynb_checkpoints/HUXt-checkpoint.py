@@ -1067,8 +1067,7 @@ class HUXt2D:
     
     def get_observer(self, body):
         """
-        Returns an observer object giving the HEEQ and Carrington coordinates at each model timestep.
-        
+        Returns an instance of the Observer class, giving the HEEQ and Carrington coordinates at each model timestep.
         This is only well defined if the model was initialised with a Carrington rotation number. 
         """
         
