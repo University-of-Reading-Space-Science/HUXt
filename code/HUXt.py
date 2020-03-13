@@ -995,7 +995,9 @@ class HUXt2D:
             for body, style in zip(['EARTH', 'VENUS', 'MERCURY', 'STA', 'STB'], ['co', 'mo', 'ko', 'rs', 'y^']):
                 obs = self.get_observer(body)
                 ax.plot(obs.lon[id_t], obs.r[id_t], style, markersize=16, label=body)
-                fig.legend(ncol=5, loc='lower center', frameon=False, handletextpad=0.2, columnspacing=1.0)
+
+            # Add on a legend.
+            fig.legend(ncol=5, loc='lower center', frameon=False, handletextpad=0.2, columnspacing=1.0)
                 
         ax.set_ylim(0, 230)
         ax.set_yticklabels([])
@@ -1124,6 +1126,16 @@ class Observer:
     A class returning the HEEQ and Carrington coordinates of a specified Planet or spacecraft, for a given set of times.
     The positions are linearly interpolated from a 2-hour resolution ephemeris that spans 1974-01-01 until 2020-01-01.
     Allowed bodies are Earth, Venus, Mercury, STEREO-A and STEREO-B.
+
+    Attributes:
+        body: String name of the planet or spacecraft.
+        lat: HEEQ latitude of body at all values of time.
+        lat_c: Carrington latitude of body at all values of time.
+        lon: HEEQ longitude of body at all values of time.
+        lon_c: Carrington longitude of body at all values of time.
+        r: HEEQ radius of body at all values of time.
+        r_c: Carrington radius of body at all values of time.
+        time: Array of Astropy Times
     """
     
     def __init__(self, body, times):
