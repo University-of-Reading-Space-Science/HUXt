@@ -1,6 +1,6 @@
 import numpy as np
 import astropy.units as u
-from astropy.time import Time
+from astropy.time import Time, TimeDelta
 from sunpy.coordinates import sun
 import os
 import glob
@@ -1159,7 +1159,9 @@ class Observer:
         
         # Now get observers coordinates
         all_time = Time(ephem[self.body]['HEEQ']['time'], format='jd')
-        id_epoch = (all_time >= times.min()) & (all_time <= times.max())
+        # Pad out the window to account for single values being passed. 
+        dt = TimeDelta(2*60*60, format='sec')
+        id_epoch = (all_time >= (times.min() - dt)) & (all_time <= (times.max() + dt))
         epoch_time = all_time[id_epoch]
         self.time = times
         
