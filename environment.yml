@@ -1,0 +1,17 @@
+name: huxt
+dependencies:
+  - python=3.7
+  - astropy=4.0
+  - h5py==2.10.0
+  - imageio=2.8.0
+  - imageio-ffmpeg=0.3.0
+  - jupyterlab=2.0.1
+  - matplotlib=3.2.1
+  - numpy=1.18.1
+  - pip=20.0.2
+  - scikit-image=0.16.2
+  - scikit-learn=0.22.2.post1
+  - scipy=1.4.1
+  - sunpy=1.1.1
+  - pip:
+    - moviepy==1.0.1
