@@ -254,7 +254,8 @@ class HUXt1D:
     @u.quantity_input(v_boundary=(u.km/u.s))
     @u.quantity_input(lon=u.deg)
     @u.quantity_input(simtime=u.day)
-    def __init__(self, v_boundary=np.NaN*(u.km/u.s), cr_num=np.NaN, lon=0.0*u.deg, simtime=5.0*u.day, dt_scale=1.0):
+    def __init__(self, v_boundary=np.NaN*(u.km/u.s), cr_num=np.NaN, lon=0.0*u.deg, 
+                 simtime=5.0*u.day, dt_scale=1.0, rmin=30.0, rmax=240, Nr=140):
         """
         Initialise the HUXt1D instance.
 
@@ -313,7 +314,7 @@ class HUXt1D:
             self.time_init = np.NaN
         
         # Setup radial coordinates - in solar radius
-        self.r, self.dr, self.rrel, self.Nr = radial_grid()
+        self.r, self.dr, self.rrel, self.Nr = radial_grid(rmin, rmax, Nr)
         
         self.simtime = simtime.to('s')  # number of days to simulate (in seconds)
         self.dt_scale = dt_scale * u.dimensionless_unscaled
@@ -1213,13 +1214,11 @@ def huxt_constants():
     return constants
 
 
-def radial_grid():
+def radial_grid(r_min = 30.0, r_max = 240.0, Nr = 140):
     """
     Define the radial grid of the HUXt model (1D and 2D)
     """
-    r_min = 30.0
-    r_max = 240.0
-    Nr = 140
+     
     r, dr = np.linspace(r_min, r_max, Nr, retstep=True)
     r = r*u.solRad
     dr = dr*u.solRad
@@ -1227,11 +1226,10 @@ def radial_grid():
     return r, dr, rrel, Nr
 
 
-def longitude_grid():
+def longitude_grid(Nlon = 128):
     """
     Define the longitude grid of the HUXt2D model.
     """
-    Nlon = 128
     twopi = 2.0*np.pi
     dlon = twopi / Nlon
     lon_min = dlon / 2.0
@@ -1576,3 +1574,30 @@ def _setup_dirs_():
                 print('Error, invalid path, check config.dat: ' + val)
 
     return dirs
+
+
+
+
+####################################################################################
+def mapVinwards(vouter,router,rinner):
+    """
+    Function to map a longitudinal V  series from router (in rs) to rinner (in rs)
+    """
+    
+    #get the acceleration parameters
+    constants= huxt_constants()
+    alpha = constants['alpha']  # Scale parameter for residual SW acceleration
+    r_accel = constants['r_accel']  # Spatial scale parameter for residual SW acceleration
+    
+    
+    #compute the longitude grid from the length of  vouter
+    lon, dlon, Nlon = longitude_grid(len(vouter))
+    
+    #convert to solar radii
+    router=router*u.solRad
+    rinner=rinner*u.solRad
+    
+    
+    
+    return lon
+    
