@@ -11,6 +11,9 @@ import moviepy.editor as mpy
 from moviepy.video.io.bindings import mplfig_to_npimage
 from skimage import measure
 import scipy.ndimage as ndi
+from numba import jit
+
+
 
 mpl.rc("axes", labelsize=16)
 mpl.rc("ytick", labelsize=16)
@@ -255,7 +258,7 @@ class HUXt1D:
     @u.quantity_input(lon=u.deg)
     @u.quantity_input(simtime=u.day)
     def __init__(self, v_boundary=np.NaN*(u.km/u.s), cr_num=np.NaN, lon=0.0*u.deg, 
-                 simtime=5.0*u.day, dt_scale=1.0, rmin=30.0, rmax=240, Nr=140):
+                 simtime=5.0*u.day, dt_scale=1.0, rmin=30.0*u.solRad, rmax=240*u.solRad, Nr=140):
         """
         Initialise the HUXt1D instance.
 
@@ -347,6 +350,15 @@ class HUXt1D:
         :param tag: Identifying string to append to the filename.
         """
         
+        constants= huxt_constants()
+        alpha = constants['alpha']  # Scale parameter for residual SW acceleration
+        r_accel = constants['r_accel']  # Spatial scale parameter for residual SW acceleration
+    
+        #get the radial grid parameters
+        rrel=self.rrel
+        dtdr = self.dtdr
+        
+        
         # Check only cone cmes in cme list
         cme_list_checked = []
         for cme in cme_list:
@@ -408,15 +420,23 @@ class HUXt1D:
             # =====================================
             u_up = v_cme[1:].copy()
             u_dn = v_cme[:-1].copy()
-            u_up_next = _upwind_step_(self, u_up, u_dn)
+            #u_up_next = _upwind_step_(self, u_up, u_dn)
+            u_up_next = _upwind_step_opt_(u_up.to(u.km/u.s).value, 
+                                          u_dn.to(u.km/u.s).value,
+                                          dtdr.to(u.s/u.km).value, 
+                                          alpha, r_accel.to(u.km).value, rrel.to(u.km).value)
             # Save the updated time step
-            v_cme[1:] = u_up_next.copy()
+            v_cme[1:] = u_up_next.copy()*u.km/u.s
 
             u_up = v_amb[1:].copy()
             u_dn = v_amb[:-1].copy()
-            u_up_next = _upwind_step_(self, u_up, u_dn)
+            #u_up_next = _upwind_step_(self, u_up, u_dn)
+            u_up_next =  _upwind_step_opt_(u_up.to(u.km/u.s).value, 
+                                          u_dn.to(u.km/u.s).value,
+                                          dtdr.to(u.s/u.km).value, 
+                                          alpha, r_accel.to(u.km).value, rrel.to(u.km).value)
             # Save the updated time step
-            v_amb[1:] = u_up_next.copy()
+            v_amb[1:] = u_up_next.copy()*u.km/u.s
 
             # Save this frame to output if output
             if time >= 0:
@@ -663,7 +683,8 @@ class HUXt2D:
     @u.quantity_input(v_boundary=(u.km/u.s))
     @u.quantity_input(simtime=u.day)
     @u.quantity_input(lon_init=u.deg)
-    def __init__(self, v_boundary=np.NaN*(u.km/u.s), cr_num=np.NaN, lon_init=0.0*u.deg, simtime=5.0*u.day, dt_scale=1.0):
+    def __init__(self, v_boundary=np.NaN*(u.km/u.s), cr_num=np.NaN, lon_init=0.0*u.deg, simtime=5.0*u.day, dt_scale=1.0,
+                 rmin=30.0*u.solRad, rmax=240*u.solRad, Nr=140):
         """
         Initialise the HUXt2D instance.
 
@@ -694,7 +715,7 @@ class HUXt2D:
         self._ephemeris_file = dirs['ephemeris']
         
         # Setup radial coordinates - in solar radius
-        self.r, self.dr, self.rrel, self.Nr = radial_grid()
+        self.r, self.dr, self.rrel, self.Nr = radial_grid(rmin, rmax, Nr)
         
         # Setup longitude coordinates - in radians.
         self.lon, self.dlon, self.Nlon = longitude_grid()
@@ -777,6 +798,15 @@ class HUXt2D:
         :param tag: Identifying string to append to the filename.
         """
         
+        constants= huxt_constants()
+        alpha = constants['alpha']  # Scale parameter for residual SW acceleration
+        r_accel = constants['r_accel']  # Spatial scale parameter for residual SW acceleration
+    
+        #get the radial grid parameters
+        rrel=self.rrel
+        dtdr = self.dtdr
+        
+        
         # Check only cone cmes in cme list
         cme_list_checked = []
         for cme in cme_list:
@@ -821,15 +851,24 @@ class HUXt2D:
                 # =====================================
                 u_up = v_cme[1:, n].copy()
                 u_dn = v_cme[:-1, n].copy()
-                u_up_next = _upwind_step_(self, u_up, u_dn)
+                #u_up_next = _upwind_step_(self, u_up, u_dn)
+                u_up_next = _upwind_step_opt_(u_up.to(u.km/u.s).value, 
+                                          u_dn.to(u.km/u.s).value,
+                                          dtdr.to(u.s/u.km).value, 
+                                          alpha, r_accel.to(u.km).value, rrel.to(u.km).value)
                 # Save the updated time step
-                v_cme[1:, n] = u_up_next.copy()
+                v_cme[1:, n] = u_up_next.copy()*u.km/u.s
 
                 u_up = v_amb[1:, n].copy()
                 u_dn = v_amb[:-1, n].copy()
-                u_up_next = _upwind_step_(self, u_up, u_dn)
+                #u_up_next = _upwind_step_(self, u_up, u_dn)
+                u_up_next =  _upwind_step_opt_(u_up.to(u.km/u.s).value, 
+                                          u_dn.to(u.km/u.s).value,
+                                          dtdr.to(u.s/u.km).value, 
+                                          alpha, r_accel.to(u.km).value, rrel.to(u.km).value)
+                
                 # Save the updated time step
-                v_amb[1:, n] = u_up_next.copy()
+                v_amb[1:, n] = u_up_next.copy()*u.km/u.s
 
             # Save this frame to output if output time step is a factor of time elapsed
             iter_count = iter_count + 1
@@ -1203,25 +1242,25 @@ def huxt_constants():
     Return some constants used in all HUXt model classes
     """
     twopi = 2.0*np.pi
-    daysec = 24*60*60
+    daysec = 24*60*60 *u.s
     kms = u.km / u.s
     alpha = 0.15*u.dimensionless_unscaled  # Scale parameter for residual SW acceleration
     r_accel = 50*u.solRad  # Spatial scale parameter for residual SW acceleration
-    synodic_period = 27.2753*daysec*u.s  # Solar Synodic rotation period from Earth.
+    synodic_period = 27.2753*daysec  # Solar Synodic rotation period from Earth.
     v_max = 2000*kms
     constants = {'twopi': twopi, 'daysec': daysec, 'kms': kms, 'alpha': alpha,
                  'r_accel': r_accel, 'synodic_period': synodic_period, 'v_max': v_max}
     return constants
 
 
-def radial_grid(r_min = 30.0, r_max = 240.0, Nr = 140):
+def radial_grid(r_min = 30.0 *u.solRad, r_max = 240.0*u.solRad, Nr = 140):
     """
     Define the radial grid of the HUXt model (1D and 2D)
     """
      
     r, dr = np.linspace(r_min, r_max, Nr, retstep=True)
-    r = r*u.solRad
-    dr = dr*u.solRad
+    #r = r*u.solRad
+    # dr = dr*u.solRad
     rrel = r - r[0]
     return r, dr, rrel, Nr
 
@@ -1401,9 +1440,26 @@ def solve_upwind(model, v_input):
     :param v_input: Time series of inner boundary solar wind speeds, in km/s.
     :return:
     """
+    
+    #check the CFL condition is met
+    constants= huxt_constants()
+    alpha = constants['alpha']  # Scale parameter for residual SW acceleration
+    r_accel = constants['r_accel']  # Spatial scale parameter for residual SW acceleration
+    v_max = constants['v_max']
+    
+    #get the radial grid parameters
+    rrel=model.rrel
+    dtdr = model.dtdr
+    Nr=model.Nr
+    
+    #check the CFL condition is met
+    if (np.nanmax(v_input)>v_max):
+        print('Warning: CFL condition not met, time step too short. Increase HUXt.constants.v_max')
+    
+    
     n_steps = v_input.size  # number of time steps
     # Initialise output speeds as 400kms everywhere
-    v_out = np.ones((model.Nr, n_steps)) * 400.0 * model.kms
+    v_out = np.ones((Nr, n_steps)) * 400.0 * model.kms
     # Update inner boundary condition
     v_out[0, :] = v_input.copy()
 
@@ -1412,35 +1468,37 @@ def solve_upwind(model, v_input):
         # Pull out the upwind and downwind slices at current time
         u_up = v_out[1:, t - 1].copy()
         u_dn = v_out[:-1, t - 1].copy()
-        u_up_next = _upwind_step_(model, u_up, u_dn)
+        u_up_next = _upwind_step_opt_(u_up.to(u.km/u.s).value, 
+                                          u_dn.to(u.km/u.s).value,
+                                          dtdr.to(u.s/u.km).value, 
+                                          alpha, r_accel.to(u.km).value, rrel.to(u.km).value)
         # Save the updated time step
-        v_out[1:, t] = u_up_next.copy()
+        v_out[1:, t] = u_up_next.copy()*u.km/u.s
 
     return v_out
 
+# def _upwind_step_(model, v_up, v_dn):
+#     """
+#     Compute the next step in the upwind scheme of Burgers equation with added acceleration of the solar wind.
 
-def _upwind_step_(model, v_up, v_dn):
-    """
-    Compute the next step in the upwind scheme of Burgers equation with added acceleration of the solar wind.
+#     :param model: An instance of HUXt1D or HUXt2D.
+#     :param v_up: A numpy array of the upwind radial values. Units of km/s.
+#     :param v_dn: A numpy array of the downwind radial values. Units of km/s.
+#     :return: The upwind values at the next time step, numpy array with units of km/s.
+#     """
+#     # Arguments for computing the acceleration factor
+#     accel_arg = -model.rrel[:-1] / model.r_accel
+#     accel_arg_p = -model.rrel[1:] / model.r_accel
 
-    :param model: An instance of HUXt1D or HUXt2D.
-    :param v_up: A numpy array of the upwind radial values. Units of km/s.
-    :param v_dn: A numpy array of the downwind radial values. Units of km/s.
-    :return: The upwind values at the next time step, numpy array with units of km/s.
-    """
-    # Arguments for computing the acceleration factor
-    accel_arg = -model.rrel[:-1] / model.r_accel
-    accel_arg_p = -model.rrel[1:] / model.r_accel
-
-    # Get estimate of next time step
-    v_up_next = v_up - model.dtdr*v_up*(v_up - v_dn)
-    # Compute the probable speed at 30rS from the observed speed at r
-    v_source = v_dn / (1.0 + model.alpha*(1.0 - np.exp(accel_arg)))
-    # Then compute the speed gain between r and r+dr
-    v_diff = model.alpha*v_source*(np.exp(accel_arg) - np.exp(accel_arg_p))
-    # Add the residual acceleration over this grid cell
-    v_up_next = v_up_next + (v_dn*model.dtdr*v_diff)
-    return v_up_next
+#     # Get estimate of next time step
+#     v_up_next = v_up - model.dtdr*v_up*(v_up - v_dn)
+#     # Compute the probable speed at 30rS from the observed speed at r
+#     v_source = v_dn / (1.0 + model.alpha*(1.0 - np.exp(accel_arg)))
+#     # Then compute the speed gain between r and r+dr
+#     v_diff = model.alpha*v_source*(np.exp(accel_arg) - np.exp(accel_arg_p))
+#     # Add the residual acceleration over this grid cell
+#     v_up_next = v_up_next + (v_dn*model.dtdr*v_diff)
+#     return v_up_next
 
 
 def _cone_cme_boundary_1d_(r_boundary, longitude, time, v_boundary, cme):
@@ -1578,8 +1636,25 @@ def _setup_dirs_():
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 ####################################################################################
-def mapVinwards(vouter,router,rinner):
+def mapVinwards(vouter = np.ones(128)*400*(u.km/u.s), router = 30*u.solRad, rinner = 10*u.solRad):
     """
     Function to map a longitudinal V  series from router (in rs) to rinner (in rs)
     """
@@ -1587,17 +1662,146 @@ def mapVinwards(vouter,router,rinner):
     #get the acceleration parameters
     constants= huxt_constants()
     alpha = constants['alpha']  # Scale parameter for residual SW acceleration
-    r_accel = constants['r_accel']  # Spatial scale parameter for residual SW acceleration
-    
-    
-    #compute the longitude grid from the length of  vouter
+    rH = constants['r_accel'].to(u.kilometer).value  # Spatial scale parameter for residual SW acceleration
+    Tsyn=constants['synodic_period'].to(u.s).value
+      
+    #compute the longitude grid from the length of the vouter input variable
     lon, dlon, Nlon = longitude_grid(len(vouter))
     
-    #convert to solar radii
-    router=router*u.solRad
-    rinner=rinner*u.solRad
+    #convert to km
+    rout=router.to(u.kilometer).value
+    rin=rinner.to(u.kilometer).value
+    
+    #compute the speed at the new inner boundary height (using Vacc term, equation 5 in the paper)
+    v0=vouter.value/(1 + alpha*(1-np.exp((rin-rout)/rH)))
+
+    #compute the transit time from the new to old inner boundary heights (i.e., integrate equations 3 and 4 wrt to r)
+    A = v0 + alpha*v0
+    T_integral = rH *np.log (A*np.exp(rout/rH) - alpha*v0*np.exp(rin/rH) )/A 
+    -  rH*np.log (A* np.exp(rin/rH) - alpha*v0*np.exp(rin/rH) )/A
+
+    #work out the longitudinal shift
+    phis_new=_zerototwopi_(lon.value - (T_integral/Tsyn)*2*np.pi)
+
+    #regrid to regular longitudinal spacing (pad to make boundaries periodic)
+    phis_new_pad=np.concatenate((phis_new-2*np.pi,phis_new,phis_new+2*np.pi))
+    v0_pad=np.concatenate((v0,v0,v0))
+    vinner=np.interp(lon.value,phis_new_pad,v0_pad)
+    
+    return vinner
+    
+
+
+
+
+@jit(nopython=True)
+def _upwind_step_opt_(v_up, v_dn, dtdr, alpha,r_accel,rrel):
+    """
+    Compute the next step in the upwind scheme of Burgers equation with added acceleration of the solar wind.
+
+    :param v_up: A numpy array of the upwind radial values. Units of km/s.
+    :param v_dn: A numpy array of the downwind radial values. Units of km/s.
+    :return: The upwind values at the next time step, numpy array with units of km/s.
+    """
+    
+    #print(v_up[0])
+    #print(v_up[0])
+    #print(dtdr)
+    #print(alpha)
+    #print(r_accel)
+    #print(rrel[0])
+
+    # Arguments for computing the acceleration factor
+    accel_arg = -rrel[:-1] / r_accel
+    accel_arg_p = -rrel[1:] / r_accel
+
+    # Get estimate of next time step
+    v_up_next = v_up - dtdr*v_up*(v_up - v_dn)
+    # Compute the probable speed at 30rS from the observed speed at r
+    v_source = v_dn / (1.0 + alpha*(1.0 - np.exp(accel_arg)))
+    # Then compute the speed gain between r and r+dr
+    v_diff = alpha*v_source*(np.exp(accel_arg) - np.exp(accel_arg_p))
+    # Add the residual acceleration over this grid cell
+    v_up_next = v_up_next + (v_dn*dtdr*v_diff)
+    return v_up_next
+
+
+
+@jit(nopython=False)
+def solve_upwind_Rout(v_input, dt=500*u.s, tmax=10*u.day, rin = 30.0 *u.solRad, rout= 215.0*u.solRad, dr=1.4747*u.solRad):
+    """
+    Solve the upwind scheme for Burgers equation for the time evolution of the radial wind speed.
+    This version does not require a model class and only returns the speed at rout
+    
+    :param v_input: Time series of inner boundary solar wind speeds, in km/s.
+    :dt: The time step of v_input in seconds
+    
+    """
+    #convert input units
+    tmax=tmax.to('s')
+    rin=rin.to('km')
+    rout=rout.to('km')
+    dr=dr.to('km')
     
     
+    #get the HUXt constants
+    constants= huxt_constants()
+    alpha = constants['alpha']  # Scale parameter for residual SW acceleration
+    r_accel = constants['r_accel']  # Spatial scale parameter for residual SW acceleration
+    #v_max = constants['v_max'] 
+    r_accel=r_accel.to('km')
     
-    return lon
     
+    #check the CFL condition is met
+    if (np.nanmax(v_input)>dr.to('km')/dt):
+        print('Warning: CFL condition not met, time step too short. Increase HUXt.constants.v_max')
+        
+
+    #get the radial grid parameters
+    Nr=int((rout-rin)/dr)
+    r= np.linspace(rin, rout, Nr)
+    rrel = r - r[0]
+    
+    voutindex=int(r.size)
+    n_steps=int(np.floor(tmax/dt))
+    
+
+    
+    # Initialise the arrays
+    vt = np.ones(Nr) * v_input[0]
+    urnext = np.ones(Nr) * np.nan *u.km/u.s
+    ur = np.ones(Nr) * np.nan *u.km/u.s
+    vsource=np.ones(Nr) * np.nan *u.km/u.s
+    vdiff=np.ones(Nr) * np.nan *u.km/u.s
+    times=np.ones(n_steps)*np.nan*u.s
+    speeds=np.ones(n_steps)*np.nan*u.km/u.s
+    times[0]=dt
+    speeds[0]=v_input[0]   
+   
+    # loop through time and compute the updated 1-d radial solution
+    for t in range(1, n_steps):
+        #update each radial position
+        ur=vt
+        urnext[1:]=ur[1:] - dt*ur[1:]*(ur[1:]-ur[:-1])/dr
+        
+        #compute the source speed
+        vsource=ur[:-1]/(1 + alpha*(1 - np.exp(-rrel[:-1]/r_accel)) )
+        
+        #compute the speed gain between r and r+dr
+        vdiff=alpha*vsource*(1-np.exp(-rrel[1:]/r_accel)) - alpha*vsource*(1-np.exp(-rrel[:-1]/r_accel))
+        
+        #add the residual acceleration over this grid cell
+        urnext[1:]=urnext[1:] + (ur[:-1]*dt/dr)*vdiff
+        
+        #update the grid
+        vt=urnext
+        
+        #update the inner boundary value
+        vt[0]=v_input[t]
+        
+        #save the output
+        times[t]=t*dt
+        speeds[t]=vt[voutindex-1]
+    
+    return times,speeds
+        
