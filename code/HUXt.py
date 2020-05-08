@@ -662,7 +662,7 @@ class HUXt2D:
     @u.quantity_input(v_boundary=(u.km/u.s))
     @u.quantity_input(simtime=u.day)
     @u.quantity_input(lon_init=u.deg)
-    def __init__(self, v_boundary=np.NaN*(u.km/u.s), cr_num=np.NaN, lon_init=0.0*u.deg, simtime=5.0*u.day, dt_scale=1.0):
+    def __init__(self, v_boundary=np.NaN*(u.km/u.s), cr_num=np.NaN, lon_init=360.0*u.deg, simtime=5.0*u.day, dt_scale=1.0):
         """
         Initialise the HUXt2D instance.
 
