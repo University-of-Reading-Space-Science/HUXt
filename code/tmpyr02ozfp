@@ -464,7 +464,7 @@ class HUXt1D:
             self.save(tag=tag)
         return
     
-    @jit(nopython=False)
+    
     def generate_v_boundary_ts(self, cme_list=[]):
         """
         Genreate the input time series for the given longitudinla solar wind and list of cone cmes.
@@ -514,8 +514,7 @@ class HUXt1D:
                         r_boundary = self.r.min().to(u.km)
                         v_update_cme[i] = _cone_cme_boundary_1d_(r_boundary, self.lon, time, self.vinput_ts_cme[t], c)
                     self.vinput_ts_cme[t] = v_update_cme.max()
-    
-    @jit(nopython=False)
+
     def solve_opt(self, cme_list, save=False, tag=''):
         """
         Solve HUXt1D for the specified inner boundary condition and list of cone cmes.
@@ -534,6 +533,8 @@ class HUXt1D:
         times,r,speeds_amb=solve_upwind_allR(self.vinput_ts_amb, self.dt, 
                           (self.Nt*self.dt +buffertime).to(u.day), 
                           rin = self.rmin, rout= self.rmax, dr=self.dr)
+        #fig, ax = plt.subplots(); ax.imshow(speeds.value)
+
         times,r,speeds_cme=solve_upwind_allR(self.vinput_ts_cme, self.dt, 
                           (self.Nt*self.dt +buffertime).to(u.day), 
                           rin = self.rmin, rout= self.rmax, dr=self.dr)
@@ -541,7 +542,8 @@ class HUXt1D:
         #skip the spin-up time
         t=np.where(self.model_time >= 0)
         #only save the time steps specified by the dt_scale parameter
-        tsave=np.arange(t[0][0]+self.dt_scale,len(self.model_time), self.dt_scale, dtype='int')
+        tsave=np.arange(t[0][0],len(self.model_time), self.dt_scale, dtype='int')
+        #print(tsave)
         self.v_grid_amb = speeds_amb[tsave].copy()
         self.v_grid_cme = speeds_cme[tsave].copy()      
         
@@ -883,8 +885,7 @@ class HUXt2D:
         # Empty dictionary for storing the coordinates of CME boundaries.
         self.cmes = []
         return
-    
-    @jit(nopython=False)
+
     def solve(self, cme_list=[], save=False, tag=''):
         """
         Solve HUXt2D for the specified inner boundary condition and list of cone cmes.
@@ -1861,7 +1862,7 @@ def solve_upwind_Rout(v_input, dt=500*u.s, tmax=10*u.day, rin = 30.0 *u.solRad, 
     rrel = r - r[0]
     
     voutindex=int(r.size)
-    n_steps=v_input.size
+    n_steps=int(np.floor(tmax/dt))
     
     # Initialise the arrays
     vt = np.ones(Nr) * v_input[0]
@@ -1938,7 +1939,7 @@ def solve_upwind_allR(v_input, dt=500*u.s, tmax=10*u.day, rin = 30.0 *u.solRad, 
     Nr=int(np.ceil((rout-rin)/dr))+1
     r= np.linspace(rin, rout, Nr)
     rrel = r - r[0]
-    n_steps=v_input.size
+    n_steps=int(np.floor(tmax/dt))
     
     # Initialise the arrays
     vt = np.ones(Nr) * v_input[0]

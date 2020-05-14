@@ -34,7 +34,9 @@ model = H.HUXt1D(v_boundary=v_boundary, lon=0.0*u.deg, simtime=5*u.day, dt_scale
 
 # Solve these conditions, with no ConeCMEs added.
 cme_list = []
-model.solve(cme_list)
+
+#model.generate_v_boundary_ts(cme_list)
+model.solve_opt(cme_list)
 
 # Plot the radial profile of the ambient wind profile at a fixed time (in days). 
 t = 1.5*u.day
@@ -55,8 +57,8 @@ model.plot_timeseries(r, 'ambient')
 cme = H.ConeCME(t_launch=0.5*u.day, longitude=0.0*u.deg, width=30*u.deg, v=1000*(u.km/u.s), thickness=5*u.solRad)
 cme_list = [cme]
 
-    # Run the model, and this time save the results to file. 
-model.solve(cme_list, save=True, tag='1d_conecme_test')
+# Run the model, and this time save the results to file.
+model.solve_opt(cme_list, save=True, tag='1d_conecme_test')
 
 # Plot the radial profile and time series of both the ambient and ConeCME solutions at a fixed time (in days). 
 # Save both to file as well. These are saved in HUXt>figures>HUXt1D
@@ -72,11 +74,16 @@ model.plot_timeseries(r, 'both', tag='1d_cone_test_radial')
 ###############################################################################
 #HUXt1D and HUXt2D can both be initiated with archived output from HelioMAS
 
-model = H.HUXt1D(cr_num=2010, lon=0.0*u.deg, simtime=5*u.day, dt_scale=4, rmin=30*u.solRad)
+model = H.HUXt1D(cr_num=2124, lon=0.0*u.deg, simtime=27.27*u.day, dt_scale=4, rmin=30*u.solRad)
 
 # Solve these conditions, with no ConeCMEs added.
 cme_list = []
-model.solve(cme_list)
+#start=time.time(); model.solve(cme_list); end = time.time()
+#print("Standard solve = %s" % (end - start))
+
+model.solve_opt(cme_list)
+start=time.time(); model.solve_opt(cme_list); end = time.time()
+print("Fast solve (after compilation) = %s" % (end - start)) 
 
 # Plot the radial profile of the ambient wind profile at a fixed time (in days). 
 t = 1.5*u.day
@@ -85,6 +92,7 @@ model.plot_radial(t, 'ambient')
 # Plot the time series of the ambient wind profile at a fixed radius. 
 r = 1.0*u.AU
 model.plot_timeseries(r, 'ambient')
+
 
 # <codecell> HUXt1D_optimised, time series input
 ###############################################################################
@@ -137,10 +145,21 @@ end = time.time()
 print("Elapsed (after compilation) = %s" % (end - start))
 
 #plot the input and output time series
-plt.plot(tin.to(u.day),vin)
-plt.plot(tout.to(u.day),vout)
+fig, ax = plt.subplots()
+ax.plot(tin.to(u.day),vin)
+ax.plot(tout.to(u.day),vout)
 
+#run once for numba compilation
+tout,r,vout=H.solve_upwind_allR(v_input=vin, dt=dt, tmax=27*u.day, rin = rmin, rout= 215.0*u.solRad, dr=1.4747*u.solRad)
+#now bnenchmark it
+start = time.time()
+tout,r,vout=H.solve_upwind_allR(v_input=vin, dt=dt, tmax=27*u.day, rin = rmin, rout= 215.0*u.solRad, dr=1.4747*u.solRad)
+end = time.time()
+print("Elapsed (after compilation) = %s" % (end - start))
 
+#plot the output
+fig, ax = plt.subplots()
+ax.imshow(vout.value)
 # <codecell> HUXt2D, with CME
 ###############################################################################
 #Run HUXt2D with user specified boundary conditions and single CME
@@ -157,9 +176,10 @@ cme = H.ConeCME(t_launch=0.5*u.day, longitude=0.0*u.deg, width=30*u.deg, v=1000*
 cme_list = [cme]
 
 # Setup HUXt to do a 5 day simulation, with model output every 4 timesteps (roughly half and hour time step), looking at 0 longitude
+
 model = H.HUXt2D(v_boundary=v_boundary, simtime=5*u.day, dt_scale=4)
 
-model.solve(cme_list) # This takes a minute or so to run. 
+model.solve(cme_list) # This takes a minute or so to run.
 
 # <codecell> HUXt2D, plot output
 ###############################################################################
