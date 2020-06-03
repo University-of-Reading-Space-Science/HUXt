@@ -8,6 +8,7 @@ dependencies:
   - jupyterlab=2.0.1
   - matplotlib=3.2.1
   - numpy=1.18.1
+  - numba=0.48.0
   - pip=20.0.2
   - scikit-image=0.16.2
   - scikit-learn=0.22.2.post1

@@ -1,7 +1,5 @@
 root,C:\Users\yq904481\research\repos\HUXt
 boundary_conditions,data\boundary_conditions
 ephemeris,data\ephemeris\ephemeris.hdf5
-HUXt1D_data,data\HUXt1D
-HUXt2D_data,data\HUXt2D
-HUXt1D_figures,figures\HUXt1D
-HUXt2D_figures,figures\HUXt2D
+HUXt_data,data\HUXt
+HUXt_figures,figures
