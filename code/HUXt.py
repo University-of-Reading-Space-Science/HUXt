@@ -1442,7 +1442,7 @@ def map_v_inwards(v_outer, r_outer, lon_outer, r_inner):
     T_integral = term1 - term2
 
     # work out the longitudinal shift
-    phi_new = _zerototwopi_(lon_outer.value - (T_integral / Tsyn) * 2 * np.pi)
+    phi_new = _zerototwopi_(lon_outer.value + (T_integral / Tsyn) * 2 * np.pi)
 
     return v0*u.km/u.s, phi_new*u.rad
 
