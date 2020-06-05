@@ -9,3 +9,6 @@
 
 # Pycharms .idea can be ignored
 /.idea
+
+# the exmaples.py file
+/code/HUXt_example.py
