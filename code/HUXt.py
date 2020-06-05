@@ -428,8 +428,11 @@ class HUXt:
         elif not np.all(np.isnan(v_boundary)):
             assert v_boundary.size == 128
             self.v_boundary = v_boundary
-            # Set dummy number for cr_num
-            self.cr_num = 9999 * u.dimensionless_unscaled
+            if np.isnan(cr_num):
+                # Set dummy number for cr_num
+                self.cr_num = 9999 * u.dimensionless_unscaled
+            else:
+                self.cr_num = cr_num * u.dimensionless_unscaled
         elif not np.isnan(cr_num):
             # Find and load in the boundary condition file
             self.cr_num = cr_num * u.dimensionless_unscaled
