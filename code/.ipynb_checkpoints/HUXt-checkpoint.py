@@ -127,8 +127,9 @@ class ConeCME:
         :param thickness: Thickness of the CME cone, in solar radii
         """
         self.t_launch = t_launch  # Time of CME launch, after the start of the simulation
-        self.longitude = longitude  # Longitudinal launch direction of the CME
-        self.latitude = latitude  # Latitude launch direction of the CME
+        lon = _zerototwopi_(longitude.to(u.rad).value) * u.rad
+        self.longitude = lon  # Longitudinal launch direction of the CME
+        self.latitude = latitude.to(u.rad)  # Latitude launch direction of the CME
         self.v = v  # CME nose speed
         self.width = width  # Angular width
         self.initial_height = 30.0 * u.solRad  # Initial height of CME (should match inner boundary of HUXt)
@@ -428,8 +429,11 @@ class HUXt:
         elif not np.all(np.isnan(v_boundary)):
             assert v_boundary.size == 128
             self.v_boundary = v_boundary
-            # Set dummy number for cr_num
-            self.cr_num = 9999 * u.dimensionless_unscaled
+            if np.isnan(cr_num):
+                # Set dummy number for cr_num
+                self.cr_num = 9999 * u.dimensionless_unscaled
+            else:
+                self.cr_num = cr_num * u.dimensionless_unscaled
         elif not np.isnan(cr_num):
             # Find and load in the boundary condition file
             self.cr_num = cr_num * u.dimensionless_unscaled
@@ -1312,53 +1316,6 @@ def _cone_cme_boundary_(r_boundary, lon, lat, time, v_boundary, cme_params):
 
     return v_boundary
 
-
-@u.quantity_input(v_outer=u.km / u.s)
-@u.quantity_input(r_outer=u.solRad)
-@u.quantity_input(r_inner=u.solRad)
-def map_v_boundary_inwards(v_outer, r_outer, r_inner):
-    """
-    Function to map a longitudinal V series from r_outer (in rs) to r_inner (in rs)
-    :param v_outer: Solar wind speed at outer radial boundary. Units of km/s.
-    :param r_outer: Radial distance at outer radial boundary. Units of km.
-    :param r_inner: Radial distance at inner radial boundary. Units of km.
-    :return v_inner: Solar wind speed mapped from r_outer to r_inner. Units of km/s.
-    """
-
-    if r_outer < r_inner:
-        raise ValueError("Warning: r_outer < r_inner. Mapping will not work.")
-
-    # get the acceleration parameters
-    constants = huxt_constants()
-    alpha = constants['alpha']  # Scale parameter for residual SW acceleration
-    rH = constants['r_accel'].to(u.kilometer).value  # Spatial scale parameter for residual SW acceleration
-    Tsyn = constants['synodic_period'].to(u.s).value
-
-    # compute the longitude grid from the length of the vouter input variable
-    lon, dlon, nlon = longitude_grid()
-
-    r_outer = r_outer.to(u.km).value
-    r_inner = r_inner.to(u.km).value
-
-    # compute the speed at the new inner boundary height (using Vacc term, equation 5 in the paper)
-    v0 = v_outer.value / (1 + alpha * (1 - np.exp((r_inner - r_outer) / rH)))
-
-    # compute the transit time from the new to old inner boundary heights (i.e., integrate equations 3 and 4 wrt to r)
-    A = v0 + alpha * v0
-    T_integral = rH * np.log(A * np.exp(r_outer / rH) - alpha * v0 * np.exp(r_inner / rH)) / A
-    -  rH * np.log(A * np.exp(r_inner / rH) - alpha * v0 * np.exp(r_inner / rH)) / A
-
-    # work out the longitudinal shift
-    phis_new = _zerototwopi_(lon.value - (T_integral / Tsyn) * 2 * np.pi)
-
-    # regrid to regular longitudinal spacing (pad to make boundaries periodic)
-    phis_new_pad = np.concatenate((phis_new - 2 * np.pi, phis_new, phis_new + 2 * np.pi))
-    v0_pad = np.concatenate((v0, v0, v0))
-    v_inner = np.interp(lon.value, phis_new_pad, v0_pad) * v_outer.unit
-
-    return v_inner
-
-
 def load_HUXt_run(filepath):
     """
     Load in data from a saved HUXt run.
@@ -1413,11 +1370,12 @@ def load_HUXt_run(filepath):
             cme_data = all_cmes[k]
             t_launch = cme_data['t_launch'][()] * u.Unit(cme_data['t_launch'].attrs['unit'])
             lon = cme_data['longitude'][()] * u.Unit(cme_data['longitude'].attrs['unit'])
+            lat = cme_data['latitude'][()] * u.Unit(cme_data['latitude'].attrs['unit'])
             width = cme_data['width'][()] * u.Unit(cme_data['width'].attrs['unit'])
             thickness = cme_data['thickness'][()] * u.Unit(cme_data['thickness'].attrs['unit'])
             thickness = thickness.to('solRad')
             v = cme_data['v'][()] * u.Unit(cme_data['v'].attrs['unit'])
-            cme = ConeCME(t_launch=t_launch, longitude=lon, v=v, width=width, thickness=thickness)
+            cme = ConeCME(t_launch=t_launch, longitude=lon, latitude=lat, v=v, width=width, thickness=thickness)
 
             # Now sort out coordinates.
             # Use the same dictionary structure as defined in ConeCME._track_2d_
@@ -1446,3 +1404,73 @@ def load_HUXt_run(filepath):
         model = []
 
     return model, cme_list
+
+
+@u.quantity_input(v_outer=u.km / u.s)
+@u.quantity_input(r_outer=u.solRad)
+@u.quantity_input(lon_outer=u.rad)
+@u.quantity_input(r_inner=u.solRad)
+def map_v_inwards(v_outer, r_outer, lon_outer, r_inner):
+    """
+    Function to map v from r_outer (in rs) to r_inner (in rs)
+    :param v_outer: Solar wind speed at outer radial distance. Units of km/s.
+    :param r_outer: Radial distance at outer radial distance. Units of km.  
+    :param lon_outer: Carrington longitude at outer distance. Units of rad
+    :param r_inner: Radial distance at inner radial distance. Units of km.
+    :return v_inner: Solar wind speed mapped from r_outer to r_inner. Units of km/s.
+    :return lon_inner: Carrington longitude at r_inner. Units of rad.
+    """
+
+    if r_outer < r_inner:
+        raise ValueError("Warning: r_outer < r_inner. Mapping will not work.")
+
+    # get the acceleration parameters
+    constants = huxt_constants()
+    alpha = constants['alpha']  # Scale parameter for residual SW acceleration
+    rH = constants['r_accel'].to(u.kilometer).value  # Spatial scale parameter for residual SW acceleration
+    Tsyn = constants['synodic_period'].to(u.s).value
+    r_outer = r_outer.to(u.km).value
+    r_inner = r_inner.to(u.km).value
+
+    # compute the speed at the new inner boundary height (using Vacc term, equation 5 in the paper)
+    v0 = v_outer.value / (1 + alpha * (1 - np.exp((r_inner - r_outer) / rH)))
+
+    # compute the transit time from the new to old inner boundary heights (i.e., integrate equations 3 and 4 wrt to r)
+    A = v0 + alpha * v0
+    term1 = rH * np.log(A * np.exp(r_outer / rH) - 
+                      alpha * v0 * np.exp(r_inner / rH)) / A
+    term2 = rH * np.log(A * np.exp(r_inner / rH) - 
+                      alpha * v0 * np.exp(r_inner / rH)) / A                      
+    T_integral = term1 - term2
+
+    # work out the longitudinal shift
+    phi_new = _zerototwopi_(lon_outer.value + (T_integral / Tsyn) * 2 * np.pi)
+
+    return v0*u.km/u.s, phi_new*u.rad
+
+
+@u.quantity_input(v_outer=u.km / u.s)
+@u.quantity_input(r_outer=u.solRad)
+@u.quantity_input(r_inner=u.solRad)
+def map_v_boundary_inwards(v_outer, r_outer, r_inner):
+    """
+    Function to map a longitudinal V series from r_outer (in rs) to r_inner (in rs)
+    :param v_outer: Solar wind speed at outer radial boundary. Units of km/s.
+    :param r_outer: Radial distance at outer radial boundary. Units of km.
+    :param r_inner: Radial distance at inner radial boundary. Units of km.
+    :return v_inner: Solar wind speed mapped from r_outer to r_inner. Units of km/s.
+    """
+
+    if r_outer < r_inner:
+        raise ValueError("Warning: r_outer < r_inner. Mapping will not work.")
+
+    # compute the longitude grid from the length of the vouter input variable
+    lon, dlon, nlon = longitude_grid()   
+    #map each point in to a new speed and longitude
+    v0, phis_new = map_v_inwards(v_outer, r_outer, lon, r_inner)
+
+    #interpolate the mapped speeds back onto the regular Carr long grid,
+    #making boundaries periodic 
+    v_inner = np.interp(lon, phis_new, v0, period=2*np.pi) 
+
+    return v_inner

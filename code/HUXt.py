@@ -127,8 +127,9 @@ class ConeCME:
         :param thickness: Thickness of the CME cone, in solar radii
         """
         self.t_launch = t_launch  # Time of CME launch, after the start of the simulation
-        self.longitude = longitude  # Longitudinal launch direction of the CME
-        self.latitude = latitude  # Latitude launch direction of the CME
+        lon = _zerototwopi_(longitude.to(u.rad).value) * u.rad
+        self.longitude = lon  # Longitudinal launch direction of the CME
+        self.latitude = latitude.to(u.rad)  # Latitude launch direction of the CME
         self.v = v  # CME nose speed
         self.width = width  # Angular width
         self.initial_height = 30.0 * u.solRad  # Initial height of CME (should match inner boundary of HUXt)
@@ -1369,11 +1370,12 @@ def load_HUXt_run(filepath):
             cme_data = all_cmes[k]
             t_launch = cme_data['t_launch'][()] * u.Unit(cme_data['t_launch'].attrs['unit'])
             lon = cme_data['longitude'][()] * u.Unit(cme_data['longitude'].attrs['unit'])
+            lat = cme_data['latitude'][()] * u.Unit(cme_data['latitude'].attrs['unit'])
             width = cme_data['width'][()] * u.Unit(cme_data['width'].attrs['unit'])
             thickness = cme_data['thickness'][()] * u.Unit(cme_data['thickness'].attrs['unit'])
             thickness = thickness.to('solRad')
             v = cme_data['v'][()] * u.Unit(cme_data['v'].attrs['unit'])
-            cme = ConeCME(t_launch=t_launch, longitude=lon, v=v, width=width, thickness=thickness)
+            cme = ConeCME(t_launch=t_launch, longitude=lon, latitude=lat, v=v, width=width, thickness=thickness)
 
             # Now sort out coordinates.
             # Use the same dictionary structure as defined in ConeCME._track_2d_
