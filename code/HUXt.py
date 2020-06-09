@@ -695,16 +695,20 @@ class HUXt:
         lon, rad = np.meshgrid(lon_arr.value, self.r.value)
         if field == 'cme':
             v_sub = self.v_grid_cme.value[id_t, :, :].copy()
-            plotvmin=200; plotvmax=800; dv=10
+            plotvmin=200; plotvmax=810; dv=10
         elif field == 'ambient':
             v_sub = self.v_grid_amb.value[id_t, :, :].copy()
-            plotvmin=200; plotvmax=800; dv=10
+            plotvmin=200; plotvmax=810; dv=10
         elif field == 'ptracer_cme':
             v_sub = self.ptracer_grid_cme.value[id_t, :, :].copy()
-            plotvmin=-1; plotvmax=1; dv=0.1
+            ncme_max=v_sub.max()
+            print(ncme_max)
+            #flat-field the CME tracer
+            v_sub[v_sub>0.1]=1.0
+            plotvmin=0; plotvmax=1.1; dv=0.1
         elif field == 'ptracer_ambient':
             v_sub = self.ptracer_grid_amb.value[id_t, :, :].copy()
-            plotvmin=-1; plotvmax=1; dv=0.1
+            plotvmin=-1; plotvmax=1.1; dv=0.1
 
         # Insert into full array
         if lon_arr.size != self.lon.size:
@@ -1216,25 +1220,36 @@ def solve_radial(vinput, ptracerinput, model_time, rrel, lon, params, do_cme, cm
         if t == 0:
             v_cme = np.ones(nr) * 400
             v_amb = np.ones(nr) * 400
-            ptracer_cme = np.ones(nr) * 0
-            ptracer_amb = np.ones(nr) * 0
+            ptracer_cme = np.ones(nr) * 0.0
+            ptracer_amb = np.ones(nr) * 0.0
 
         # Update the inner boundary conditions
         v_amb[0] = vinput[t]
         v_cme[0] = vinput[t]
         ptracer_amb[0] = ptracerinput[t]
-        ptracer_cme[0] = ptracerinput[t]
+        ptracer_cme[0] = 0.01
 
-        # Compute boundary speed of each CME at this time. Set boundary to the maximum CME speed at this time.
+        # Compute boundary speed of each CME at this time. 
+        # Set boundary to the maximum CME speed at this time.
         if time > 0:
             if do_cme == 1:
                 n_cme = cme_params.shape[0]
                 v_update_cme = np.zeros(n_cme)
+                ptracer_update_cme = np.zeros(n_cme)
                 for i in range(n_cme):
                     cme = cme_params[i, :]
-                    v_update_cme[i] = _cone_cme_boundary_(r_boundary, lon, lat, time, v_cme[0], cme)
+                    #check if this point is within the cone CME
+                    if _is_in_cme_boundary_(r_boundary, lon, lat, time, cme):                
+                        v_update_cme[i] = cme[4]
+                        ptracer_update_cme[i] = 1.0 #the CME number
+                    else:
+                        v_update_cme[i] = v_cme[0]
+                        ptracer_update_cme[i]=0.01
 
                 v_cme[0] = v_update_cme.max()
+                ptracer_cme[0] = ptracer_update_cme.max()
+        
+        
 
         # update cone cme v(r) for the given longitude
         # =====================================
@@ -1308,19 +1323,18 @@ def _upwind_step_(v_up, v_dn, ptracer_up, ptracer_dn, dtdr, alpha, r_accel, rrel
     
     return v_up_next, ptracer_up_next
 
-
 @jit(nopython=True)
-def _cone_cme_boundary_(r_boundary, lon, lat, time, v_boundary, cme_params):
+def _is_in_cme_boundary_(r_boundary, lon, lat, time, cme_params):
     """
-    Update inner speed boundary condition with the time dependent cone cme speed, for HUXt1D.
+    Check whether a given lat, lon point on the inner boundary is within a given CME.
     :param r_boundary: Height of model inner boundary.
     :param lon: A HEEQ latitude, in radians.
     :param lat: A HEEQ longitude, in radians.
     :param time: Model time step, in seconds
-    :param v_boundary: Array of the ambient solar wind speed inner boundary condition, in km/s
     :param cme_params: An array containing the cme parameters
-    :return:
+    :return: True/False
     """
+    isincme=False
 
     cme_t_launch = cme_params[0]
     cme_lon = cme_params[1]
@@ -1366,9 +1380,9 @@ def _cone_cme_boundary_(r_boundary, lon, lat, time, v_boundary, cme_params):
 
         theta = np.arctan(x / r_boundary)
         if sigma <= theta:
-            v_boundary = cme_v
+            isincme=True
 
-    return v_boundary
+    return isincme
 
 def load_HUXt_run(filepath):
     """
