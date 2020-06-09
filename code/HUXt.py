@@ -355,7 +355,8 @@ class HUXt:
     @u.quantity_input(v_boundary=(u.km / u.s))
     @u.quantity_input(simtime=u.day)
     @u.quantity_input(cr_lon_init=u.deg)
-    def __init__(self, v_boundary=np.NaN * (u.km / u.s), cr_num=np.NaN, cr_lon_init=360.0 * u.deg,
+    def __init__(self, v_boundary=np.NaN * (u.km / u.s),  ptracer_boundary=np.NaN * u.dimensionless_unscaled,
+                 cr_num=np.NaN, cr_lon_init=360.0 * u.deg,
                  r_min=30 * u.solRad, r_max=240 * u.solRad,
                  lon_out=np.NaN * u.rad, lon_start=np.NaN * u.rad, lon_stop=np.NaN * u.rad,
                  simtime=5.0 * u.day, dt_scale=1.0, map_inwards=False):
@@ -363,6 +364,7 @@ class HUXt:
         Initialise the HUXt instance.
 
         :param v_boundary: Inner solar wind speed boundary condition. Must be an array of size 128 with units of km/s.
+        :param ptracer_boundary: Inner passive tracer boundary condition. Must be an array of size 128 with no units
         :param cr_num: Integer Carrington rotation number. Used to lookup the longitudinal solar wind speed profile
                        at the solar equator from HelioMAS. This is then used as the inner boundary condition.
         :param cr_lon_init: Carrington longitude of Earth at model initialisation, in degrees.
@@ -446,9 +448,17 @@ class HUXt:
             else:
                 print("Warning: {} not found. Defaulting to 400 km/s boundary".format(boundary_file))
                 self.v_boundary = 400 * np.ones(128) * self.kms
+                
+        # Now establish the passive tracer boundary conditions
+        if np.all(np.isnan(ptracer_boundary)):
+            print("Warning: No passive tracer boundary conditions supplied.")
+            self.ptracer_boundary = 1 * np.ones(128) *  u.dimensionless_unscaled
+            self.ptracer_boundary[64:] = -1 *  u.dimensionless_unscaled
+            
 
         # Keep a protected version that isn't processed for use in saving/loading model runs
         self._v_boundary_init_ = self.v_boundary.copy()
+        self._ptracer_boundary_init_ = self.ptracer_boundary.copy()
         if map_inwards:
             self._map_inwards_ = 1.0 * u.dimensionless_unscaled
         else:
@@ -467,7 +477,9 @@ class HUXt:
             id_sort = np.argsort(lon_shifted)
             lon_shifted = lon_shifted[id_sort]
             v_b_shifted = self.v_boundary[id_sort]
+            ptracer_b_shifted = self.ptracer_boundary[id_sort]
             self.v_boundary = np.interp(lon_boundary.value, lon_shifted, v_b_shifted, period=self.twopi)
+            self.ptracer_boundary = np.interp(lon_boundary.value, lon_shifted, ptracer_b_shifted, period=self.twopi)
 
         # Compute model UTC initalisation time, if using Carrington map boundary.
         if self.cr_num.value != 9999:
@@ -479,6 +491,8 @@ class HUXt:
         # Preallocate space for the output for the solar wind fields for the cme and ambient solution.
         self.v_grid_cme = np.zeros((self.nt_out, self.nr, self.nlon)) * self.kms
         self.v_grid_amb = np.zeros((self.nt_out, self.nr, self.nlon)) * self.kms
+        self.ptracer_grid_amb = np.zeros((self.nt_out, self.nr, self.nlon)) * u.dimensionless_unscaled
+        self.ptracer_grid_cme = np.zeros((self.nt_out, self.nr, self.nlon)) * u.dimensionless_unscaled
 
         # Mesh the spatial coordinates.
         self.lon_grid, self.r_grid = np.meshgrid(self.lon, self.r)
@@ -554,14 +568,21 @@ class HUXt:
             loninit = _zerototwopi_(lonint)
             # Interpolate the inner boundary speed to this higher resolution
             vinit = np.interp(loninit, all_lons.value, self.v_boundary.value, period=2 * np.pi)
+            ptracerinit = np.interp(loninit, all_lons.value, self.ptracer_boundary.value, period=2 * np.pi)
             # convert from cr longitude to timesolve
             vinput = np.flipud(vinit)
+            ptracerinput = np.flipud(ptracerinit)
 
-            v_amb, v_cme = solve_radial(vinput, model_time, self.rrel.value, lon_out, self.model_params, do_cme,
-                                        cme_params)
-
+            v_amb, v_cme, ptracer_amb, ptracer_cme  = solve_radial(vinput,ptracerinput, 
+                                                                   model_time, 
+                                                                   self.rrel.value, 
+                                                                   lon_out, 
+                                                                   self.model_params, 
+                                                                   do_cme,  cme_params)
             self.v_grid_amb[:, :, i] = v_amb * self.kms
             self.v_grid_cme[:, :, i] = v_cme * self.kms
+            self.ptracer_grid_amb[:, :, i] = ptracer_amb * u.dimensionless_unscaled
+            self.ptracer_grid_cme[:, :, i] = ptracer_cme * u.dimensionless_unscaled
 
         # Update CMEs positions by tracking through the solution.
         updated_cmes = []
@@ -660,8 +681,8 @@ class HUXt:
         :return ax: Axes handle.
         """
 
-        if field not in ['cme', 'ambient']:
-            print("Error, field must be either 'cme', or 'ambient'. Default to CME")
+        if field not in ['cme', 'ambient','ptracer_cme','ptracer_ambient']:
+            print("Error, field must be either 'cme', 'ambient','ptracer_cme','ptracer_amb'. Default to CME")
             field = 'cme'
 
         if (time < self.time_out.min()) | (time > (self.time_out.max())):
@@ -674,8 +695,16 @@ class HUXt:
         lon, rad = np.meshgrid(lon_arr.value, self.r.value)
         if field == 'cme':
             v_sub = self.v_grid_cme.value[id_t, :, :].copy()
+            plotvmin=200; plotvmax=800; dv=10
         elif field == 'ambient':
             v_sub = self.v_grid_amb.value[id_t, :, :].copy()
+            plotvmin=200; plotvmax=800; dv=10
+        elif field == 'ptracer_cme':
+            v_sub = self.ptracer_grid_cme.value[id_t, :, :].copy()
+            plotvmin=-1; plotvmax=1; dv=0.1
+        elif field == 'ptracer_ambient':
+            v_sub = self.ptracer_grid_amb.value[id_t, :, :].copy()
+            plotvmin=-1; plotvmax=1; dv=0.1
 
         # Insert into full array
         if lon_arr.size != self.lon.size:
@@ -700,8 +729,7 @@ class HUXt:
         mymap = mpl.cm.viridis
         mymap.set_over('lightgrey')
         mymap.set_under([0, 0, 0])
-        dv = 10
-        levels = np.arange(200, 800 + dv, dv)
+        levels = np.arange(plotvmin, plotvmax + dv, dv)
         fig, ax = plt.subplots(figsize=(10, 10), subplot_kw={"projection": "polar"})
         cnt = ax.contourf(lon, rad, v, levels=levels, cmap=mymap, extend='both')
 
@@ -737,7 +765,7 @@ class HUXt:
         cbaxes = fig.add_axes([left, bottom, wid, 0.03])
         cbar1 = fig.colorbar(cnt, cax=cbaxes, orientation='horizontal')
         cbar1.set_label("Solar Wind Speed (km/s)")
-        cbar1.set_ticks(np.arange(200, 900, 100))
+        cbar1.set_ticks(np.arange(plotvmin, plotvmax, dv*10))
 
         # Add label
         label = "Time: {:3.2f} days".format(self.time_out[id_t].to(u.day).value)
@@ -1141,12 +1169,13 @@ def _zerototwopi_(angles):
 
 
 @jit(nopython=True)
-def solve_radial(vinput, model_time, rrel, lon, params, do_cme, cme_params):
+def solve_radial(vinput, ptracerinput, model_time, rrel, lon, params, do_cme, cme_params):
     """
     Solve the radial profile as a function of time (including spinup), and return radial profile at specified
     output timesteps.
 
     :param vinput: Timeseries of inner boundary solar wind speeds
+    :param vinput: Timeseries of inner boundary passive tracer
     :param model_time: Array of model timesteps
     :param rrel: Array of model radial coordinates relative to inner boundary coordinate
     :param lon: The longitude of this radial
@@ -1173,6 +1202,9 @@ def solve_radial(vinput, model_time, rrel, lon, params, do_cme, cme_params):
     # Preallocate space for solutions
     v_grid_amb = np.zeros((nt_out, nr))
     v_grid_cme = np.zeros((nt_out, nr))
+    
+    ptracer_grid_amb = np.zeros((nt_out, nr))
+    ptracer_grid_cme = np.zeros((nt_out, nr))
 
     iter_count = 0
     t_out = 0
@@ -1184,10 +1216,14 @@ def solve_radial(vinput, model_time, rrel, lon, params, do_cme, cme_params):
         if t == 0:
             v_cme = np.ones(nr) * 400
             v_amb = np.ones(nr) * 400
+            ptracer_cme = np.ones(nr) * 0
+            ptracer_amb = np.ones(nr) * 0
 
         # Update the inner boundary conditions
         v_amb[0] = vinput[t]
         v_cme[0] = vinput[t]
+        ptracer_amb[0] = ptracerinput[t]
+        ptracer_cme[0] = ptracerinput[t]
 
         # Compute boundary speed of each CME at this time. Set boundary to the maximum CME speed at this time.
         if time > 0:
@@ -1204,15 +1240,24 @@ def solve_radial(vinput, model_time, rrel, lon, params, do_cme, cme_params):
         # =====================================
         u_up = v_cme[1:].copy()
         u_dn = v_cme[:-1].copy()
-        u_up_next = _upwind_step_(u_up, u_dn, dtdr, alpha, r_accel, rrel)
+        ptracer_up = ptracer_cme[1:].copy()
+        ptracer_dn = ptracer_cme[:-1].copy() 
+        u_up_next, ptracer_up_next = _upwind_step_(u_up, u_dn, 
+                                                   ptracer_up, ptracer_dn,
+                                                   dtdr, alpha, r_accel, rrel)
         # Save the updated time step
         v_cme[1:] = u_up_next.copy()
+        ptracer_cme[1:] = ptracer_up_next.copy()
 
         u_up = v_amb[1:].copy()
         u_dn = v_amb[:-1].copy()
-        u_up_next = _upwind_step_(u_up, u_dn, dtdr, alpha, r_accel, rrel)
-        # Save the updated time step
+        ptracer_up = ptracer_amb[1:].copy()
+        ptracer_dn = ptracer_amb[:-1].copy()
+        u_up_next, ptracer_up_next = _upwind_step_(u_up, u_dn, 
+                                                   ptracer_up, ptracer_dn,
+                                                   dtdr, alpha, r_accel, rrel)   # Save the updated time step
         v_amb[1:] = u_up_next.copy()
+        ptracer_amb[1:] = ptracer_up_next.copy()
 
         # Save this frame to output if output
         if time >= 0:
@@ -1221,18 +1266,22 @@ def solve_radial(vinput, model_time, rrel, lon, params, do_cme, cme_params):
                 if t_out <= nt_out - 1:
                     v_grid_amb[t_out, :] = v_amb.copy()
                     v_grid_cme[t_out, :] = v_cme.copy()
+                    ptracer_grid_amb[t_out, :] = ptracer_amb.copy()
+                    ptracer_grid_cme[t_out, :] = ptracer_cme.copy()
                     t_out = t_out + 1
                     iter_count = 0
 
-    return v_grid_amb, v_grid_cme
+    return v_grid_amb, v_grid_cme, ptracer_grid_amb, ptracer_grid_cme
 
 
 @jit(nopython=True)
-def _upwind_step_(v_up, v_dn, dtdr, alpha, r_accel, rrel):
+def _upwind_step_(v_up, v_dn, ptracer_up, ptracer_dn, dtdr, alpha, r_accel, rrel):
     """
     Compute the next step in the upwind scheme of Burgers equation with added acceleration of the solar wind.
     :param v_up: A numpy array of the upwind radial values. Units of km/s.
     :param v_dn: A numpy array of the downwind radial values. Units of km/s.
+    :param ptracer_up: A numpy array of the upwind passive tracer  values. 
+    :param ptracer_dn: A numpy array of the downwind passive tracer values. 
     :param dtdr: Ratio of HUXts time step and radial grid step. Units of s/km.
     :param alpha: Scale parameter for residual Solar wind acceleration.
     :param r_accel: Spatial scale parameter of residual solar wind acceleration. Units of km.
@@ -1252,7 +1301,12 @@ def _upwind_step_(v_up, v_dn, dtdr, alpha, r_accel, rrel):
     v_diff = alpha * v_source * (np.exp(accel_arg) - np.exp(accel_arg_p))
     # Add the residual acceleration over this grid cell
     v_up_next = v_up_next + (v_dn * dtdr * v_diff)
-    return v_up_next
+    
+    
+    #now advect the passive tracer
+    ptracer_up_next = ptracer_up - dtdr * v_up * (ptracer_up - ptracer_dn)
+    
+    return v_up_next, ptracer_up_next
 
 
 @jit(nopython=True)
