@@ -1256,7 +1256,7 @@ def solve_radial(vinput, ptracerinput, model_time, rrel, lon, params, do_cme, cm
         u_dn = v_cme[:-1].copy()
         ptracer_up = ptracer_cme[1:].copy()
         ptracer_dn = ptracer_cme[:-1].copy() 
-        u_up_next, ptracer_up_next = _upwind_step_(u_up, u_dn, 
+        u_up_next, ptracer_up_next = _upwind_step_ptracer_(u_up, u_dn, 
                                                    ptracer_up, ptracer_dn,
                                                    dtdr, alpha, r_accel, rrel)
         # Save the updated time step
@@ -1267,7 +1267,7 @@ def solve_radial(vinput, ptracerinput, model_time, rrel, lon, params, do_cme, cm
         u_dn = v_amb[:-1].copy()
         ptracer_up = ptracer_amb[1:].copy()
         ptracer_dn = ptracer_amb[:-1].copy()
-        u_up_next, ptracer_up_next = _upwind_step_(u_up, u_dn, 
+        u_up_next, ptracer_up_next = _upwind_step_ptracer_(u_up, u_dn, 
                                                    ptracer_up, ptracer_dn,
                                                    dtdr, alpha, r_accel, rrel)   # Save the updated time step
         v_amb[1:] = u_up_next.copy()
@@ -1287,9 +1287,36 @@ def solve_radial(vinput, ptracerinput, model_time, rrel, lon, params, do_cme, cm
 
     return v_grid_amb, v_grid_cme, ptracer_grid_amb, ptracer_grid_cme
 
+@jit(nopython=True)
+def _upwind_step_(v_up, v_dn, dtdr, alpha, r_accel, rrel):
+    """
+    Compute the next step in the upwind scheme of Burgers equation with added acceleration of the solar wind.
+    :param v_up: A numpy array of the upwind radial values. Units of km/s.
+    :param v_dn: A numpy array of the downwind radial values. Units of km/s.
+    :param dtdr: Ratio of HUXts time step and radial grid step. Units of s/km.
+    :param alpha: Scale parameter for residual Solar wind acceleration.
+    :param r_accel: Spatial scale parameter of residual solar wind acceleration. Units of km.
+    :param rrel: The model radial grid relative to the radial inner boundary coordinate. Units of km.
+    :return: The upwind values at the next time step, numpy array with units of km/s.
+    """
+
+    # Arguments for computing the acceleration factor
+    accel_arg = -rrel[:-1] / r_accel
+    accel_arg_p = -rrel[1:] / r_accel
+
+    # Get estimate of next time step
+    v_up_next = v_up - dtdr * v_up * (v_up - v_dn)
+    # Compute the probable speed at 30rS from the observed speed at r
+    v_source = v_dn / (1.0 + alpha * (1.0 - np.exp(accel_arg)))
+    # Then compute the speed gain between r and r+dr
+    v_diff = alpha * v_source * (np.exp(accel_arg) - np.exp(accel_arg_p))
+    # Add the residual acceleration over this grid cell
+    v_up_next = v_up_next + (v_dn * dtdr * v_diff)
+    return v_up_next
+
 
 @jit(nopython=True)
-def _upwind_step_(v_up, v_dn, ptracer_up, ptracer_dn, dtdr, alpha, r_accel, rrel):
+def _upwind_step_ptracer_(v_up, v_dn, ptracer_up, ptracer_dn, dtdr, alpha, r_accel, rrel):
     """
     Compute the next step in the upwind scheme of Burgers equation with added acceleration of the solar wind.
     :param v_up: A numpy array of the upwind radial values. Units of km/s.
