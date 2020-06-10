@@ -701,8 +701,7 @@ class HUXt:
             plotvmin=200; plotvmax=810; dv=10
         elif field == 'ptracer_cme':
             v_sub = self.ptracer_grid_cme.value[id_t, :, :].copy()
-            ncme_max=v_sub.max()
-            print(ncme_max)
+            #ncme_max=v_sub.max()
             #flat-field the CME tracer
             v_sub[v_sub>0.1]=1.0
             plotvmin=0; plotvmax=1.1; dv=0.1
