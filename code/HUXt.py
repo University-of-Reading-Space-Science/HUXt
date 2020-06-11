@@ -710,8 +710,9 @@ class HUXt:
             v_sub = self.ptracer_grid_cme.value[id_t, :, :].copy()
             #flat-field the CME tracer
             constants=huxt_constants()
-            v_sub[v_sub>constants['cmetracerthreshold']]=1.0
-            plotvmin=0.01; plotvmax=1.1; dv=0.1
+            v_sub[v_sub>=constants['cmetracerthreshold']]=1.0
+            v_sub[v_sub<constants['cmetracerthreshold']]=0.0
+            plotvmin=0.0; plotvmax=1.1; dv=0.1
             ylab="CME tracer"
         elif field == 'ptracer_ambient':
             v_sub = self.ptracer_grid_amb.value[id_t, :, :].copy()
@@ -1006,7 +1007,7 @@ def huxt_constants():
     synodic_period = 27.2753 * daysec  # Solar Synodic rotation period from Earth.
     v_max = 2000 * kms
     dr = 1.5 * u.solRad  # Radial grid step. With v_max, this sets the model time step.
-    cmetracerthreshold=0.05
+    cmetracerthreshold=0.02 # Threshold of CME tracer field to use for CME identification
     constants = {'twopi': twopi, 'daysec': daysec, 'kms': kms, 'alpha': alpha,
                  'r_accel': r_accel, 'synodic_period': synodic_period, 'v_max': v_max,
                  'dr': dr, 'cmetracerthreshold' : cmetracerthreshold}
