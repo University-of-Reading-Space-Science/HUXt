@@ -451,9 +451,12 @@ class HUXt:
                 
         # Now establish the passive tracer boundary conditions
         if np.all(np.isnan(ptracer_boundary)):
-            print("Warning: No passive tracer boundary conditions supplied.")
+            print("Warning: No passive tracer boundary conditions supplied. Using default")
             self.ptracer_boundary = 1 * np.ones(128) *  u.dimensionless_unscaled
             self.ptracer_boundary[64:] = -1 *  u.dimensionless_unscaled
+        elif not np.all(np.isnan(ptracer_boundary)):
+            assert ptracer_boundary.size == 128
+            self.ptracer_boundary = ptracer_boundary
             
 
         # Keep a protected version that isn't processed for use in saving/loading model runs
@@ -644,7 +647,9 @@ class HUXt:
         # Loop over the attributes of model instance and save select keys/attributes.
         keys = ['cr_num', 'cr_lon_init', 'simtime', 'dt', 'v_max', 'r_accel', 'alpha',
                 'dt_scale', 'time_out', 'dt_out', 'r', 'dr', 'lon', 'dlon', 'r_grid', 'lon_grid',
-                'v_grid_cme', 'v_grid_amb', 'v_boundary', '_v_boundary_init_', '_map_inwards_']
+                'v_grid_cme', 'v_grid_amb', 'ptracer_grid_cme', 'ptracer_grid_amb',
+                'v_boundary', '_v_boundary_init_',
+                'ptracer_boundary', '_ptracer_boundary_init_','_map_inwards_']
 
         for k, v in self.__dict__.items():
 
@@ -696,18 +701,22 @@ class HUXt:
         if field == 'cme':
             v_sub = self.v_grid_cme.value[id_t, :, :].copy()
             plotvmin=200; plotvmax=810; dv=10
+            ylab="Solar Wind Speed (km/s)"
         elif field == 'ambient':
             v_sub = self.v_grid_amb.value[id_t, :, :].copy()
             plotvmin=200; plotvmax=810; dv=10
+            ylab="Solar Wind Speed (km/s)"
         elif field == 'ptracer_cme':
             v_sub = self.ptracer_grid_cme.value[id_t, :, :].copy()
-            #ncme_max=v_sub.max()
             #flat-field the CME tracer
-            v_sub[v_sub>0.1]=1.0
-            plotvmin=0; plotvmax=1.1; dv=0.1
+            constants=huxt_constants()
+            v_sub[v_sub>constants['cmetracerthreshold']]=1.0
+            plotvmin=0.01; plotvmax=1.1; dv=0.1
+            ylab="CME tracer"
         elif field == 'ptracer_ambient':
             v_sub = self.ptracer_grid_amb.value[id_t, :, :].copy()
             plotvmin=-1; plotvmax=1.1; dv=0.1
+            ylab="Magnetic secor polarity"
 
         # Insert into full array
         if lon_arr.size != self.lon.size:
@@ -767,7 +776,7 @@ class HUXt:
         wid = pos.width - 2 * dw
         cbaxes = fig.add_axes([left, bottom, wid, 0.03])
         cbar1 = fig.colorbar(cnt, cax=cbaxes, orientation='horizontal')
-        cbar1.set_label("Solar Wind Speed (km/s)")
+        cbar1.set_label(ylab)
         cbar1.set_ticks(np.arange(plotvmin, plotvmax, dv*10))
 
         # Add label
@@ -997,9 +1006,10 @@ def huxt_constants():
     synodic_period = 27.2753 * daysec  # Solar Synodic rotation period from Earth.
     v_max = 2000 * kms
     dr = 1.5 * u.solRad  # Radial grid step. With v_max, this sets the model time step.
+    cmetracerthreshold=0.05
     constants = {'twopi': twopi, 'daysec': daysec, 'kms': kms, 'alpha': alpha,
                  'r_accel': r_accel, 'synodic_period': synodic_period, 'v_max': v_max,
-                 'dr': dr}
+                 'dr': dr, 'cmetracerthreshold' : cmetracerthreshold}
     return constants
 
 
@@ -1226,7 +1236,7 @@ def solve_radial(vinput, ptracerinput, model_time, rrel, lon, params, do_cme, cm
         v_amb[0] = vinput[t]
         v_cme[0] = vinput[t]
         ptracer_amb[0] = ptracerinput[t]
-        ptracer_cme[0] = 0.01
+        ptracer_cme[0] = 0.0
 
         # Compute boundary speed of each CME at this time. 
         # Set boundary to the maximum CME speed at this time.
@@ -1243,7 +1253,7 @@ def solve_radial(vinput, ptracerinput, model_time, rrel, lon, params, do_cme, cm
                         ptracer_update_cme[i] = 1.0 #the CME number
                     else:
                         v_update_cme[i] = v_cme[0]
-                        ptracer_update_cme[i]=0.01
+                        ptracer_update_cme[i]=0.0
 
                 v_cme[0] = v_update_cme.max()
                 ptracer_cme[0] = ptracer_update_cme.max()
@@ -1428,6 +1438,7 @@ def load_HUXt_run(filepath):
         simtime = simtime.to(u.day)
         dt_scale = data['dt_scale'][()]
         v_boundary = data['_v_boundary_init_'][()] * u.Unit(data['_v_boundary_init_'].attrs['unit'])
+        ptracer_boundary = data['_ptracer_boundary_init_'][()] * u.Unit(data['_ptracer_boundary_init_'].attrs['unit'])
         r = data['r'][()] * u.Unit(data['r'].attrs['unit'])
         lon = data['lon'][()] * u.Unit(data['lon'].attrs['unit'])
         nlon = lon.size
@@ -1437,25 +1448,21 @@ def load_HUXt_run(filepath):
         else:
             map_inwards = False
 
-        if cr_num != 9999:
-            if nlon == 1:
-                model = HUXt(cr_num=cr_num, cr_lon_init=cr_lon_init, r_min=r.min(), r_max=r.max(),
-                             lon_out=lon, simtime=simtime, dt_scale=dt_scale, map_inwards=map_inwards)
-            elif nlon > 1:
-                model = HUXt(cr_num=cr_num, cr_lon_init=cr_lon_init, r_min=r.min(), r_max=r.max(),
-                             lon_start=lon.min(), lon_stop=lon.max(), simtime=simtime, dt_scale=dt_scale,
-                             map_inwards=map_inwards)
-        else:
-            if nlon == 1:
-                model = HUXt(v_boundary=v_boundary, cr_lon_init=cr_lon_init, r_min=r.min(), r_max=r.max(),
-                             lon_out=lon, simtime=simtime, dt_scale=dt_scale, map_inwards=map_inwards)
-            elif nlon > 1:
-                model = HUXt(v_boundary=v_boundary, cr_lon_init=cr_lon_init, r_min=r.min(), r_max=r.max(),
-                             lon_start=lon.min(), lon_stop=lon.max(), simtime=simtime, dt_scale=dt_scale,
-                             map_inwards=map_inwards)
+
+        if nlon == 1:
+            model = HUXt(v_boundary=v_boundary, ptracer_boundary=ptracer_boundary, cr_num=cr_num,
+                         cr_lon_init=cr_lon_init, r_min=r.min(), r_max=r.max(),
+                         lon_out=lon, simtime=simtime, dt_scale=dt_scale, map_inwards=map_inwards)
+        elif nlon > 1:
+            model = HUXt(v_boundary=v_boundary, ptracer_boundary=ptracer_boundary, cr_num=cr_num,
+                         cr_lon_init=cr_lon_init, r_min=r.min(), r_max=r.max(),
+                         lon_start=lon.min(), lon_stop=lon.max(), simtime=simtime, dt_scale=dt_scale,
+                         map_inwards=map_inwards)
 
         model.v_grid_cme[:, :, :] = data['v_grid_cme'][()] * u.Unit(data['v_boundary'].attrs['unit'])
         model.v_grid_amb[:, :, :] = data['v_grid_amb'][()] * u.Unit(data['v_boundary'].attrs['unit'])
+        model.ptracer_grid_cme[:, :, :] = data['ptracer_grid_cme'][()] * u.Unit(data['ptracer_boundary'].attrs['unit'])
+        model.ptracer_grid_amb[:, :, :] = data['ptracer_grid_amb'][()] * u.Unit(data['ptracer_boundary'].attrs['unit'])
 
         # Create list of the ConeCMEs
         cme_list = []
