@@ -388,6 +388,7 @@ class HUXt:
         self.r_accel = constants['r_accel']  # Spatial scale parameter for residual SW acceleration
         self.synodic_period = constants['synodic_period']  # Solar Synodic rotation period from Earth.
         self.v_max = constants['v_max']
+        self.nlong = constants['nlong']
         del constants
 
         # Extract paths of figure and data directories
@@ -426,10 +427,10 @@ class HUXt:
         # Determine the boundary conditions from input v_boundary and cr_num, and cr_lon_init
         if np.all(np.isnan(v_boundary)) & np.isnan(cr_num):
             print("Warning: No boundary conditions supplied. Defaulting to 400 km/s boundary")
-            self.v_boundary = 400 * np.ones(128) * self.kms
+            self.v_boundary = 400 * np.ones(self.nlong) * self.kms
             self.cr_num = 9999 * u.dimensionless_unscaled
         elif not np.all(np.isnan(v_boundary)):
-            assert v_boundary.size == 128
+            assert v_boundary.size == self.nlong
             self.v_boundary = v_boundary
             if np.isnan(cr_num):
                 # Set dummy number for cr_num
@@ -447,15 +448,15 @@ class HUXt:
                 data.close()
             else:
                 print("Warning: {} not found. Defaulting to 400 km/s boundary".format(boundary_file))
-                self.v_boundary = 400 * np.ones(128) * self.kms
+                self.v_boundary = 400 * np.ones(self.nlong) * self.kms
                 
         # Now establish the passive tracer boundary conditions
         if np.all(np.isnan(ptracer_boundary)):
             print("Warning: No passive tracer boundary conditions supplied. Using default")
-            self.ptracer_boundary = 1 * np.ones(128) *  u.dimensionless_unscaled
-            self.ptracer_boundary[64:] = -1 *  u.dimensionless_unscaled
+            self.ptracer_boundary = 1 * np.ones(self.nlong) *  u.dimensionless_unscaled
+            self.ptracer_boundary[int(self.nlong/2):] = -1 *  u.dimensionless_unscaled
         elif not np.all(np.isnan(ptracer_boundary)):
-            assert ptracer_boundary.size == 128
+            assert ptracer_boundary.size == self.nlong
             self.ptracer_boundary = ptracer_boundary
             
 
@@ -1008,9 +1009,12 @@ def huxt_constants():
     v_max = 2000 * kms
     dr = 1.5 * u.solRad  # Radial grid step. With v_max, this sets the model time step.
     cmetracerthreshold=0.02 # Threshold of CME tracer field to use for CME identification
+    nlong=128 #number of longitude bins    
+    
     constants = {'twopi': twopi, 'daysec': daysec, 'kms': kms, 'alpha': alpha,
                  'r_accel': r_accel, 'synodic_period': synodic_period, 'v_max': v_max,
-                 'dr': dr, 'cmetracerthreshold' : cmetracerthreshold}
+                 'dr': dr, 'cmetracerthreshold' : cmetracerthreshold,
+                 'nlong' : nlong}
     return constants
 
 
@@ -1080,7 +1084,7 @@ def longitude_grid(lon_out=np.NaN * u.rad, lon_start=np.NaN * u.rad, lon_stop=np
         longitude_range = True
 
     # Form the full longitude grid.
-    nlon = 128
+    nlon = huxt_constants()['nlong']
     dlon = twopi / nlon
     lon_min_full = dlon / 2.0
     lon_max_full = twopi - (dlon / 2.0)
