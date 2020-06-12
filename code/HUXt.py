@@ -400,7 +400,7 @@ class HUXt:
 
         # Setup radial coordinates - in solar radius
         self.r, self.dr, self.rrel, self.nr = radial_grid(r_min=r_min, r_max=r_max)
-        self.buffertime = ((5.0 * u.day) / (210 * u.solRad)) * self.rrel[-1]
+        self.buffertime = ((8.0 * u.day) / (210 * u.solRad)) * self.rrel[-1]
 
         # Setup longitude coordinates - in radians.
         self.lon, self.dlon, self.nlon = longitude_grid(lon_out=lon_out, lon_start=lon_start, lon_stop=lon_stop)
@@ -453,11 +453,11 @@ class HUXt:
         # Now establish the passive tracer boundary conditions
         if np.all(np.isnan(ptracer_boundary)):
             print("Warning: No passive tracer boundary conditions supplied. Using default")
-            self.ptracer_boundary = 1 * np.ones(self.nlong) *  u.dimensionless_unscaled
-            self.ptracer_boundary[int(self.nlong/2):] = -1 *  u.dimensionless_unscaled
+            self.ptracer_boundary = 1.0 * np.ones(self.nlong) *  u.dimensionless_unscaled
+            self.ptracer_boundary[int(self.nlong/2):] = -1.0 *  u.dimensionless_unscaled
         elif not np.all(np.isnan(ptracer_boundary)):
             assert ptracer_boundary.size == self.nlong
-            self.ptracer_boundary = ptracer_boundary
+            self.ptracer_boundary = ptracer_boundary * u.dimensionless_unscaled
             
 
         # Keep a protected version that isn't processed for use in saving/loading model runs
