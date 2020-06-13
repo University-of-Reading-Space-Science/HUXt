@@ -374,8 +374,8 @@ cr=2054
 vr_in, br_in = get_MAS_equatorial_profiles(cr)
 
 #map the MAS values inwards from 30 rS to 5 rS
-vr_5rs=H.map_v_boundary_inwards(vr_in, 30*u.solRad, 5*u.solRad)
-br_5rs=H.map_ptracer_boundary_inwards(vr_in, 30*u.solRad, 5*u.solRad,br_in)
+vr_5rs=map_v_boundary_inwards(vr_in, 30*u.solRad, 5*u.solRad)
+br_5rs=map_ptracer_boundary_inwards(vr_in, 30*u.solRad, 5*u.solRad,br_in)
 
 #now run HUXt
 model = H.HUXt(v_boundary=vr_5rs, cr_num=cr, br_boundary=br_5rs,simtime=5*u.day, 
