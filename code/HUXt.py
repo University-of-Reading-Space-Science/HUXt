@@ -359,7 +359,7 @@ class HUXt:
                  cr_num=np.NaN, cr_lon_init=360.0 * u.deg,
                  r_min=30 * u.solRad, r_max=240 * u.solRad,
                  lon_out=np.NaN * u.rad, lon_start=np.NaN * u.rad, lon_stop=np.NaN * u.rad,
-                 simtime=5.0 * u.day, dt_scale=1.0, map_inwards=False):
+                 simtime=5.0 * u.day, dt_scale=1.0):
         """
         Initialise the HUXt instance.
 
@@ -463,16 +463,7 @@ class HUXt:
         # Keep a protected version that isn't processed for use in saving/loading model runs
         self._v_boundary_init_ = self.v_boundary.copy()
         self._ptracer_boundary_init_ = self.ptracer_boundary.copy()
-        if map_inwards:
-            self._map_inwards_ = 1.0 * u.dimensionless_unscaled
-        else:
-            self._map_inwards_ = 0.0 * u.dimensionless_unscaled
-
-        if map_inwards:
-            # Assumes inner boundary was specified at 30 Rs, which is true for default Carrington maps.
-            r_outer = 30 * u.solRad
-            r_inner = self.r.min()
-            self.v_boundary = map_v_boundary_inwards(self.v_boundary, r_outer, r_inner)
+        
 
         # Rotate the boundary condition as required by cr_lon_init.
         if self.cr_lon_init != 360 * u.rad:
@@ -1515,98 +1506,3 @@ def load_HUXt_run(filepath):
     return model, cme_list
 
 
-@u.quantity_input(v_outer=u.km / u.s)
-@u.quantity_input(r_outer=u.solRad)
-@u.quantity_input(lon_outer=u.rad)
-@u.quantity_input(r_inner=u.solRad)
-def map_v_inwards(v_outer, r_outer, lon_outer, r_inner):
-    """
-    Function to map v from r_outer (in rs) to r_inner (in rs)
-    :param v_outer: Solar wind speed at outer radial distance. Units of km/s.
-    :param r_outer: Radial distance at outer radial distance. Units of km.  
-    :param lon_outer: Carrington longitude at outer distance. Units of rad
-    :param r_inner: Radial distance at inner radial distance. Units of km.
-    :return v_inner: Solar wind speed mapped from r_outer to r_inner. Units of km/s.
-    :return lon_inner: Carrington longitude at r_inner. Units of rad.
-    """
-
-    if r_outer < r_inner:
-        raise ValueError("Warning: r_outer < r_inner. Mapping will not work.")
-
-    # get the acceleration parameters
-    constants = huxt_constants()
-    alpha = constants['alpha']  # Scale parameter for residual SW acceleration
-    rH = constants['r_accel'].to(u.kilometer).value  # Spatial scale parameter for residual SW acceleration
-    Tsyn = constants['synodic_period'].to(u.s).value
-    r_outer = r_outer.to(u.km).value
-    r_inner = r_inner.to(u.km).value
-
-    # compute the speed at the new inner boundary height (using Vacc term, equation 5 in the paper)
-    v0 = v_outer.value / (1 + alpha * (1 - np.exp((r_inner - r_outer) / rH)))
-
-    # compute the transit time from the new to old inner boundary heights (i.e., integrate equations 3 and 4 wrt to r)
-    A = v0 + alpha * v0
-    term1 = rH * np.log(A * np.exp(r_outer / rH) - 
-                      alpha * v0 * np.exp(r_inner / rH)) / A
-    term2 = rH * np.log(A * np.exp(r_inner / rH) - 
-                      alpha * v0 * np.exp(r_inner / rH)) / A                      
-    T_integral = term1 - term2
-
-    # work out the longitudinal shift
-    phi_new = _zerototwopi_(lon_outer.value + (T_integral / Tsyn) * 2 * np.pi)
-
-    return v0*u.km/u.s, phi_new*u.rad
-
-
-@u.quantity_input(v_outer=u.km / u.s)
-@u.quantity_input(r_outer=u.solRad)
-@u.quantity_input(r_inner=u.solRad)
-def map_v_boundary_inwards(v_outer, r_outer, r_inner):
-    """
-    Function to map a longitudinal V series from r_outer (in rs) to r_inner (in rs)
-    :param v_outer: Solar wind speed at outer radial boundary. Units of km/s.
-    :param r_outer: Radial distance at outer radial boundary. Units of km.
-    :param r_inner: Radial distance at inner radial boundary. Units of km.
-    :return v_inner: Solar wind speed mapped from r_outer to r_inner. Units of km/s.
-    """
-
-    if r_outer < r_inner:
-        raise ValueError("Warning: r_outer < r_inner. Mapping will not work.")
-
-    # compute the longitude grid from the length of the vouter input variable
-    lon, dlon, nlon = longitude_grid()   
-    #map each point in to a new speed and longitude
-    v0, phis_new = map_v_inwards(v_outer, r_outer, lon, r_inner)
-
-    #interpolate the mapped speeds back onto the regular Carr long grid,
-    #making boundaries periodic 
-    v_inner = np.interp(lon, phis_new, v0, period=2*np.pi) 
-
-    return v_inner
-
-@u.quantity_input(v_outer=u.km / u.s)
-@u.quantity_input(r_outer=u.solRad)
-@u.quantity_input(r_inner=u.solRad)
-def map_ptracer_boundary_inwards(v_outer, r_outer, r_inner, ptracer_outer):
-    """
-    Function to map a longitudinal V series from r_outer (in rs) to r_inner (in rs)
-    :param v_outer: Solar wind speed at outer radial boundary. Units of km/s.
-    :param r_outer: Radial distance at outer radial boundary. Units of km.
-    :param r_inner: Radial distance at inner radial boundary. Units of km.
-    :param p_tracer_outer:  Passive tracer at outer radial boundary. 
-    :return ptracer_inner: Passive tracer mapped from r_outer to r_inner. 
-    """
-
-    if r_outer < r_inner:
-        raise ValueError("Warning: r_outer < r_inner. Mapping will not work.")
-
-    # compute the longitude grid from the length of the vouter input variable
-    lon, dlon, nlon = longitude_grid()   
-    #map each point in to a new speed and longitude
-    v0, phis_new = map_v_inwards(v_outer, r_outer, lon, r_inner)
-
-    #interpolate the mapped speeds back onto the regular Carr long grid,
-    #making boundaries periodic 
-    ptracer_inner = np.interp(lon, phis_new, ptracer_outer, period=2*np.pi) 
-
-    return ptracer_inner
