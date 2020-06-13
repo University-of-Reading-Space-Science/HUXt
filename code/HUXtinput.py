@@ -9,14 +9,14 @@ import urllib
 import HUXt as H
 import os
 from pyhdf.SD import SD, SDC  
-import matplotlib.pyplot as plt
-from astropy.time import Time
-import heliopy
-import sunpy
+#import matplotlib.pyplot as plt
+#from astropy.time import Time
+#import heliopy
+#import sunpy
 import numpy as np
 import astropy.units as u
-import astropy
-from heliopy.data import psp as psp_data, spice as spice_data
+#import astropy
+#from heliopy.data import psp as psp_data, spice as spice_data
 
 # <codecell> Get MAS data from MHDweb
 
@@ -349,66 +349,4 @@ def map_ptracer_boundary_inwards(v_outer, r_outer, r_inner, ptracer_outer):
     ptracer_inner = np.interp(lon, phis_new, ptracer_outer, period=2*np.pi) 
 
     return ptracer_inner
-# <codecell> Get the MAS equatorial profiles and run HUXt (from the MAS boundary of 30rS)
 
-#get the HUXt inputs
-cr=2054
-vr_in, br_in = get_MAS_equatorial_profiles(cr)
-#now run HUXt
-model = H.HUXt(v_boundary=vr_in, cr_num=cr, br_boundary=br_in,simtime=5*u.day, dt_scale=4)
-model.solve([]) 
-
-t_interest=0*u.day
-model.plot(t_interest, field='ambient')
-model.plot(t_interest, field='cme')
-model.plot(t_interest, field='ptracer_cme')
-model.plot(t_interest, field='ptracer_ambient')
-
-
-
-
-# <codecell> Get the MAS equatorial profiles and run HUXt from 5 rS
-
-#get the HUXt inputs
-cr=2054
-vr_in, br_in = get_MAS_equatorial_profiles(cr)
-
-#map the MAS values inwards from 30 rS to 5 rS
-vr_5rs=map_v_boundary_inwards(vr_in, 30*u.solRad, 5*u.solRad)
-br_5rs=map_ptracer_boundary_inwards(vr_in, 30*u.solRad, 5*u.solRad,br_in)
-
-#now run HUXt
-model = H.HUXt(v_boundary=vr_5rs, cr_num=cr, br_boundary=br_5rs,simtime=5*u.day, 
-               dt_scale=4, r_min=5*u.solRad)
-model.solve([]) 
-
-t_interest=0*u.day
-model.plot(t_interest, field='ambient')
-model.plot(t_interest, field='ptracer_ambient')
-
-
-
-
-
-
-# <codecell> Extract the properties at Earth latitude - not currently used
-
-#create the time series
-nlong=H.huxt_constants()['nlong']
-tstart=sunpy.coordinates.sun.carrington_rotation_time(cr)
-tstop=sunpy.coordinates.sun.carrington_rotation_time(cr+1)
-dt=(tstop-tstart)/nlong
-t=tstart + dt/2 + (tstop-tstart-dt) * np.linspace(0.,1.0,nlong)
-
-### Now get Earth's Carrington Longitude vs time and visualize
-earthSpiceKernel = spice_data.get_kernel("planet_trajectories")
-heliopy.spice.furnish(earthSpiceKernel)
-earthTrajectory = heliopy.spice.Trajectory("Earth")
-earthTrajectory.generate_positions(t,'Sun','IAU_SUN')
-earth = astropy.coordinates.SkyCoord(x=earthTrajectory.x,
-                                     y=earthTrajectory.y,
-                                     z=earthTrajectory.z,
-                                     frame = sunpy.coordinates.frames.HeliographicCarrington,
-                                     representation_type="cartesian"
-                                     )
-earth.representation_type="spherical"
