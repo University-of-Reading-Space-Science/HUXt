@@ -355,7 +355,7 @@ class HUXt:
     @u.quantity_input(v_boundary=(u.km / u.s))
     @u.quantity_input(simtime=u.day)
     @u.quantity_input(cr_lon_init=u.deg)
-    def __init__(self, v_boundary=np.NaN * (u.km / u.s),  ptracer_boundary=np.NaN * u.dimensionless_unscaled,
+    def __init__(self, v_boundary=np.NaN * (u.km / u.s),  br_boundary=np.NaN * u.dimensionless_unscaled,
                  cr_num=np.NaN, cr_lon_init=360.0 * u.deg,
                  r_min=30 * u.solRad, r_max=240 * u.solRad,
                  lon_out=np.NaN * u.rad, lon_start=np.NaN * u.rad, lon_stop=np.NaN * u.rad,
@@ -451,13 +451,13 @@ class HUXt:
                 self.v_boundary = 400 * np.ones(self.nlong) * self.kms
                 
         # Now establish the passive tracer boundary conditions
-        if np.all(np.isnan(ptracer_boundary)):
+        if np.all(np.isnan(br_boundary)):
             print("Warning: No passive tracer boundary conditions supplied. Using default")
             self.ptracer_boundary = 1.0 * np.ones(self.nlong) *  u.dimensionless_unscaled
             self.ptracer_boundary[int(self.nlong/2):] = -1.0 *  u.dimensionless_unscaled
-        elif not np.all(np.isnan(ptracer_boundary)):
-            assert ptracer_boundary.size == self.nlong
-            self.ptracer_boundary = ptracer_boundary * u.dimensionless_unscaled
+        elif not np.all(np.isnan(br_boundary)):
+            assert br_boundary.size == self.nlong
+            self.ptracer_boundary = br_boundary * u.dimensionless_unscaled
             
 
         # Keep a protected version that isn't processed for use in saving/loading model runs
@@ -699,6 +699,7 @@ class HUXt:
         # Get plotting data
         lon_arr, dlon, nlon = longitude_grid()
         lon, rad = np.meshgrid(lon_arr.value, self.r.value)
+        mymap = mpl.cm.viridis
         if field == 'cme':
             v_sub = self.v_grid_cme.value[id_t, :, :].copy()
             plotvmin=200; plotvmax=810; dv=10
@@ -717,8 +718,11 @@ class HUXt:
             ylab="CME tracer"
         elif field == 'ptracer_ambient':
             v_sub = self.ptracer_grid_amb.value[id_t, :, :].copy()
-            plotvmin=-1; plotvmax=1.1; dv=0.1
-            ylab="Magnetic secor polarity"
+            vmax=np.absolute(v_sub).max()
+            dv=2*vmax/20
+            plotvmin=-vmax; plotvmax=vmax+dv; 
+            ylab="B_R [code units]"
+            mymap = mpl.cm.bwr
 
         # Insert into full array
         if lon_arr.size != self.lon.size:
@@ -739,8 +743,7 @@ class HUXt:
         rad = np.concatenate((rad, pad), axis=1)
         pad = v[:, 0].reshape((v.shape[0], 1))
         v = np.concatenate((v, pad), axis=1)
-
-        mymap = mpl.cm.viridis
+        
         mymap.set_over('lightgrey')
         mymap.set_under([0, 0, 0])
         levels = np.arange(plotvmin, plotvmax + dv, dv)

@@ -20,9 +20,9 @@ from heliopy.data import psp as psp_data, spice as spice_data
 
 # <codecell> Get MAS data from MHDweb
 
-cr=2050
 
-def getMASboundaryconditions(cr):
+
+def getMASboundaryconditions(cr=np.NaN, observatory='', runtype='', runnumber=''):
     """
     A function to grab the  Vr and Br boundary conditions from MHDweb. An order
     of preference for observatories is given in the function. Checks first if
@@ -30,33 +30,61 @@ def getMASboundaryconditions(cr):
 
     Parameters
     ----------
-    cr : Carrington rotation number (int)
+    cr : INT
+        Carrington rotation number 
+    observatory : STRING
+        Name of preferred observatory (e.g., 'hmi','mdi','solis',
+        'gong','mwo','wso','kpo'). Empty if no preference and automatically selected 
+    runtype : STRING
+        Name of preferred MAS run type (e.g., 'mas','mast','masp').
+        Empty if no preference and automatically selected 
+    runnumber : STRING
+        Name of preferred MAS run number (e.g., '0101','0201').
+        Empty if no preference and automatically selected    
 
     Returns
     -------
-    flag for successful download. -1 = no file found.
+    flag : INT
+        1 = successful download. 0 = files exist, -1 = no file found.
 
     """
+    
+    assert(np.isnan(cr)==False)
+    
     #the order of preference for different MAS run results
-    observatories_order=['hmi','mdi','solis','gong','mwo','wso','kpo']
-    runtype_order=['mas','mast','masp']
-    runnumber_order=['0101','0201']
+    overwrite=False
+    if not observatory:
+        observatories_order=['hmi','mdi','solis','gong','mwo','wso','kpo']
+    else:
+        observatories_order=[str(observatory)]
+        overwrite=True #if the user wants a specific observatory, overwrite what's already downloaded
+        
+    if not runtype:
+        runtype_order=['mas','mast','masp']
+    else:
+        runtype_order=[str(runtype)]
+        overwrite=True
+    
+    if not runnumber:
+        runnumber_order=['0101','0201']
+    else:
+        runnumber_order=[str(runnumber)]
+        overwrite=True
     
     #get the HUXt boundary condition directory
     dirs = H._setup_dirs_()
     _boundary_dir_ = dirs['boundary_conditions'] 
       
     #example URL: http://www.predsci.com/data/runs/cr2010-medium/mdi_mas_mas_std_0101/helio/br_r0.hdf 
-
-    
     heliomas_url_front='http://www.predsci.com/data/runs/cr'
     heliomas_url_end='_r0.hdf'
     
     vrfilename = 'HelioMAS_CR'+str(int(cr)) + '_vr'+heliomas_url_end
     brfilename = 'HelioMAS_CR'+str(int(cr)) + '_br'+heliomas_url_end
     
-    if (os.path.exists(os.path.join( _boundary_dir_, brfilename)) == False & 
-        os.path.exists(os.path.join( _boundary_dir_, vrfilename)) == False): #check if the files already exist
+    if (os.path.exists(os.path.join( _boundary_dir_, brfilename)) == False or 
+        os.path.exists(os.path.join( _boundary_dir_, vrfilename)) == False or
+        overwrite==True): #check if the files already exist
         #Search MHDweb for a HelioMAS run, in order of preference 
         h = httplib2.Http()
         foundfile=False
@@ -99,12 +127,32 @@ def getMASboundaryconditions(cr):
          return 0
 
 
-getMASboundaryconditions(cr)
-
-# <codecell> Read the HDF files 
-
    
 def readMASvrbr(cr):
+    """
+    A function to read in the MAS coundary conditions for a given CR
+
+    Parameters
+    ----------
+    cr : INT
+        Carrington rotation number
+
+    Returns
+    -------
+    MAS_vr : NP ARRAY (NDIM = 2)
+        Solar wind speed at 30rS, in km/s
+    MAS_vr_Xa : NP ARRAY (NDIM = 1)
+        Carrington longitude of Vr map, in rad
+    MAS_vr_Xm : NP ARRAY (NDIM = 1)
+        Latitude of Vr as angle down from N pole, in rad
+    MAS_br : NP ARRAY (NDIM = 2)
+        Radial magnetic field at 30rS, in model units
+    MAS_br_Xa : NP ARRAY (NDIM = 1)
+        Carrington longitude of Br map, in rad
+    MAS_br_Xm : NP ARRAY (NDIM = 1)
+       Latitude of Br as angle down from N pole, in rad
+
+    """
     #get the boundary condition directory
     dirs = H._setup_dirs_()
     _boundary_dir_ = dirs['boundary_conditions'] 
@@ -152,32 +200,65 @@ def readMASvrbr(cr):
     
     return MAS_vr, MAS_vr_Xa, MAS_vr_Xm, MAS_br, MAS_br_Xa, MAS_br_Xm
 
-#read the HelioMAS data
-MAS_vr, MAS_vr_Xa, MAS_vr_Xm, MAS_br, MAS_br_Xa, MAS_br_Xm = readMASvrbr(cr)
 
+def get_MAS_equatorial_profiles(cr):
+    """
+    a function to download, read and process MAS output to provide HUXt boundary
+    conditions at the helioequator
 
-#extract the value at the helioequator
-vr_eq=np.ones(len(MAS_vr_Xa))
-for i in range(0,len(MAS_vr_Xa)):
-    vr_eq[i]=np.interp(np.pi/2,MAS_vr_Xm.value,MAS_vr[i][:].value)
+    Parameters
+    ----------
+    cr : INT
+        Carrington rotation number
 
-br_eq=np.ones(len(MAS_br_Xa))
-for i in range(0,len(MAS_br_Xa)):
-    br_eq[i]=np.interp(np.pi/2,MAS_br_Xm.value,MAS_br[i][:])
+    Returns
+    -------
+    vr_in : NP ARRAY (NDIM = 1)
+        Solar wind speed as a function of Carrington longitude at solar equator.
+        Interpolated to HUXt longitudinal resolution. In km/s
+    br_in : NP ARRAY(NDIM = 1)
+        Radial magnetic field as a function of Carrington longitude at solar equator.
+        Interpolated to HUXt longitudinal resolution. Dimensionless
+
+    """
     
-#now interpolate on to the HUXt longitudinal grid
-nlong=H.huxt_constants()['nlong']
-dphi=2*np.pi/nlong
-longs=np.linspace(dphi/2 , 2*np.pi -dphi/2,nlong)
-vr_in=np.interp(longs,MAS_vr_Xa.value,vr_eq)*u.km/u.s
-br_in=np.interp(longs,MAS_br_Xa.value,br_eq)
+    assert(np.isnan(cr)==False and cr>0)
+    
+    #check the data exist, if not, download them
+    getMASboundaryconditions(cr)    #getMASboundaryconditions(cr,observatory='mdi')
+    
+    #read the HelioMAS data
+    MAS_vr, MAS_vr_Xa, MAS_vr_Xm, MAS_br, MAS_br_Xa, MAS_br_Xm = readMASvrbr(cr)
+    
+    #extract the value at the helioequator
+    vr_eq=np.ones(len(MAS_vr_Xa))
+    for i in range(0,len(MAS_vr_Xa)):
+        vr_eq[i]=np.interp(np.pi/2,MAS_vr_Xm.value,MAS_vr[i][:].value)
+    
+    br_eq=np.ones(len(MAS_br_Xa))
+    for i in range(0,len(MAS_br_Xa)):
+        br_eq[i]=np.interp(np.pi/2,MAS_br_Xm.value,MAS_br[i][:])
+        
+    #now interpolate on to the HUXt longitudinal grid
+    nlong=H.huxt_constants()['nlong']
+    dphi=2*np.pi/nlong
+    longs=np.linspace(dphi/2 , 2*np.pi -dphi/2,nlong)
+    vr_in=np.interp(longs,MAS_vr_Xa.value,vr_eq)*u.km/u.s
+    br_in=np.interp(longs,MAS_br_Xa.value,br_eq)
 
-#convert br into +/- 1
-br_in[br_in>=0.0]=1.0*u.dimensionless_unscaled
-br_in[br_in<0.0]=-1.0*u.dimensionless_unscaled
+    #convert br into +/- 1
+    #br_in[br_in>=0.0]=1.0*u.dimensionless_unscaled
+    #br_in[br_in<0.0]=-1.0*u.dimensionless_unscaled
+    
+    return vr_in, br_in
 
+# <codecell> Get the MAS equatorial profiles and run HUXt
+
+#get the HUXt inputs
+cr=2054
+vr_in, br_in = get_MAS_equatorial_profiles(cr)
 #now run HUXt
-model = H.HUXt(v_boundary=vr_in, ptracer_boundary=br_in,simtime=5*u.day, dt_scale=4)
+model = H.HUXt(v_boundary=vr_in, cr_num=cr, br_boundary=br_in,simtime=5*u.day, dt_scale=4)
 model.solve([]) 
 
 t_interest=0*u.day
@@ -186,7 +267,17 @@ model.plot(t_interest, field='cme')
 model.plot(t_interest, field='ptracer_cme')
 model.plot(t_interest, field='ptracer_ambient')
 
-# <codecell> Extract the properties at Earth latitude
+
+
+
+
+
+
+
+
+
+
+# <codecell> Extract the properties at Earth latitude - not currently used
 
 #create the time series
 nlong=H.huxt_constants()['nlong']
