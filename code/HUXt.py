@@ -365,8 +365,7 @@ class HUXt:
 
         :param v_boundary: Inner solar wind speed boundary condition. Must be an array of size 128 with units of km/s.
         :param ptracer_boundary: Inner passive tracer boundary condition. Must be an array of size 128 with no units
-        :param cr_num: Integer Carrington rotation number. Used to lookup the longitudinal solar wind speed profile
-                       at the solar equator from HelioMAS. This is then used as the inner boundary condition.
+        :param cr_num: Integer Carrington rotation number. Used to determine the planetary and spacecraft positions
         :param cr_lon_init: Carrington longitude of Earth at model initialisation, in degrees.
         :param lon_out: A specific single longitude to compute HUXt solution along.
         :param lon_start: The first longitude (in a clockwise sense) of the longitude range to solve HUXt over.
@@ -436,19 +435,7 @@ class HUXt:
                 # Set dummy number for cr_num
                 self.cr_num = 9999 * u.dimensionless_unscaled
             else:
-                self.cr_num = cr_num * u.dimensionless_unscaled
-        elif not np.isnan(cr_num):
-            # Find and load in the boundary condition file
-            self.cr_num = cr_num * u.dimensionless_unscaled
-            cr_tag = "CR{:03d}.hdf5".format(np.int32(self.cr_num.value))
-            boundary_file = os.path.join(self._boundary_dir_, cr_tag)
-            if os.path.exists(boundary_file):
-                data = h5py.File(boundary_file, 'r')
-                self.v_boundary = data['v_boundary'] * u.Unit(data['v_boundary'].attrs['unit'])
-                data.close()
-            else:
-                print("Warning: {} not found. Defaulting to 400 km/s boundary".format(boundary_file))
-                self.v_boundary = 400 * np.ones(self.nlong) * self.kms
+                self.cr_num = cr_num * u.dimensionless_unscaled       
                 
         # Now establish the passive tracer boundary conditions
         if np.all(np.isnan(br_boundary)):
@@ -457,13 +444,11 @@ class HUXt:
             #self.ptracer_boundary[int(self.nlong/2):] = -1.0 *  u.dimensionless_unscaled
         elif not np.all(np.isnan(br_boundary)):
             assert br_boundary.size == self.nlong
-            self.ptracer_boundary = br_boundary * u.dimensionless_unscaled
-            
+            self.ptracer_boundary = br_boundary * u.dimensionless_unscaled           
 
         # Keep a protected version that isn't processed for use in saving/loading model runs
         self._v_boundary_init_ = self.v_boundary.copy()
-        self._ptracer_boundary_init_ = self.ptracer_boundary.copy()
-        
+        self._ptracer_boundary_init_ = self.ptracer_boundary.copy()       
 
         # Rotate the boundary condition as required by cr_lon_init.
         if self.cr_lon_init != 360 * u.rad:

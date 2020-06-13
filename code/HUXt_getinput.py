@@ -349,7 +349,7 @@ def map_ptracer_boundary_inwards(v_outer, r_outer, r_inner, ptracer_outer):
     ptracer_inner = np.interp(lon, phis_new, ptracer_outer, period=2*np.pi) 
 
     return ptracer_inner
-# <codecell> Get the MAS equatorial profiles and run HUXt
+# <codecell> Get the MAS equatorial profiles and run HUXt (from the MAS boundary of 30rS)
 
 #get the HUXt inputs
 cr=2054
@@ -373,7 +373,7 @@ model.plot(t_interest, field='ptracer_ambient')
 cr=2054
 vr_in, br_in = get_MAS_equatorial_profiles(cr)
 
-#map these values inwards
+#map the MAS values inwards from 30 rS to 5 rS
 vr_5rs=H.map_v_boundary_inwards(vr_in, 30*u.solRad, 5*u.solRad)
 br_5rs=H.map_ptracer_boundary_inwards(vr_in, 30*u.solRad, 5*u.solRad,br_in)
 
