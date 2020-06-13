@@ -1,6 +1,6 @@
 HUXt todo:
 
-- Modify map_v_inwards and map_v_boundary_inwards to also map br 
+- Modify map_v_inwards and map_v_boundary_inwards to also map br to new boundary height
 - Modify load/save to save disc space: Ignore tracer field if no Br was specified. Ignore CME tracer and CME fields if there's no CME
 - Remove stored MAS outputs, as that's obsolete now that the web-scaper function exists. (Maybe save one CR of the new format inputs as a demo?)
 - Modify examples notebook to account for new functionality
