@@ -452,9 +452,9 @@ class HUXt:
                 
         # Now establish the passive tracer boundary conditions
         if np.all(np.isnan(br_boundary)):
-            print("Warning: No passive tracer boundary conditions supplied. Using default")
+            print("Warning: No Br boundary conditions supplied. Using default")
             self.ptracer_boundary = 1.0 * np.ones(self.nlong) *  u.dimensionless_unscaled
-            self.ptracer_boundary[int(self.nlong/2):] = -1.0 *  u.dimensionless_unscaled
+            #self.ptracer_boundary[int(self.nlong/2):] = -1.0 *  u.dimensionless_unscaled
         elif not np.all(np.isnan(br_boundary)):
             assert br_boundary.size == self.nlong
             self.ptracer_boundary = br_boundary * u.dimensionless_unscaled
