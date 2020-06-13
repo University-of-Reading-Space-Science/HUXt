@@ -270,7 +270,24 @@ model.plot(t_interest, field='ptracer_ambient')
 
 
 
+# <codecell> Get the MAS equatorial profiles and run HUXt from 5 rS
 
+#get the HUXt inputs
+cr=2054
+vr_in, br_in = get_MAS_equatorial_profiles(cr)
+
+#map these values inwards
+vr_5rs=H.map_v_boundary_inwards(vr_in, 30*u.solRad, 5*u.solRad)
+br_5rs=H.map_ptracer_boundary_inwards(vr_in, 30*u.solRad, 5*u.solRad,br_in)
+
+#now run HUXt
+model = H.HUXt(v_boundary=vr_5rs, cr_num=cr, br_boundary=br_5rs,simtime=5*u.day, 
+               dt_scale=4, r_min=5*u.solRad)
+model.solve([]) 
+
+t_interest=0*u.day
+model.plot(t_interest, field='ambient')
+model.plot(t_interest, field='ptracer_ambient')
 
 
 

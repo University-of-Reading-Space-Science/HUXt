@@ -1583,3 +1583,30 @@ def map_v_boundary_inwards(v_outer, r_outer, r_inner):
     v_inner = np.interp(lon, phis_new, v0, period=2*np.pi) 
 
     return v_inner
+
+@u.quantity_input(v_outer=u.km / u.s)
+@u.quantity_input(r_outer=u.solRad)
+@u.quantity_input(r_inner=u.solRad)
+def map_ptracer_boundary_inwards(v_outer, r_outer, r_inner, ptracer_outer):
+    """
+    Function to map a longitudinal V series from r_outer (in rs) to r_inner (in rs)
+    :param v_outer: Solar wind speed at outer radial boundary. Units of km/s.
+    :param r_outer: Radial distance at outer radial boundary. Units of km.
+    :param r_inner: Radial distance at inner radial boundary. Units of km.
+    :param p_tracer_outer:  Passive tracer at outer radial boundary. 
+    :return ptracer_inner: Passive tracer mapped from r_outer to r_inner. 
+    """
+
+    if r_outer < r_inner:
+        raise ValueError("Warning: r_outer < r_inner. Mapping will not work.")
+
+    # compute the longitude grid from the length of the vouter input variable
+    lon, dlon, nlon = longitude_grid()   
+    #map each point in to a new speed and longitude
+    v0, phis_new = map_v_inwards(v_outer, r_outer, lon, r_inner)
+
+    #interpolate the mapped speeds back onto the regular Carr long grid,
+    #making boundaries periodic 
+    ptracer_inner = np.interp(lon, phis_new, ptracer_outer, period=2*np.pi) 
+
+    return ptracer_inner
