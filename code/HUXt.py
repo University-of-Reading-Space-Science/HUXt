@@ -356,7 +356,7 @@ class HUXt:
     @u.quantity_input(simtime=u.day)
     @u.quantity_input(cr_lon_init=u.deg)
     def __init__(self, v_boundary=np.NaN * (u.km / u.s),  br_boundary=np.NaN * u.dimensionless_unscaled,
-                 cr_num=np.NaN, cr_lon_init=360.0 * u.deg,
+                 cr_num=np.NaN, cr_lon_init=360.0 * u.deg, latitude = 0*u.deg,
                  r_min=30 * u.solRad, r_max=240 * u.solRad,
                  lon_out=np.NaN * u.rad, lon_start=np.NaN * u.rad, lon_stop=np.NaN * u.rad,
                  simtime=5.0 * u.day, dt_scale=1.0):
@@ -367,6 +367,7 @@ class HUXt:
         :param ptracer_boundary: Inner passive tracer boundary condition. Must be an array of size 128 with no units
         :param cr_num: Integer Carrington rotation number. Used to determine the planetary and spacecraft positions
         :param cr_lon_init: Carrington longitude of Earth at model initialisation, in degrees.
+        :param latitude: Helio latitude (from equator) of HUXt plane, in degrees
         :param lon_out: A specific single longitude to compute HUXt solution along.
         :param lon_start: The first longitude (in a clockwise sense) of the longitude range to solve HUXt over.
         :param lon_stop: The last longitude (in a clockwise sense) of the longitude range to solve HUXt over.
@@ -403,6 +404,9 @@ class HUXt:
 
         # Setup longitude coordinates - in radians.
         self.lon, self.dlon, self.nlon = longitude_grid(lon_out=lon_out, lon_start=lon_start, lon_stop=lon_stop)
+        
+        #set up the latitude
+        self.latitude=latitude.to(u.rad)
 
         # Setup time coords - in seconds
         self.simtime = simtime.to('s')  # number of days to simulate (in seconds)
@@ -558,7 +562,8 @@ class HUXt:
                                                                    self.rrel.value, 
                                                                    lon_out, 
                                                                    self.model_params, 
-                                                                   do_cme,  cme_params)
+                                                                   do_cme,  cme_params,
+                                                                   self.latitude.value)
             self.v_grid_amb[:, :, i] = v_amb * self.kms
             self.v_grid_cme[:, :, i] = v_cme * self.kms
             self.ptracer_grid_amb[:, :, i] = ptracer_amb * u.dimensionless_unscaled
@@ -1166,7 +1171,7 @@ def _zerototwopi_(angles):
 
 
 @jit(nopython=True)
-def solve_radial(vinput, ptracerinput, model_time, rrel, lon, params, do_cme, cme_params):
+def solve_radial(vinput, ptracerinput, model_time, rrel, lon, params, do_cme, cme_params,latitude):
     """
     Solve the radial profile as a function of time (including spinup), and return radial profile at specified
     output timesteps.
@@ -1180,6 +1185,7 @@ def solve_radial(vinput, ptracerinput, model_time, rrel, lon, params, do_cme, cm
     :param do_cme: Boolean, if True any provided ConeCMEs are included in the solution.
     :param cme_params: Array of ConeCME parameters to include in the solution. 1 Row for each CME, with columns as
                        required by _cone_cme_boundary_
+    :param latitude: Latitude (from equator) of the HUXt plane
 
     Returns:
 
@@ -1194,7 +1200,6 @@ def solve_radial(vinput, ptracerinput, model_time, rrel, lon, params, do_cme, cm
     nr = np.int32(params[5])
     r_boundary = params[7]
 
-    lat = 0.0  # This is used in computing the ConeCME boundary condtions, which
 
     # Preallocate space for solutions
     v_grid_amb = np.zeros((nt_out, nr))
@@ -1205,7 +1210,7 @@ def solve_radial(vinput, ptracerinput, model_time, rrel, lon, params, do_cme, cm
 
     iter_count = 0
     t_out = 0
-
+    
     for t, time in enumerate(model_time):
 
         # Get the initial condition, which will update in the loop,
@@ -1232,7 +1237,7 @@ def solve_radial(vinput, ptracerinput, model_time, rrel, lon, params, do_cme, cm
                 for i in range(n_cme):
                     cme = cme_params[i, :]
                     #check if this point is within the cone CME
-                    if _is_in_cme_boundary_(r_boundary, lon, lat, time, cme):                
+                    if _is_in_cme_boundary_(r_boundary, lon, latitude, time, cme):                
                         v_update_cme[i] = cme[4]
                         ptracer_update_cme[i] = 1.0 #the CME number
                     else:
@@ -1381,6 +1386,7 @@ def _is_in_cme_boundary_(r_boundary, lon, lat, time, cme_params):
     # Compute great circle distance from nose to input latitude
     # sigma = np.arccos(np.sin(lon)*np.sin(cme_lon) + np.cos(lat)*np.cos(cme_lat)*np.cos(lon - cme_lon))
     sigma = np.arccos( np.cos(lat_cent) * np.cos(lon_cent))  # simplified version for the frame centered on the CME
+   
     x = np.NaN
     if (lon_cent >= -cme_width / 2) & (lon_cent <= cme_width / 2):
         # Longitude inside CME span.
