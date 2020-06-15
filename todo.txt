@@ -1,7 +1,6 @@
 HUXt todo:
 
 - Modify load/save to save disc space: Ignore tracer field if no Br was specified. Ignore CME tracer and CME fields if there's no CME
-- Remove stored MAS outputs, as that's obsolete now that the web-scaper function exists. (Maybe save one CR of the new format inputs as a demo?)
-- Modify examples notebook to account for new functionality
+- Add HCS identification
 
 
