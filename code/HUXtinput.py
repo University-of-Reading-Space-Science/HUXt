@@ -55,13 +55,13 @@ def getMASboundaryconditions(cr=np.NaN, observatory='', runtype='', runnumber=''
         overwrite=True #if the user wants a specific observatory, overwrite what's already downloaded
         
     if not runtype:
-        runtype_order=['mas','masp','mast']
+        runtype_order=['masp','mas','mast']
     else:
         runtype_order=[str(runtype)]
         overwrite=True
     
     if not runnumber:
-        runnumber_order=['0101','0201']
+        runnumber_order=['0201','0101']
     else:
         runnumber_order=[str(runnumber)]
         overwrite=True
