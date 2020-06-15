@@ -196,7 +196,7 @@ def readMASvrbr(cr):
     return MAS_vr, MAS_vr_Xa, MAS_vr_Xm, MAS_br, MAS_br_Xa, MAS_br_Xm
 
 
-def get_MAS_equatorial_profiles(cr):
+def get_MAS_long_profile(cr, lat=0.0*u.deg):
     """
     a function to download, read and process MAS output to provide HUXt boundary
     conditions at the helioequator
@@ -205,6 +205,8 @@ def get_MAS_equatorial_profiles(cr):
     ----------
     cr : INT
         Carrington rotation number
+    lat : FLOAT
+        Latitude at which to extract the longitudinal profile, measure up from equator
 
     Returns
     -------
@@ -218,6 +220,10 @@ def get_MAS_equatorial_profiles(cr):
     """
     
     assert(np.isnan(cr)==False and cr>0)
+    assert(lat>= -90.0*u.deg and lat<= 90.0*u.deg)
+    
+    #convert angle from equator to angle down from N pole
+    ang_from_N_pole=np.pi/2 - (lat.to(u.rad)).value
     
     #check the data exist, if not, download them
     getMASboundaryconditions(cr)    #getMASboundaryconditions(cr,observatory='mdi')
@@ -226,20 +232,20 @@ def get_MAS_equatorial_profiles(cr):
     MAS_vr, MAS_vr_Xa, MAS_vr_Xm, MAS_br, MAS_br_Xa, MAS_br_Xm = readMASvrbr(cr)
     
     #extract the value at the helioequator
-    vr_eq=np.ones(len(MAS_vr_Xa))
+    vr=np.ones(len(MAS_vr_Xa))
     for i in range(0,len(MAS_vr_Xa)):
-        vr_eq[i]=np.interp(np.pi/2,MAS_vr_Xm.value,MAS_vr[i][:].value)
+        vr[i]=np.interp(ang_from_N_pole,MAS_vr_Xm.value,MAS_vr[i][:].value)
     
-    br_eq=np.ones(len(MAS_br_Xa))
+    br=np.ones(len(MAS_br_Xa))
     for i in range(0,len(MAS_br_Xa)):
-        br_eq[i]=np.interp(np.pi/2,MAS_br_Xm.value,MAS_br[i][:])
+        br[i]=np.interp(ang_from_N_pole,MAS_br_Xm.value,MAS_br[i][:])
         
     #now interpolate on to the HUXt longitudinal grid
     nlong=H.huxt_constants()['nlong']
     dphi=2*np.pi/nlong
     longs=np.linspace(dphi/2 , 2*np.pi -dphi/2,nlong)
-    vr_in=np.interp(longs,MAS_vr_Xa.value,vr_eq)*u.km/u.s
-    br_in=np.interp(longs,MAS_br_Xa.value,br_eq)
+    vr_in=np.interp(longs,MAS_vr_Xa.value,vr)*u.km/u.s
+    br_in=np.interp(longs,MAS_br_Xa.value,br)
 
     #convert br into +/- 1
     #br_in[br_in>=0.0]=1.0*u.dimensionless_unscaled
