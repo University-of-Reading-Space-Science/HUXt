@@ -9,14 +9,9 @@ import urllib
 import HUXt as H
 import os
 from pyhdf.SD import SD, SDC  
-#import matplotlib.pyplot as plt
-#from astropy.time import Time
-#import heliopy
-#import sunpy
 import numpy as np
 import astropy.units as u
-#import astropy
-#from heliopy.data import psp as psp_data, spice as spice_data
+
 
 # <codecell> Get MAS data from MHDweb
 

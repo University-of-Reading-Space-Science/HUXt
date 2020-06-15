@@ -12,6 +12,7 @@ from moviepy.video.io.bindings import mplfig_to_npimage
 from skimage import measure
 import scipy.ndimage as ndi
 from numba import jit
+import HUXtinput as Hin
 
 mpl.rc("axes", labelsize=16)
 mpl.rc("ytick", labelsize=16)
@@ -375,8 +376,6 @@ class HUXt:
         :param r_max: The radial outer boundary distance of HUXt.
         :param simtime: Duration of the simulation window, in days.
         :param dt_scale: Integer scaling number to set the model output time step relative to the models CFL time.
-        :param map_inwards: Boolean, determines whether map_v_boundary_inwards is used to estimate boundary speed at
-                            distances inwards of 30Rs
         """
 
         # some constants and units
@@ -630,8 +629,8 @@ class HUXt:
         keys = ['cr_num', 'cr_lon_init', 'simtime', 'dt', 'v_max', 'r_accel', 'alpha',
                 'dt_scale', 'time_out', 'dt_out', 'r', 'dr', 'lon', 'dlon', 'r_grid', 'lon_grid',
                 'v_grid_cme', 'v_grid_amb', 'ptracer_grid_cme', 'ptracer_grid_amb',
-                'v_boundary', '_v_boundary_init_',
-                'ptracer_boundary', '_ptracer_boundary_init_','_map_inwards_']
+                'v_boundary', '_v_boundary_init_', 'latitude',
+                'ptracer_boundary', '_ptracer_boundary_init_']
 
         for k, v in self.__dict__.items():
 
@@ -786,8 +785,8 @@ class HUXt:
         :param tag: String to append to the filename of the animation.
         """
 
-        if field not in ['cme', 'ambient']:
-            print("Error, field must be either 'cme', or 'ambient'. Default to CME")
+        if field not in ['cme', 'ambient','ptracer_cme','ptracer_ambient']:
+            print("Error, field must be either 'cme', 'ambient','ptracer_cme','ptracer_amb'. Default to CME")
             field = 'cme'
 
         # Set the duration of the movie
@@ -825,8 +824,8 @@ class HUXt:
         :return: ax: Axes handle
         """
 
-        if field not in ['cme', 'ambient', 'both']:
-            print("Error, field must be either 'cme', or 'ambient'. Default to cme")
+        if field not in ['cme', 'ambient', 'ptracer_ambient','ptracer_cme','both']:
+            print("Error, field must be either 'ambient', 'cme', 'ptracer_ambient','ptracer_cme','both'. Default to cme")
             field = 'cme'
 
         if (time < self.time_out.min()) | (time > (self.time_out.max())):
@@ -854,15 +853,35 @@ class HUXt:
 
         if field == 'cme':
             label = 'Cone Run'
+            ylab='Solar Wind Speed (km/s)'
             ax.plot(self.r, self.v_grid_cme[id_t, :, id_lon], 'k-', label=label)
+            ymin=200; ymax=1000
         elif field == 'ambient':
             label = 'Ambient'
+            ylab='Solar Wind Speed (km/s)'
             ax.plot(self.r, self.v_grid_amb[id_t, :, id_lon], '--', color='slategrey', label=label)
+            ymin=200; ymax=1000
         elif field == 'both':
             label = 'Cone Run'
+            ylab='Solar Wind Speed (km/s)'
             ax.plot(self.r, self.v_grid_cme[id_t, :, id_lon], 'k-', label=label)
             label = 'Ambient'
             ax.plot(self.r, self.v_grid_amb[id_t, :, id_lon], '--', color='slategrey', label=label)
+            ymin=200; ymax=1000
+        elif field == 'ptracer_cme':
+            label = 'Cone Run'
+            ylab='CME tracer (code units)'
+            ax.plot(self.r, self.ptracer_grid_cme[id_t, :, id_lon], '--', color='slategrey', label=label)
+            ymax=np.absolute(self.ptracer_grid_cme[id_t, :, id_lon]).max()
+            ymin=0
+        elif field == 'ptracer_ambient':
+            label = 'Ambient'
+            ylab='Magnetic field polarity (code units)'
+            ax.plot(self.r, self.ptracer_grid_amb[id_t, :, id_lon], '--', color='slategrey', label=label)
+            ymax=np.absolute(self.ptracer_grid_amb[id_t, :, id_lon]).max()
+            ymin=-ymax
+            #plot a zero line
+            ax.plot(self.r, 0.0*self.ptracer_grid_amb[id_t, :, id_lon], '-', color='slategrey')
 
         # Plot the CME points on if needed
         if field in ['cme', 'both']:
@@ -873,8 +892,8 @@ class HUXt:
                 label = "CME {:02d}".format(c)
                 ax.plot(self.r[id_r], self.v_grid_cme[id_t, id_r, id_lon], '.', color=cme_colors[cc], label=label)
 
-        ax.set_ylim(250, 1500)
-        ax.set_ylabel('Solar Wind Speed (km/s)')
+        ax.set_ylim(ymin, ymax)
+        ax.set_ylabel(ylab)
         ax.set_xlim(self.r.value.min(), self.r.value.max())
         ax.set_xlabel('Radial distance ($R_{sun}$)')
 
@@ -908,8 +927,8 @@ class HUXt:
         :return: ax: Axes handle
         """
 
-        if field not in ['cme', 'ambient', 'both']:
-            print("Error, field must be either 'cme', or 'ambient'. Default to cme")
+        if field not in ['cme', 'ambient', 'ptracer_ambient','ptracer_cme','both']:
+            print("Error, field must be either 'ambient', 'cme', 'ptracer_ambient','ptracer_cme','both'. Default to cme")
             field = 'cme'
 
         if (radius < self.r.min()) | (radius > (self.r.max())):
@@ -936,17 +955,37 @@ class HUXt:
         if field == 'cme':
             label = 'Cone Run'
             ax.plot(t_day, self.v_grid_cme[:, id_r, id_lon], 'k-', label=label)
+            ylab='Solar Wind Speed (km/s)'
+            ymin=200; ymax=1000
         elif field == 'ambient':
             label = 'Ambient'
             ax.plot(t_day, self.v_grid_amb[:, id_r, id_lon], '--', color='slategrey', label=label)
+            ylab='Solar Wind Speed (km/s)'
+            ymin=200; ymax=1000
         elif field == 'both':
             label = 'Cone Run'
             ax.plot(t_day, self.v_grid_cme[:, id_r, id_lon], 'k-', label=label)
             label = 'Ambient'
             ax.plot(t_day, self.v_grid_amb[:, id_r, id_lon], '--', color='slategrey', label=label)
+            ylab='Solar Wind Speed (km/s)'
+            ymin=200; ymax=1000
+        elif field == 'ptracer_cme':
+            label = 'Cone Run'
+            ylab='CME tracer (code units)'
+            ax.plot(t_day, self.ptracer_grid_cme[:, id_r, id_lon], 'k-', label=label)
+            ymax=np.absolute(self.ptracer_grid_cme[:, id_r, id_lon]).max()
+            ymin=0
+        elif field == 'ptracer_ambient':
+            label = 'Ambient'
+            ylab='Magnetic field polarity (code units)'
+            ax.plot(t_day, self.ptracer_grid_amb[:, id_r, id_lon], '--', color='slategrey', label=label)
+            ymax=np.absolute(self.ptracer_grid_amb[:, id_r, id_lon]).max()
+            ymin=-ymax
+            #plot a zero line
+            ax.plot(t_day, 0.0*self.ptracer_grid_amb[:, id_r, id_lon], '-', color='slategrey')
 
-        ax.set_ylim(250, 1500)
-        ax.set_ylabel('Solar Wind Speed (km/s)')
+        ax.set_ylim(ymin, ymax)
+        ax.set_ylabel(ylab)
         ax.set_xlim(t_day.value.min(), t_day.value.max())
         ax.set_xlabel('Time (days)')
 
@@ -1432,22 +1471,15 @@ def load_HUXt_run(filepath):
         r = data['r'][()] * u.Unit(data['r'].attrs['unit'])
         lon = data['lon'][()] * u.Unit(data['lon'].attrs['unit'])
         nlon = lon.size
-        map_inwards = np.int32(data['_map_inwards_'])
-        if map_inwards == 1:
-            map_inwards = True
-        else:
-            map_inwards = False
-
 
         if nlon == 1:
-            model = HUXt(v_boundary=v_boundary, ptracer_boundary=ptracer_boundary, cr_num=cr_num,
+            model = HUXt(v_boundary=v_boundary, br_boundary=ptracer_boundary, cr_num=cr_num,
                          cr_lon_init=cr_lon_init, r_min=r.min(), r_max=r.max(),
-                         lon_out=lon, simtime=simtime, dt_scale=dt_scale, map_inwards=map_inwards)
+                         lon_out=lon, simtime=simtime, dt_scale=dt_scale)
         elif nlon > 1:
-            model = HUXt(v_boundary=v_boundary, ptracer_boundary=ptracer_boundary, cr_num=cr_num,
+            model = HUXt(v_boundary=v_boundary, br_boundary=ptracer_boundary, cr_num=cr_num,
                          cr_lon_init=cr_lon_init, r_min=r.min(), r_max=r.max(),
-                         lon_start=lon.min(), lon_stop=lon.max(), simtime=simtime, dt_scale=dt_scale,
-                         map_inwards=map_inwards)
+                         lon_start=lon.min(), lon_stop=lon.max(), simtime=simtime, dt_scale=dt_scale)
 
         model.v_grid_cme[:, :, :] = data['v_grid_cme'][()] * u.Unit(data['v_boundary'].attrs['unit'])
         model.v_grid_amb[:, :, :] = data['v_grid_amb'][()] * u.Unit(data['v_boundary'].attrs['unit'])
