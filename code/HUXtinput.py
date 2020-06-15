@@ -226,7 +226,8 @@ def get_MAS_long_profile(cr, lat=0.0*u.deg):
     ang_from_N_pole=np.pi/2 - (lat.to(u.rad)).value
     
     #check the data exist, if not, download them
-    getMASboundaryconditions(cr)    #getMASboundaryconditions(cr,observatory='mdi')
+    flag=getMASboundaryconditions(cr)    #getMASboundaryconditions(cr,observatory='mdi')
+    assert(flag > -1)
     
     #read the HelioMAS data
     MAS_vr, MAS_vr_Xa, MAS_vr_Xm, MAS_br, MAS_br_Xa, MAS_br_Xm = readMASvrbr(cr)
