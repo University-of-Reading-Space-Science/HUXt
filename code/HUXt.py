@@ -691,11 +691,16 @@ class HUXt:
         elif field == 'br_cme':
             v_sub = self.br_grid_cme.value[id_t, :, :].copy()
             #flat-field the CME tracer
-            constants=huxt_constants()
-            v_sub[v_sub>=constants['cmetracerthreshold']]=1.0
-            v_sub[v_sub<constants['cmetracerthreshold']]=0.0
-            plotvmin=0.0; plotvmax=1.1; dv=0.1
-            ylab="CME tracer"
+            #constants=huxt_constants()
+            #v_sub[v_sub>=constants['cmetracerthreshold']]=1.0
+            #v_sub[v_sub<constants['cmetracerthreshold']]=0.0
+            #plotvmin=0.0; plotvmax=1.1; dv=0.1
+            #ylab="CME tracer"
+            vmax=np.absolute(v_sub).max()
+            dv=2*vmax/20
+            plotvmin=-vmax; plotvmax=vmax+dv; 
+            ylab="B_R [code units]"
+            mymap = mpl.cm.bwr
         elif field == 'br_ambient':
             v_sub = self.br_grid_amb.value[id_t, :, :].copy()
             vmax=np.absolute(v_sub).max()
@@ -870,10 +875,10 @@ class HUXt:
             ymin=200; ymax=1000
         elif field == 'br_cme':
             label = 'Cone Run'
-            ylab='CME tracer (code units)'
+            ylab='Magnetic field polarity (code units)'
             ax.plot(self.r, self.br_grid_cme[id_t, :, id_lon], '--', color='slategrey', label=label)
             ymax=np.absolute(self.br_grid_cme[id_t, :, id_lon]).max()
-            ymin=0
+            ymin=-ymax
         elif field == 'br_ambient':
             label = 'Ambient'
             ylab='Magnetic field polarity (code units)'
@@ -971,10 +976,10 @@ class HUXt:
             ymin=200; ymax=1000
         elif field == 'br_cme':
             label = 'Cone Run'
-            ylab='CME tracer (code units)'
+            ylab='Magnetic field polarity (code units)'
             ax.plot(t_day, self.br_grid_cme[:, id_r, id_lon], 'k-', label=label)
             ymax=np.absolute(self.br_grid_cme[:, id_r, id_lon]).max()
-            ymin=0
+            ymin=-ymax
         elif field == 'br_ambient':
             label = 'Ambient'
             ylab='Magnetic field polarity (code units)'
@@ -1264,29 +1269,27 @@ def solve_radial(vinput, brinput, model_time, rrel, lon, params, do_cme, cme_par
         v_amb[0] = vinput[t]
         v_cme[0] = vinput[t]
         br_amb[0] = brinput[t]
-        br_cme[0] = 0.0
+        br_cme[0] = brinput[t]
 
         # Compute boundary speed of each CME at this time. 
         # Set boundary to the maximum CME speed at this time.
         if time > 0:
             if do_cme == 1:
                 n_cme = cme_params.shape[0]
-                v_update_cme = np.zeros(n_cme)
-                br_update_cme = np.zeros(n_cme)
+                v_update_cme = np.zeros(n_cme)*np.nan
+                #ptracer_update_cme = np.zeros(n_cme)
                 for i in range(n_cme):
                     cme = cme_params[i, :]
                     #check if this point is within the cone CME
                     if _is_in_cme_boundary_(r_boundary, lon, latitude, time, cme):                
                         v_update_cme[i] = cme[4]
-                        br_update_cme[i] = 1.0 #the CME number
-                    else:
-                        v_update_cme[i] = v_cme[0]
-                        br_update_cme[i]=0.0
-
-                v_cme[0] = v_update_cme.max()
-                br_cme[0] = br_update_cme.max()
-        
-        
+                        #ptracer_update_cme[i] = 1.0 #the CME number
+                        
+                #see if there are any CMEs
+                if not np.all(np.isnan(v_update_cme)):
+                    v_cme[0] = np.nanmax(v_update_cme)
+                    br_cme[0] = 0.0
+               
 
         # update cone cme v(r) for the given longitude
         # =====================================
