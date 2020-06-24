@@ -588,7 +588,74 @@ class HUXt:
 
     def save(self, tag=''):
         """
-        Save model output to a HDF5 file.
+        Save model speed grid output to a HDF5 file.
+
+        :param tag: identifying string to append to the filename
+        :return out_filepath: Full path to the saved file.
+        """
+        # Open up hdf5 data file for the HI flow stats
+        filename = "HUXt_CR{:03d}_{}.hdf5".format(np.int32(self.cr_num.value), tag)
+        out_filepath = os.path.join(self._data_dir_, filename)
+
+        if os.path.isfile(out_filepath):
+            # File exists, so delete and start new.
+            print("Warning: {} already exists. Overwriting".format(out_filepath))
+            os.remove(out_filepath)
+
+        out_file = h5py.File(out_filepath, 'w')
+
+        # Save the Cone CME parameters to a new group.
+        allcmes = out_file.create_group('ConeCMEs')
+        for i, cme in enumerate(self.cmes):
+            cme_name = "ConeCME_{:02d}".format(i)
+            cmegrp = allcmes.create_group(cme_name)
+            for k, v in cme.__dict__.items():
+                if k != "coords":
+                    dset = cmegrp.create_dataset(k, data=v.value)
+                    dset.attrs['unit'] = v.unit.to_string()
+                    out_file.flush()
+                # Now handle the dictionary of CME boundary coordinates coords > time_out > position
+                if k == "coords":
+                    coordgrp = cmegrp.create_group(k)
+                    for time, position in v.items():
+                        time_label = "t_out_{:03d}".format(time)
+                        timegrp = coordgrp.create_group(time_label)
+                        for pos_label, pos_data in position.items():
+                            dset = timegrp.create_dataset(pos_label, data=pos_data.value)
+                            dset.attrs['unit'] = pos_data.unit.to_string()
+                            out_file.flush()
+
+        # Loop over the attributes of model instance and save select keys/attributes.
+        keys = ['cr_num', 'cr_lon_init', 'simtime', 'dt', 'v_max', 'r_accel', 'alpha',
+                'dt_scale', 'time_out', 'dt_out', 'r', 'dr', 'lon', 'dlon', 'r_grid', 'lon_grid',
+                'v_grid_cme', 'v_grid_amb', 'v_boundary', '_v_boundary_init_', 'latitude']
+
+        for k, v in self.__dict__.items():
+
+            if k in keys:
+
+                dset = out_file.create_dataset(k, data=v.value)
+                dset.attrs['unit'] = v.unit.to_string()
+
+                # Add on the dimensions of the spatial grids
+                if k in ['r_grid', 'lon_grid']:
+                    dset.dims[0].label = 'radius'
+                    dset.dims[1].label = 'longitude'
+
+                # Add on the dimensions of the output speed fields.
+                if k in ['v_grid_cme', 'v_grid_amb']:
+                    dset.dims[0].label = 'time'
+                    dset.dims[1].label = 'radius'
+                    dset.dims[2].label = 'longitude'
+
+                out_file.flush()
+
+        out_file.close()
+        return out_filepath
+    
+    def save_all(self, tag=''):
+        """
+        Save all model fields output to a HDF5 file.
 
         :param tag: identifying string to append to the filename
         :return out_filepath: Full path to the saved file.
@@ -645,7 +712,7 @@ class HUXt:
                     dset.dims[1].label = 'longitude'
 
                 # Add on the dimensions of the output speed fields.
-                if k in ['v_grid_cme', 'v_grid_amb']:
+                if k in ['v_grid_cme', 'v_grid_amb', 'br_grid_amb', 'br_grid_cme']:
                     dset.dims[0].label = 'time'
                     dset.dims[1].label = 'radius'
                     dset.dims[2].label = 'longitude'
@@ -654,7 +721,7 @@ class HUXt:
 
         out_file.close()
         return out_filepath
-
+    
     @u.quantity_input(time=u.day)
     def plot(self, time, field='cme', save=False, tag=''):
         """
@@ -689,6 +756,8 @@ class HUXt:
             plotvmin=200; plotvmax=810; dv=10
             ylab="Solar Wind Speed (km/s)"
         elif field == 'br_cme':
+            if np.all(np.isnan(self.br_grid_cme)):
+                return -1
             v_sub = self.br_grid_cme.value[id_t, :, :].copy()
             #flat-field the CME tracer
             #constants=huxt_constants()
@@ -702,6 +771,8 @@ class HUXt:
             ylab="B_R [code units]"
             mymap = mpl.cm.bwr
         elif field == 'br_ambient':
+            if np.all(np.isnan(self.br_grid_amb)):
+                return -1
             v_sub = self.br_grid_amb.value[id_t, :, :].copy()
             vmax=np.absolute(v_sub).max()
             dv=2*vmax/20
@@ -874,12 +945,16 @@ class HUXt:
             ax.plot(self.r, self.v_grid_amb[id_t, :, id_lon], '--', color='slategrey', label=label)
             ymin=200; ymax=1000
         elif field == 'br_cme':
+            if np.all(np.isnan(self.br_grid_cme)):
+                return -1
             label = 'Cone Run'
             ylab='Magnetic field polarity (code units)'
             ax.plot(self.r, self.br_grid_cme[id_t, :, id_lon], '--', color='slategrey', label=label)
             ymax=np.absolute(self.br_grid_cme[id_t, :, id_lon]).max()
             ymin=-ymax
         elif field == 'br_ambient':
+            if np.all(np.isnan(self.br_grid_amb)):
+                return -1
             label = 'Ambient'
             ylab='Magnetic field polarity (code units)'
             ax.plot(self.r, self.br_grid_amb[id_t, :, id_lon], '--', color='slategrey', label=label)
@@ -1470,24 +1545,37 @@ def load_HUXt_run(filepath):
         simtime = simtime.to(u.day)
         dt_scale = data['dt_scale'][()]
         v_boundary = data['_v_boundary_init_'][()] * u.Unit(data['_v_boundary_init_'].attrs['unit'])
-        br_boundary = data['_br_boundary_init_'][()] * u.Unit(data['_br_boundary_init_'].attrs['unit'])
         r = data['r'][()] * u.Unit(data['r'].attrs['unit'])
         lon = data['lon'][()] * u.Unit(data['lon'].attrs['unit'])
+        lat = data['latitude'][()] * u.Unit(data['latitude'].attrs['unit'])
         nlon = lon.size
+        
+         #check if br data was saved
+        if '_br_boundary_init_' in data.keys():
+            br_boundary = data['_br_boundary_init_'][()] * u.Unit(data['_br_boundary_init_'].attrs['unit'])
+        else:
+            br_boundary = v_boundary * np.nan
 
         if nlon == 1:
             model = HUXt(v_boundary=v_boundary, br_boundary=br_boundary, cr_num=cr_num,
                          cr_lon_init=cr_lon_init, r_min=r.min(), r_max=r.max(),
-                         lon_out=lon, simtime=simtime, dt_scale=dt_scale)
+                         lon_out=lon, simtime=simtime, dt_scale=dt_scale, latitude=lat)
         elif nlon > 1:
             model = HUXt(v_boundary=v_boundary, br_boundary=br_boundary, cr_num=cr_num,
                          cr_lon_init=cr_lon_init, r_min=r.min(), r_max=r.max(),
-                         lon_start=lon.min(), lon_stop=lon.max(), simtime=simtime, dt_scale=dt_scale)
+                         lon_start=lon.min(), lon_stop=lon.max(), simtime=simtime, 
+                         dt_scale=dt_scale, latitude=lat)
 
         model.v_grid_cme[:, :, :] = data['v_grid_cme'][()] * u.Unit(data['v_boundary'].attrs['unit'])
         model.v_grid_amb[:, :, :] = data['v_grid_amb'][()] * u.Unit(data['v_boundary'].attrs['unit'])
-        model.br_grid_cme[:, :, :] = data['br_grid_cme'][()] * u.Unit(data['br_boundary'].attrs['unit'])
-        model.br_grid_amb[:, :, :] = data['br_grid_amb'][()] * u.Unit(data['br_boundary'].attrs['unit'])
+        #check if br data was saved
+        if 'br_grid_amb' in data.keys():
+            model.br_grid_cme[:, :, :] = data['br_grid_cme'][()] * u.Unit(data['br_boundary'].attrs['unit'])
+            model.br_grid_amb[:, :, :] = data['br_grid_amb'][()] * u.Unit(data['br_boundary'].attrs['unit'])
+        else:
+            print('No Br data, creating empty fields')
+            model.br_grid_cme[:, :, :] = data['v_grid_cme'][()] * np.nan
+            model.br_grid_amb[:, :, :] = data['v_grid_cme'][()] * np.nan
 
         # Create list of the ConeCMEs
         cme_list = []
