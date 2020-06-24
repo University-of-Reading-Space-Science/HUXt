@@ -116,8 +116,7 @@ class ConeCME:
     @u.quantity_input(width=u.deg)
     @u.quantity_input(thickness=u.solRad)
     def __init__(self, t_launch=0.0 * u.s, longitude=0.0 * u.deg, latitude=0.0 * u.deg, v=1000.0 * (u.km / u.s),
-                 width=30.0 * u.deg,
-                 thickness=5.0 * u.solRad):
+                 width=30.0 * u.deg, thickness=5.0 * u.solRad):
         """
         Set up a Cone CME with specified parameters.
         :param t_launch: Time of Cone CME launch, in seconds after the start of the simulation.
@@ -136,6 +135,8 @@ class ConeCME:
         self.initial_height = 30.0 * u.solRad  # Initial height of CME (should match inner boundary of HUXt)
         self.radius = self.initial_height * np.tan(self.width / 2.0)  # Initial radius of CME
         self.thickness = thickness  # Extra CME thickness
+        self.earth_arrival_time = np.NaN
+        self.earth_transit_time = np.NaN
         self.coords = {}
         return
 
@@ -161,12 +162,16 @@ class ConeCME:
 
         # Workflow: Loop over each CME, track CME through each time step,
         # find contours of boundary, save to dict.
-        self.coords = {j: {'lon_pix': np.array([]) * u.pix, 'r_pix': np.array([]) * u.pix,
-                           'lon': np.array([]) * model.lon.unit, 'r': np.array([]) * model.r.unit} for j in
-                       range(model.nt_out)}
+        self.coords = {j: {'time':np.array([]), 'model_time':np.array([]) * u.s,
+                           'lon_pix': np.array([]) * u.pix, 'r_pix': np.array([]) * u.pix,
+                           'lon': np.array([]) * model.lon.unit, 'r': np.array([]) * model.r.unit,
+                          'lat': np.array([]) * model.latitude.unit} for j in range(model.nt_out)}
 
         first_frame = True
         for j, t in enumerate(model.time_out):
+            
+            self.coords[j]['model_time'] =  + t
+            self.coords[j]['time'] = model.time_init + t
 
             if t < self.t_launch:
                 continue
@@ -212,6 +217,7 @@ class ConeCME:
                     # Longitude is fixed, but adding it in here helps with saving and plotting routines.
                     self.coords[j]['lon_pix'] = np.zeros(r_pix.shape) * u.pix
                     self.coords[j]['lon'] = np.ones(r_pix.shape) * model.lon
+                    self.coords[j]['lat'] = np.ones(r_pix.shape) * model.latitude
                     # Update the target, so next iteration finds CME that overlaps with this frame.
                     target = cme_id.copy()
         return
@@ -234,12 +240,16 @@ class ConeCME:
         # track CME through each time step, find contours of boundary, save to dict.
         # Get index of CME longitude
         id_cme_lon = np.argmin(np.abs(model.lon - self.longitude))
-        self.coords = {j: {'lon_pix': np.array([]) * u.pix, 'r_pix': np.array([]) * u.pix,
-                           'lon': np.array([]) * model.lon.unit, 'r': np.array([]) * model.r.unit} for j in
-                       range(model.nt_out)}
+        self.coords = {j: {'time':np.array([]), 'model_time':np.array([]) * u.s,
+                           'lon_pix': np.array([]) * u.pix, 'r_pix': np.array([]) * u.pix,
+                           'lon': np.array([]) * model.lon.unit, 'r': np.array([]) * model.r.unit,
+                          'lat': np.array([]) * model.latitude.unit} for j in range(model.nt_out)}
 
         first_frame = True
         for j, t in enumerate(model.time_out):
+            
+            self.coords[j]['model_time'] =  + t
+            self.coords[j]['time'] = model.time_init + t
 
             if t < self.t_launch:
                 continue
@@ -279,7 +289,7 @@ class ConeCME:
                     if len(matches_id) == 1:
                         match_id = matches_id[0]
                     else:
-                        print("Warning, multiple matches found, selecting match with greatest target overlap")
+                        #print("Warning, multiple matches found, selecting match with greatest target overlap")
                         match_id = matches_id[np.argmax(matches_level)]
 
                     # Find the coordinates of this region and store 
@@ -303,8 +313,75 @@ class ConeCME:
                     self.coords[j]['r_pix'] = r_pix * u.pix
                     self.coords[j]['r'] = np.interp(r_pix, np.arange(0, model.nr), model.r)
                     self.coords[j]['lon'] = np.interp(lon_pix, np.arange(0, model.nlon), model.lon)
+                    self.coords[j]['lat'] = np.ones(r_pix.shape) * model.latitude
                     # Update the target, so next iteration finds CME that overlaps with this frame.
                     target = cme_id.copy()
+        return
+    
+    def compute_earth_arrival(self):
+        """
+        Function to compute arrival time at a set longitude and radius of the CME front.
+
+        Tracks radial distance of front along a given longitude out past specified longitude.
+        Then interpolates the r-t profile to find t_arr at arr_rad. 
+        """
+
+        times = Time([coord['time'] for i, coord in self.coords.items()])
+        ert = Observer('EARTH', times)
+        
+        # Need to force units to be the same to make interpolations work 
+        arr_lon = 0*u.rad
+        arr_rad = np.mean(ert.r)
+        
+        # Check if hit or miss.
+        # Put longitude between -180 - 180, centered on CME lon.
+        lon_diff = arr_lon - self.longitude
+        if lon_diff < -180*u.deg:
+            lon_diff += 360*u.deg
+        elif lon_diff > 180*u.deg:
+            lon_diff -= 360*u.deg
+            
+        cme_hw = self.width/2.0
+        if (lon_diff >= -cme_hw) & (lon_diff <= cme_hw):
+            # HIT, so get t-r profile along lon of interest.
+            t_front = []
+            r_front = []
+
+            for i, coord in self.coords.items():
+
+                if len(coord['r'])==0:
+                    continue
+
+                t_front.append(coord['model_time'].to('d').value)
+
+                # Lookup radial coord at earth lon
+                r = coord['r'].value
+                lon = coord['lon'].value
+
+                # Only keep front of cme
+                id_front = r > np.mean(r)
+                r = r[id_front]
+                lon = lon[id_front]
+
+                r_ans = np.interp(arr_lon.value, lon, r, period=2*np.pi)
+                r_front.append(r_ans)
+                # Stop when max r 
+                if r_ans > arr_rad.value:
+                    break
+
+            t_front = np.array(t_front)
+            r_front = np.array(r_front)
+            try:
+                t_transit = np.interp(arr_rad.value, r_front, t_front)
+                self.earth_transit_time = t_transit * u.d
+                self.earth_arrival_time = times[0] + self.earth_transit_time
+            except:
+                self.earth_transit_time = np.NaN*u.d
+                self.earth_arrival_time = Time('0000-01-01T00:00:00')
+        else:
+            self.earth_transit_time = np.NaN*u.d
+            self.earth_arrival_time = Time('0000-01-01T00:00:00')
+
         return
 
 
@@ -489,7 +566,7 @@ class HUXt:
                                       self.r[0].to('km').value])
         return
 
-    def solve(self, cme_list, save=False, tag=''):
+    def solve(self, cme_list, save=False, save_cmes=False, tag=''):
         """
         Solve HUXt for the provided boundary conditions and cme list
 
@@ -573,8 +650,10 @@ class HUXt:
         for cme in self.cmes:
             if self.lon.size == 1:
                 cme._track_1d_(self)
+                cme.compute_earth_arrival()
             elif self.lon.size > 1:
                 cme._track_2d_(self)
+                cme.compute_earth_arrival()
 
             updated_cmes.append(cme)
 
@@ -584,6 +663,11 @@ class HUXt:
             if tag == '':
                 print("Warning, blank tag means file likely to be overwritten")
             self.save(tag=tag)
+            
+        if save_cmes:
+            if tag == '':
+                print("Warning, blank tag means file likely to be overwritten")
+            self.save_cmes(tag=tag)
         return
 
     def save(self, tag=''):
@@ -611,8 +695,11 @@ class HUXt:
             cmegrp = allcmes.create_group(cme_name)
             for k, v in cme.__dict__.items():
                 if k != "coords":
-                    dset = cmegrp.create_dataset(k, data=v.value)
-                    dset.attrs['unit'] = v.unit.to_string()
+                    if k == 'earth_arrival_time':
+                        dset = cmegrp.create_dataset(k, data=v.isot)
+                    else:
+                        dset = cmegrp.create_dataset(k, data=v.value)
+                        dset.attrs['unit'] = v.unit.to_string()
                     out_file.flush()
                 # Now handle the dictionary of CME boundary coordinates coords > time_out > position
                 if k == "coords":
@@ -621,8 +708,12 @@ class HUXt:
                         time_label = "t_out_{:03d}".format(time)
                         timegrp = coordgrp.create_group(time_label)
                         for pos_label, pos_data in position.items():
-                            dset = timegrp.create_dataset(pos_label, data=pos_data.value)
-                            dset.attrs['unit'] = pos_data.unit.to_string()
+                            if pos_label == 'time':
+                                dset = timegrp.create_dataset(pos_label, data=pos_data.isot)
+                            else:
+                                dset = timegrp.create_dataset(pos_label, data=pos_data.value)
+                                dset.attrs['unit'] = pos_data.unit.to_string()
+                                
                             out_file.flush()
 
         # Loop over the attributes of model instance and save select keys/attributes.
@@ -654,6 +745,56 @@ class HUXt:
 
         out_file.close()
         return out_filepath
+    
+    def save_cmes(self, tag=''):
+        """
+        Save only the CME data to a HDF5 file.
+
+        :param tag: identifying string to append to the filename
+        :return out_filepath: Full path to the saved file.
+        """
+        # Open up hdf5 data file for the HI flow stats
+        filename = "CME_CR{:03d}_{}.hdf5".format(np.int32(self.cr_num.value), tag)
+        out_filepath = os.path.join(self._data_dir_, filename)
+
+        if os.path.isfile(out_filepath):
+            # File exists, so delete and start new.
+            print("Warning: {} already exists. Overwriting".format(out_filepath))
+            os.remove(out_filepath)
+
+        out_file = h5py.File(out_filepath, 'w')
+
+        # Save the Cone CME parameters to a new group.
+        allcmes = out_file.create_group('ConeCMEs')
+        for i, cme in enumerate(self.cmes):
+            cme_name = "ConeCME_{:02d}".format(i)
+            cmegrp = allcmes.create_group(cme_name)
+            for k, v in cme.__dict__.items():
+                if k != "coords":
+                    if k == 'earth_arrival_time':
+                        dset = cmegrp.create_dataset(k, data=v.isot)
+                    else:
+                        dset = cmegrp.create_dataset(k, data=v.value)
+                        dset.attrs['unit'] = v.unit.to_string()
+                    out_file.flush()
+                # Now handle the dictionary of CME boundary coordinates coords > time_out > position
+                if k == "coords":
+                    coordgrp = cmegrp.create_group(k)
+                    for time, position in v.items():
+                        time_label = "t_out_{:03d}".format(time)
+                        timegrp = coordgrp.create_group(time_label)
+                        for pos_label, pos_data in position.items():
+                            if pos_label == 'time':
+                                dset = timegrp.create_dataset(pos_label, data=pos_data.isot)
+                            else:
+                                dset = timegrp.create_dataset(pos_label, data=pos_data.value)
+                                dset.attrs['unit'] = pos_data.unit.to_string()
+                                
+                            out_file.flush()
+
+        out_file.close()
+        return out_filepath
+
 
     @u.quantity_input(time=u.day)
     def plot(self, time, field='cme', save=False, tag=''):
@@ -1470,16 +1611,17 @@ def load_HUXt_run(filepath):
         ptracer_boundary = data['_ptracer_boundary_init_'][()] * u.Unit(data['_ptracer_boundary_init_'].attrs['unit'])
         r = data['r'][()] * u.Unit(data['r'].attrs['unit'])
         lon = data['lon'][()] * u.Unit(data['lon'].attrs['unit'])
+        lat = data['latitude'][()] * u.Unit(data['latitude'].attrs['unit'])
         nlon = lon.size
 
         if nlon == 1:
             model = HUXt(v_boundary=v_boundary, br_boundary=ptracer_boundary, cr_num=cr_num,
                          cr_lon_init=cr_lon_init, r_min=r.min(), r_max=r.max(),
-                         lon_out=lon, simtime=simtime, dt_scale=dt_scale)
+                         lon_out=lon, simtime=simtime, dt_scale=dt_scale, latitude=lat)
         elif nlon > 1:
             model = HUXt(v_boundary=v_boundary, br_boundary=ptracer_boundary, cr_num=cr_num,
                          cr_lon_init=cr_lon_init, r_min=r.min(), r_max=r.max(),
-                         lon_start=lon.min(), lon_stop=lon.max(), simtime=simtime, dt_scale=dt_scale)
+                         lon_start=lon.min(), lon_stop=lon.max(), simtime=simtime, dt_scale=dt_scale, latitude=lat)
 
         model.v_grid_cme[:, :, :] = data['v_grid_cme'][()] * u.Unit(data['v_boundary'].attrs['unit'])
         model.v_grid_amb[:, :, :] = data['v_grid_amb'][()] * u.Unit(data['v_boundary'].attrs['unit'])
@@ -1503,18 +1645,24 @@ def load_HUXt_run(filepath):
             # Now sort out coordinates.
             # Use the same dictionary structure as defined in ConeCME._track_2d_
             coords_group = cme_data['coords']
-            coords_data = {j: {'lon_pix': np.array([]) * u.pix, 'r_pix': np.array([]) * u.pix,
-                               'lon': np.array([]) * model.lon.unit, 'r': np.array([]) * model.r.unit}
-                           for j in range(len(coords_group))}
+            coords_data = {j: {'time':np.array([]), 'model_time': np.array([]) * u.s,
+                               'lon_pix': np.array([]) * u.pix, 'r_pix': np.array([]) * u.pix,
+                               'lon': np.array([]) * model.lon.unit, 'r': np.array([]) * model.r.unit,
+                              'lat': np.array([]) * model.latitude.unit}
+                               for j in range(len(coords_group))}
 
             for time_key, pos in coords_group.items():
                 t = np.int(time_key.split("_")[2])
+                coords_data[t]['time'] = Time(pos['time'][()], format="isot")
+                coords_data[t]['model_time'] = pos['model_time'][()] * u.Unit(pos['model_time'].attrs['unit'])
                 coords_data[t]['lon_pix'] = pos['lon_pix'][()] * u.Unit(pos['lon_pix'].attrs['unit'])
                 coords_data[t]['r_pix'] = pos['r_pix'][()] * u.Unit(pos['r_pix'].attrs['unit'])
                 coords_data[t]['lon'] = pos['lon'][()] * u.Unit(pos['lon'].attrs['unit'])
                 coords_data[t]['r'] = pos['r'][()] * u.Unit(pos['r'].attrs['unit'])
-
+                coords_data[t]['lat'] = pos['lat'][()] * u.Unit(pos['lat'].attrs['unit'])
+                
             cme.coords = coords_data
+            cme.compute_earth_arrival()
             cme_list.append(cme)
 
         # Update CMEs in model output
@@ -1527,5 +1675,62 @@ def load_HUXt_run(filepath):
         model = []
 
     return model, cme_list
+
+def load_cme_file(filepath):
+    """
+    Load in data from a saved HUXt run.
+
+    :param filepath: The full path to a HDF5 file containing the output from HUXt.save()
+    :return: cme_list: A list of instances of ConeCME
+    :return: model: An instance of HUXt containing loaded results.
+    """
+    if os.path.isfile(filepath):
+
+        data = h5py.File(filepath, 'r')
+
+        # Create list of the ConeCMEs
+        cme_list = []
+        all_cmes = data['ConeCMEs']
+        for k in all_cmes.keys():
+            cme_data = all_cmes[k]
+            t_launch = cme_data['t_launch'][()] * u.Unit(cme_data['t_launch'].attrs['unit'])
+            lon = cme_data['longitude'][()] * u.Unit(cme_data['longitude'].attrs['unit'])
+            lat = cme_data['latitude'][()] * u.Unit(cme_data['latitude'].attrs['unit'])
+            width = cme_data['width'][()] * u.Unit(cme_data['width'].attrs['unit'])
+            thickness = cme_data['thickness'][()] * u.Unit(cme_data['thickness'].attrs['unit'])
+            thickness = thickness.to('solRad')
+            v = cme_data['v'][()] * u.Unit(cme_data['v'].attrs['unit'])
+            cme = ConeCME(t_launch=t_launch, longitude=lon, latitude=lat, v=v, width=width, thickness=thickness)
+
+            # Now sort out coordinates.
+            # Use the same dictionary structure as defined in ConeCME._track_2d_
+            coords_group = cme_data['coords']
+            coords_data = {j: {'time':np.array([]), 'model_time': np.array([]) * u.s,
+                               'lon_pix': np.array([]) * u.pix, 'r_pix': np.array([]) * u.pix,
+                               'lon': np.array([]) * u.rad, 'r': np.array([]) * u.solRad,
+                              'lat': np.array([]) * u.rad}
+                               for j in range(len(coords_group))}
+
+            for time_key, pos in coords_group.items():
+                t = np.int(time_key.split("_")[2])
+                coords_data[t]['time'] = Time(pos['time'][()], format="isot")
+                coords_data[t]['model_time'] = pos['model_time'][()] * u.Unit(pos['model_time'].attrs['unit'])
+                coords_data[t]['lon_pix'] = pos['lon_pix'][()] * u.Unit(pos['lon_pix'].attrs['unit'])
+                coords_data[t]['r_pix'] = pos['r_pix'][()] * u.Unit(pos['r_pix'].attrs['unit'])
+                coords_data[t]['lon'] = pos['lon'][()] * u.Unit(pos['lon'].attrs['unit'])
+                coords_data[t]['r'] = pos['r'][()] * u.Unit(pos['r'].attrs['unit'])
+                coords_data[t]['lat'] = pos['lat'][()] * u.Unit(pos['lat'].attrs['unit'])
+                
+            cme.coords = coords_data
+            
+            cme.compute_earth_arrival()
+            cme_list.append(cme)
+
+    else:
+        # File doesnt exist return nothing
+        print("Warning: {} doesnt exist.".format(filepath))
+        cme_list = []
+
+    return cme_list
 
 
