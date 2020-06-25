@@ -199,7 +199,7 @@ def readMASvrbr(cr):
 def get_MAS_long_profile(cr, lat=0.0*u.deg):
     """
     a function to download, read and process MAS output to provide HUXt boundary
-    conditions at the helioequator
+    conditions at a given latitude
 
     Parameters
     ----------
@@ -220,7 +220,8 @@ def get_MAS_long_profile(cr, lat=0.0*u.deg):
     """
     
     assert(np.isnan(cr)==False and cr>0)
-    assert(lat>= -90.0*u.deg and lat<= 90.0*u.deg)
+    assert(lat>= -90.0*u.deg)
+    assert(lat<= 90.0*u.deg)
     
     #convert angle from equator to angle down from N pole
     ang_from_N_pole=np.pi/2 - (lat.to(u.rad)).value
@@ -232,7 +233,7 @@ def get_MAS_long_profile(cr, lat=0.0*u.deg):
     #read the HelioMAS data
     MAS_vr, MAS_vr_Xa, MAS_vr_Xm, MAS_br, MAS_br_Xa, MAS_br_Xm = readMASvrbr(cr)
     
-    #extract the value at the helioequator
+    #extract the value at the given latitude
     vr=np.ones(len(MAS_vr_Xa))
     for i in range(0,len(MAS_vr_Xa)):
         vr[i]=np.interp(ang_from_N_pole,MAS_vr_Xm.value,MAS_vr[i][:].value)
@@ -247,12 +248,67 @@ def get_MAS_long_profile(cr, lat=0.0*u.deg):
     longs=np.linspace(dphi/2 , 2*np.pi -dphi/2,nlong)
     vr_in=np.interp(longs,MAS_vr_Xa.value,vr)*u.km/u.s
     br_in=np.interp(longs,MAS_br_Xa.value,br)
-
+    
     #convert br into +/- 1
     #br_in[br_in>=0.0]=1.0*u.dimensionless_unscaled
     #br_in[br_in<0.0]=-1.0*u.dimensionless_unscaled
     
     return vr_in, br_in
+
+
+def get_MAS_maps(cr):
+    """
+    a function to download, read and process MAS output to provide HUXt boundary
+    conditions as lat-long maps, along with angle from equator for the maps
+
+    Parameters
+    ----------
+    cr : INT
+        Carrington rotation number
+
+
+    Returns
+    -------
+    vr_in : NP ARRAY (NDIM = 1)
+        Solar wind speed as a function of Carrington longitude at solar equator.
+        Interpolated to HUXt longitudinal resolution. In km/s
+    br_in : NP ARRAY(NDIM = 1)
+        Radial magnetic field as a function of Carrington longitude at solar equator.
+        Interpolated to HUXt longitudinal resolution. Dimensionless
+
+    """
+    
+    assert(np.isnan(cr)==False and cr>0)
+    
+    
+    #check the data exist, if not, download them
+    flag=getMASboundaryconditions(cr)    #getMASboundaryconditions(cr,observatory='mdi')
+    assert(flag > -1)
+    
+    #read the HelioMAS data
+    MAS_vr, MAS_vr_Xa, MAS_vr_Xm, MAS_br, MAS_br_Xa, MAS_br_Xm = readMASvrbr(cr)
+    
+    vr_map=MAS_vr
+    br_map=MAS_br
+    
+    #convert the lat angles from N-pole to equator centred
+    vr_lats= (np.pi/2)*u.rad - MAS_vr_Xm
+    br_lats= (np.pi/2)*u.rad - MAS_br_Xm
+    
+    #flip lats, so they're increasing in value
+    vr_lats=np.flipud(vr_lats)
+    br_lats=np.flipud(br_lats)
+    vr_map=np.fliplr(vr_map)
+    br_map=np.fliplr(br_map)
+    
+    vr_longs=MAS_vr_Xa
+    br_longs=MAS_br_Xa
+
+    #convert br into +/- 1
+    #br_in[br_in>=0.0]=1.0*u.dimensionless_unscaled
+    #br_in[br_in<0.0]=-1.0*u.dimensionless_unscaled
+    
+    return vr_map, vr_lats, vr_longs, br_map, br_lats, br_longs
 
 # <codecell> Map MAS inputs to smaller radial distances, for starting HUXt below 30 rS
 

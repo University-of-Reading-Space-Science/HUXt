@@ -13,6 +13,7 @@ from skimage import measure
 import scipy.ndimage as ndi
 from numba import jit
 import HUXtinput as Hin
+import HUXtlat as Hlat
 
 mpl.rc("axes", labelsize=16)
 mpl.rc("ytick", labelsize=16)
@@ -928,7 +929,7 @@ class HUXt:
             lon_out = self.lon[id_lon].to(u.deg).value
 
         if field == 'cme':
-            label = 'Cone Run'
+            label = 'CME Run'
             ylab='Solar Wind Speed (km/s)'
             ax.plot(self.r, self.v_grid_cme[id_t, :, id_lon], 'k-', label=label)
             ymin=200; ymax=1000
@@ -947,7 +948,7 @@ class HUXt:
         elif field == 'br_cme':
             if np.all(np.isnan(self.br_grid_cme)):
                 return -1
-            label = 'Cone Run'
+            label = 'CME Run'
             ylab='Magnetic field polarity (code units)'
             ax.plot(self.r, self.br_grid_cme[id_t, :, id_lon], '--', color='slategrey', label=label)
             ymax=np.absolute(self.br_grid_cme[id_t, :, id_lon]).max()
@@ -1033,7 +1034,7 @@ class HUXt:
 
         t_day = self.time_out.to(u.day)
         if field == 'cme':
-            label = 'Cone Run'
+            label = 'CME Run'
             ax.plot(t_day, self.v_grid_cme[:, id_r, id_lon], 'k-', label=label)
             ylab='Solar Wind Speed (km/s)'
             ymin=200; ymax=1000
@@ -1050,7 +1051,7 @@ class HUXt:
             ylab='Solar Wind Speed (km/s)'
             ymin=200; ymax=1000
         elif field == 'br_cme':
-            label = 'Cone Run'
+            label = 'CME Run'
             ylab='Magnetic field polarity (code units)'
             ax.plot(t_day, self.br_grid_cme[:, id_r, id_lon], 'k-', label=label)
             ymax=np.absolute(self.br_grid_cme[:, id_r, id_lon]).max()
@@ -1112,12 +1113,13 @@ def huxt_constants():
     v_max = 2000 * kms
     dr = 1.5 * u.solRad  # Radial grid step. With v_max, this sets the model time step.
     cmetracerthreshold=0.02 # Threshold of CME tracer field to use for CME identification
-    nlong=128 #number of longitude bins    
+    nlong=128  #number of longitude bins for a full longitude grid 
+    nlat=91    #number of ltitude bins for a full ltitude grid
     
     constants = {'twopi': twopi, 'daysec': daysec, 'kms': kms, 'alpha': alpha,
                  'r_accel': r_accel, 'synodic_period': synodic_period, 'v_max': v_max,
                  'dr': dr, 'cmetracerthreshold' : cmetracerthreshold,
-                 'nlong' : nlong}
+                 'nlong' : nlong, 'nlat' : nlat}
     return constants
 
 
