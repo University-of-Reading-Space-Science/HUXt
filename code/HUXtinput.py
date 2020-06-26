@@ -243,11 +243,12 @@ def get_MAS_long_profile(cr, lat=0.0*u.deg):
         br[i]=np.interp(ang_from_N_pole,MAS_br_Xm.value,MAS_br[i][:])
         
     #now interpolate on to the HUXt longitudinal grid
-    nlong=H.huxt_constants()['nlong']
-    dphi=2*np.pi/nlong
-    longs=np.linspace(dphi/2 , 2*np.pi -dphi/2,nlong)
-    vr_in=np.interp(longs,MAS_vr_Xa.value,vr)*u.km/u.s
-    br_in=np.interp(longs,MAS_br_Xa.value,br)
+    # nlong=H.huxt_constants()['nlong']
+    # dphi=2*np.pi/nlong
+    # longs=np.linspace(dphi/2 , 2*np.pi -dphi/2,nlong)  
+    longs, dlon, nlon = H.longitude_grid(lon_start=0.0 * u.rad, lon_stop=2*np.pi * u.rad)
+    vr_in=np.interp(longs.value,MAS_vr_Xa.value,vr)*u.km/u.s
+    br_in=np.interp(longs.value,MAS_br_Xa.value,br)
     
     #convert br into +/- 1
     #br_in[br_in>=0.0]=1.0*u.dimensionless_unscaled

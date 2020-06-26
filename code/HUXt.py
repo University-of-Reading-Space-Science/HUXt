@@ -1114,7 +1114,7 @@ def huxt_constants():
     dr = 1.5 * u.solRad  # Radial grid step. With v_max, this sets the model time step.
     cmetracerthreshold=0.02 # Threshold of CME tracer field to use for CME identification
     nlong=128  #number of longitude bins for a full longitude grid 
-    nlat=91    #number of ltitude bins for a full ltitude grid
+    nlat=45    #number of ltitude bins for a full ltitude grid
     
     constants = {'twopi': twopi, 'daysec': daysec, 'kms': kms, 'alpha': alpha,
                  'r_accel': r_accel, 'synodic_period': synodic_period, 'v_max': v_max,

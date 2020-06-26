@@ -54,7 +54,7 @@ class HUXt3d:
         #latitude grid
         self.latitude_min=latitude_min.to(u.rad)
         self.latitude_max=latitude_max.to(u.rad)
-        self.lat, self.dlat, self.nlat = latitude_grid(self.latitude_min,self.latitude_max)
+        self.lat, self.nlat = latitude_grid(self.latitude_min,self.latitude_max)
         
         #check the dimensions 
         assert( len(v_map_lat) == len(v_map[1,:]) )
@@ -64,9 +64,10 @@ class HUXt3d:
         
         
         #get the HUXt longitunidal grid
-        nlong=H.huxt_constants()['nlong']
-        dphi=2*np.pi/nlong
-        longs=np.linspace(dphi/2, 2*np.pi - dphi/2, nlong)
+        longs, dlon, nlon = H.longitude_grid(lon_start=0.0 * u.rad, lon_stop=2*np.pi * u.rad)
+        #nlong=H.huxt_constants()['nlong']
+        #dphi=2*np.pi/nlong
+        #longs=np.linspace(dphi/2, 2*np.pi - dphi/2, nlong)
         
         #extract the vr value at the given latitudes
         self.v_in=[]
@@ -75,7 +76,7 @@ class HUXt3d:
             for ilong in range(0,len(v_map_long)):
                 vlong[ilong]=np.interp(thislat.value, v_map_lat.value, v_map[ilong,:].value)
             #interpolate this longitudinal profile to the HUXt resolution
-            self.v_in.append(np.interp(longs, v_map_long.value, vlong)*u.km/u.s)
+            self.v_in.append(np.interp(longs.value, v_map_long.value, vlong)*u.km/u.s)
 
         #extract the br value at the given latitudes
         self.br_in=[]
@@ -84,7 +85,7 @@ class HUXt3d:
             for ilong in range(0,len(br_map_long)):
                 blong[ilong]=np.interp(thislat.value, br_map_lat.value, br_map[ilong,:])
             #interpolate this longitudinal profile to the HUXt resolution
-            self.br_in.append(np.interp(longs, br_map_long.value, blong)*u.dimensionless_unscaled) 
+            self.br_in.append(np.interp(longs.value, br_map_long.value, blong)*u.dimensionless_unscaled) 
             
          
         #set up the model at each latitude
@@ -267,17 +268,23 @@ def latitude_grid(latitude_min = np.nan, latitude_max = np.nan):
 
     # Form the full longitude grid.
     nlat = H.huxt_constants()['nlat'] 
-    dlat = np.pi / nlat
     
-    lat_min_full = - np.pi/2 + dlat / 2.0
-    lat_max_full =  np.pi/2 - dlat / 2.0
-    lat, dlat = np.linspace(lat_min_full, lat_max_full, nlat, retstep=True)
-    lat = lat * u.rad
-    dlat = dlat * u.rad
-
+    # dlat = np.pi / nlat
+    # lat_min_full = - np.pi/2 + dlat / 2.0
+    # lat_max_full =  np.pi/2 - dlat / 2.0
+    # lat, dlat = np.linspace(lat_min_full, lat_max_full, nlat, retstep=True)
+    # lat = lat * u.rad
+    # dlat = dlat * u.rad
+    
+    dsinlat = 2 / nlat
+    sinlat_min_full = - 1 + dsinlat / 2.0
+    sinlat_max_full =  1 - dsinlat / 2.0
+    sinlat, dsinlat = np.linspace(sinlat_min_full, sinlat_max_full, nlat, retstep=True)
+    lat = np.arcsin(sinlat) * u.rad
+    
     # Now get only the selected range of latitudes
     id_match = (lat >= latitude_min) & (lat <= latitude_max)
     lat = lat[id_match]
     nlat = lat.size
 
-    return lat, dlat, nlat
+    return lat, nlat
