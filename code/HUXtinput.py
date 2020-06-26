@@ -409,3 +409,74 @@ def map_ptracer_boundary_inwards(v_outer, r_outer, r_inner, ptracer_outer):
 
     return ptracer_inner
 
+def map_vmap_inwards(v_map, v_map_lat, v_map_long, r_outer, r_inner):
+    """
+    Function to map a V Carrington map from r_outer (in rs) to r_inner (in rs)
+    :param vmap: Solar wind speed map at outer radial boundary. Units of km/s.
+    :param r_outer: Radial distance at outer radial boundary. Units of km.
+    :param r_inner: Radial distance at inner radial boundary. Units of km.
+    :return v_map_inner: Solar wind speed map at r_inner. Units of km/s.
+    """
+
+    if r_outer < r_inner:
+        raise ValueError("Warning: r_outer < r_inner. Mapping will not work.")
+    #check the dimensions 
+    assert( len(v_map_lat) == len(v_map[1,:]) )
+    assert( len(v_map_long) == len(v_map[:,1]) )
+    
+ 
+    
+    v_map_inner=np.ones((len(v_map_long),len(v_map_lat)))
+    for ilat in range(0,len(v_map_lat)):
+        #map each point in to a new speed and longitude
+        v0, phis_new = map_v_inwards(v_map[:,ilat], r_outer, v_map_long, r_inner)
+
+        #interpolate the mapped speeds back onto the regular Carr long grid,
+        #making boundaries periodic * u.km/u.s
+        v_map_inner[:,ilat] = np.interp(v_map_long.value, phis_new.value, v0.value, period=2*np.pi)       
+    
+    
+    return v_map_inner *u.km /u.s
+
+def map_ptracer_map_inwards(v_map, v_map_lat, v_map_long, 
+                            ptracer_map, ptracer_map_lat, ptracer_map_long,
+                            r_outer, r_inner):
+    """
+    Function to map a longitudinal V series from r_outer (in rs) to r_inner (in rs)
+    :param v_outer: Solar wind speed at outer radial boundary. Units of km/s.
+    :param r_outer: Radial distance at outer radial boundary. Units of km.
+    :param r_inner: Radial distance at inner radial boundary. Units of km.
+    :param p_tracer_outer:  Passive tracer at outer radial boundary. 
+    :return ptracer_inner: Passive tracer mapped from r_outer to r_inner. 
+    """
+    if r_outer < r_inner:
+        raise ValueError("Warning: r_outer < r_inner. Mapping will not work.")
+    #check the dimensions 
+    assert( len(v_map_lat) == len(v_map[1,:]) )
+    assert( len(v_map_long) == len(v_map[:,1]) )
+    assert( len(ptracer_map_lat) == len(ptracer_map[1,:]) )
+    assert( len(ptracer_map_long) == len(ptracer_map[:,1]) )
+    
+    ptracer_map_inner=np.ones((len(ptracer_map_long),len(ptracer_map_lat)))
+    for ilat in range(0,len(ptracer_map_lat)):
+        
+        #extract the vr values at the ptracer latitude
+        vlong=np.ones(len(v_map_long)) 
+        for ilong in range(0,len(v_map_long)):
+            vlong[ilong]=np.interp(ptracer_map_lat[ilat].value, v_map_lat.value, v_map[ilong,:].value)
+        
+        #now interpolate the longitudinal velocity to the same longs as ptracer
+        v_plongs=np.interp(ptracer_map_long.value, v_map_long.value, vlong) * u.km/u.s
+
+        #map each point in to a new speed and longitude
+        v0, v_phis_new = map_v_inwards(v_plongs, r_outer, ptracer_map_long, r_inner)
+
+        #interpolate the mapped tracer back onto the regular Carr long grid,
+        #making boundaries periodic * u.km/u.s
+        ptracer_map_inner[:,ilat] = np.interp(ptracer_map_long.value, v_phis_new.value, 
+                                              ptracer_map[:,ilat], period=2*np.pi) 
+    
+    
+    return ptracer_map_inner *u.dimensionless_unscaled
+
+
