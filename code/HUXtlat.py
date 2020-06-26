@@ -121,7 +121,7 @@ class HUXt3d:
         
 
         if field not in ['cme', 'ambient','br_cme','br_ambient']:
-            print("Error, field must be either 'cme', 'ambient','br_cme','br_amb'. Default to CME")
+            print("Error, field must be either 'cme', 'ambient','br_cme','br_ambient'. Default to CME")
             field = 'cme'
          
         #get the metadata from one of the individual HUXt elements
