@@ -261,6 +261,7 @@ def get_MAS_maps(cr):
     """
     a function to download, read and process MAS output to provide HUXt boundary
     conditions as lat-long maps, along with angle from equator for the maps
+    maps returned in native resolution, not HUXt resolution
 
     Parameters
     ----------
@@ -270,12 +271,10 @@ def get_MAS_maps(cr):
 
     Returns
     -------
-    vr_in : NP ARRAY (NDIM = 1)
-        Solar wind speed as a function of Carrington longitude at solar equator.
-        Interpolated to HUXt longitudinal resolution. In km/s
-    br_in : NP ARRAY(NDIM = 1)
-        Radial magnetic field as a function of Carrington longitude at solar equator.
-        Interpolated to HUXt longitudinal resolution. Dimensionless
+    vr_map : NP ARRAY 
+        Solar wind speed as a Carrington longitude-latitude map. In km/s
+    br_map : NP ARRAY
+        Br as a Carrington longitude-latitude map. Dimensionless
 
     """
     
@@ -319,7 +318,9 @@ def get_MAS_maps(cr):
 @u.quantity_input(r_inner=u.solRad)
 def map_v_inwards(v_outer, r_outer, lon_outer, r_inner):
     """
-    Function to map v from r_outer (in rs) to r_inner (in rs)
+    Function to map v from r_outer (in rs) to r_inner (in rs) accounting for 
+    residual acceleration, but neglecting stream interactions.
+    
     :param v_outer: Solar wind speed at outer radial distance. Units of km/s.
     :param r_outer: Radial distance at outer radial distance. Units of km.  
     :param lon_outer: Carrington longitude at outer distance. Units of rad
@@ -362,6 +363,9 @@ def map_v_inwards(v_outer, r_outer, lon_outer, r_inner):
 def map_v_boundary_inwards(v_outer, r_outer, r_inner):
     """
     Function to map a longitudinal V series from r_outer (in rs) to r_inner (in rs)
+    accounting for residual acceleration, but neglecting stream interactions.
+    Series return on HUXt longitudinal grid, not input grid
+    
     :param v_outer: Solar wind speed at outer radial boundary. Units of km/s.
     :param r_outer: Radial distance at outer radial boundary. Units of km.
     :param r_inner: Radial distance at inner radial boundary. Units of km.
@@ -388,6 +392,9 @@ def map_v_boundary_inwards(v_outer, r_outer, r_inner):
 def map_ptracer_boundary_inwards(v_outer, r_outer, r_inner, ptracer_outer):
     """
     Function to map a longitudinal V series from r_outer (in rs) to r_inner (in rs)
+    accounting for residual acceleration, but neglecting stream interactions.
+    Series return on HUXt longitudinal grid, not input grid
+    
     :param v_outer: Solar wind speed at outer radial boundary. Units of km/s.
     :param r_outer: Radial distance at outer radial boundary. Units of km.
     :param r_inner: Radial distance at inner radial boundary. Units of km.
@@ -409,10 +416,20 @@ def map_ptracer_boundary_inwards(v_outer, r_outer, r_inner, ptracer_outer):
 
     return ptracer_inner
 
+@u.quantity_input(v_map=u.km / u.s)
+@u.quantity_input(v_map_lat=u.rad)
+@u.quantity_input(v_map_long=u.rad)
+@u.quantity_input(r_outer=u.solRad)
+@u.quantity_input(r_inner=u.solRad)
 def map_vmap_inwards(v_map, v_map_lat, v_map_long, r_outer, r_inner):
     """
-    Function to map a V Carrington map from r_outer (in rs) to r_inner (in rs)
-    :param vmap: Solar wind speed map at outer radial boundary. Units of km/s.
+    Function to map a V Carrington map from r_outer (in rs) to r_inner (in rs),
+    accounting for acceleration, but ignoring stream interaction
+    Map returned on input coord system, not HUXT resolution
+    
+    :param vmap: Solar wind speed Carrington map at outer radial boundary. Units of km/s.
+    :param v_map_lat: Latitude (from equator) of vmap positions. Units of radians
+    :param v_map_long: Carrington longitude of vmap positions. Units of radians
     :param r_outer: Radial distance at outer radial boundary. Units of km.
     :param r_inner: Radial distance at inner radial boundary. Units of km.
     :return v_map_inner: Solar wind speed map at r_inner. Units of km/s.
@@ -438,16 +455,32 @@ def map_vmap_inwards(v_map, v_map_lat, v_map_long, r_outer, r_inner):
     
     return v_map_inner *u.km /u.s
 
+@u.quantity_input(v_map=u.km / u.s)
+@u.quantity_input(v_map_lat=u.rad)
+@u.quantity_input(v_map_long=u.rad)
+@u.quantity_input(ptracer_map_lat=u.rad)
+@u.quantity_input(ptracer_map_long=u.rad)
+@u.quantity_input(r_outer=u.solRad)
+@u.quantity_input(r_inner=u.solRad)
 def map_ptracer_map_inwards(v_map, v_map_lat, v_map_long, 
                             ptracer_map, ptracer_map_lat, ptracer_map_long,
                             r_outer, r_inner):
     """
-    Function to map a longitudinal V series from r_outer (in rs) to r_inner (in rs)
-    :param v_outer: Solar wind speed at outer radial boundary. Units of km/s.
+    Function to map a a passive tracer (e.g., Br) Carrington map from r_outer (in rs) to r_inner (in rs),
+    accounting for acceleration, but ignoring stream interaction.
+    Speed and tracer maps do not need ot be on same grid (e.g., MAS)
+    Map returned on input coord system, not HUXT resolution
+    
+    :param vmap: Solar wind speed Carrington map at outer radial boundary. Units of km/s.
+    :param v_map_lat: Latitude (from equator) of vmap positions. Units of radians
+    :param v_map_long: Carrington longitude of vmap positions. Units of radians
+    :param ptracer_map: Tracer (e.g., Br)  Carrington map at outer radial boundary. No units
+    :param ptracer_map_lat: Latitude (from equator) of tracer positions. Units of radians
+    :param ptracer_map_long: Carrington longitude of tracer positions. Units of radians
     :param r_outer: Radial distance at outer radial boundary. Units of km.
     :param r_inner: Radial distance at inner radial boundary. Units of km.
     :param p_tracer_outer:  Passive tracer at outer radial boundary. 
-    :return ptracer_inner: Passive tracer mapped from r_outer to r_inner. 
+    :return ptracer_map_inner: Passive tracer mapped from r_outer to r_inner. 
     """
     if r_outer < r_inner:
         raise ValueError("Warning: r_outer < r_inner. Mapping will not work.")

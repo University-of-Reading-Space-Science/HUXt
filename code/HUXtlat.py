@@ -20,11 +20,22 @@ class HUXt3d:
     A class containing a list of HUXt classes, to enable mutliple latitudes to
     be simulated, plotted, animated, etc, together
     
-    Attributes inherited from HUXt
+    Attributes inherited from HUXt. Additional:
+        lat: The list of latitudes of individual HUXt runs, in radians from equator
+        nlat: The number of latitudes simulated
+        HUXtlat: List of individual HUXt model classes at each latitude
+        v_in: a list of Carrington longitude solar wind profiles at each simulated latitude
+        br_in: a list of Carrington longitude Br profiles at each simulated latitude
+        
+    
     """
 
     # Decorators to check units on input arguments
-    @u.quantity_input(v_boundary=(u.km / u.s))
+    @u.quantity_input(v_map=(u.km / u.s))
+    @u.quantity_input(v_map_lat=(u.rad))
+    @u.quantity_input(v_map_long=(u.rad))
+    @u.quantity_input(latitude_max=(u.deg))
+    @u.quantity_input(latitude_min=(u.deg))
     @u.quantity_input(simtime=u.day)
     @u.quantity_input(cr_lon_init=u.deg)
     def __init__(self, v_map=np.NaN * (u.km / u.s), v_map_lat=np.NaN * u.rad, v_map_long=np.NaN * u.rad, 
@@ -37,12 +48,17 @@ class HUXt3d:
         """
         Initialise the HUXt instance.
 
-        :param v_boundary: Inner solar wind speed boundary condition. Must be an array of size 128 with units of km/s.
-        :param br_boundary: Inner passive tracer boundary condition. Must be an array of size 128 with no units
+        :param v_map: Inner solar wind speed boundary Carrington map. Must have units of km/s.
+        :param v_map_lat: List of latitude positions for v_map, in radians
+        :param v_map_long: List of Carrington longitudes for v_map, in radians
+        :param br_map: Inner Br boundary Carrington map. Must have no units.
+        :param br_map_lat: List of latitude positions for br_map, in radians
+        :param br_map_long: List of Carrington longitudes for br_map, in radians
+        :param latitude_max: Maximum helio latitude (from equator) of HUXt plane, in degrees
+        :param latitude_min: Maximum helio latitude (from equator) of HUXt plane, in degrees
         :param cr_num: Integer Carrington rotation number. Used to determine the planetary and spacecraft positions
         :param cr_lon_init: Carrington longitude of Earth at model initialisation, in degrees.
-        :param latitude: Helio latitude (from equator) of HUXt plane, in degrees
-        :param lon_out: A specific single longitude to compute HUXt solution along.
+        :param lon_out: A specific single longitude (relative to Earth_ to compute HUXt solution along, in degrees
         :param lon_start: The first longitude (in a clockwise sense) of the longitude range to solve HUXt over.
         :param lon_stop: The last longitude (in a clockwise sense) of the longitude range to solve HUXt over.
         :param r_min: The radial inner boundary distance of HUXt.
@@ -59,8 +75,14 @@ class HUXt3d:
         #check the dimensions 
         assert( len(v_map_lat) == len(v_map[1,:]) )
         assert( len(v_map_long) == len(v_map[:,1]) )
-        assert( len(br_map_lat) == len(br_map[1,:]) )
-        assert( len(br_map_long) == len(br_map[:,1]) )
+        
+        if isnan(br_map):
+            br_map_lat=v_map_lat
+            br_map_long=v_map_long
+            br_map=v_map.value*0.0
+        else:
+            assert( len(br_map_lat) == len(br_map[1,:]) )
+            assert( len(br_map_long) == len(br_map[:,1]) )
         
         
         #get the HUXt longitunidal grid
@@ -106,20 +128,16 @@ class HUXt3d:
         return
     
     @u.quantity_input(time=u.day)
-    def plot(self, time, field='cme', lon=np.NaN*u.deg, save=False, tag=''):
+    def plot(self, time, field='cme', lon=np.NaN*u.deg):
         """
         Make a contour plot on polar axis of the solar wind solution at a specific time.
         :param time: Time to look up closet model time to (with an astropy.unit of time).
         :param long: the longitude at which to take the cut
-        :param field: String, either 'cme', or 'ambient', specifying which solution to plot.
-        :param save: Boolean to determine if the figure is saved.
-        :param tag: String to append to the filename if saving the figure.
+        :param field: String, either 'cme', or 'ambient', specifying which solution to plot.        
         :return fig: Figure handle.
         :return ax: Axes handle.
         """
         
-        
-
         if field not in ['cme', 'ambient','br_cme','br_ambient']:
             print("Error, field must be either 'cme', 'ambient','br_cme','br_ambient'. Default to CME")
             field = 'cme'
@@ -252,14 +270,18 @@ class HUXt3d:
         animation.write_videofile(filepath, fps=24, codec='libx264')
         return
         
-@u.quantity_input(lon_start=u.rad)
-@u.quantity_input(lon_stop=u.rad)
+@u.quantity_input(latitude_min=u.rad)
+@u.quantity_input(latitude_max=u.rad)
 def latitude_grid(latitude_min = np.nan, latitude_max = np.nan):
     """
-    Define the latitude grid of the HUXt model.
+    Define the latitude grid of the HUXt model. This is constant in sine latitude
+    
 
-    :param latitude_min: The maximum latitude above the equator
-    :param latitude_max: The minimum latitude below the equator
+    :param latitude_min: The maximum latitude above the equator, in radians
+    :param latitude_max: The minimum latitude below the equator, in radians
+    
+    return lat: List of latitude positions between given limits, in radians
+    return lat: number of latitude positions between given limits
     """
     # Check the inputs.
     assert(latitude_max > latitude_min)

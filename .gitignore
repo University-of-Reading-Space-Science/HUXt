@@ -21,3 +21,6 @@
 
 # the exmaples.py file
 /code/HUXt_example.py
+
+#ipnyb checkpoints
+/code/.ipnyb*

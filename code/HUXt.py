@@ -348,8 +348,10 @@ class HUXt:
         time_out: Array of output model time steps (in seconds).
         twopi: two pi radians
         v_boundary: Inner boundary solar wind speed profile (in km/s).
-        v_grid_amb: Array of ambient model solution excluding ConeCMEs for each time, radius, and longitude (in km/s).
-        v_grid_cme: Array of model solution inlcuding ConeCMEs for each time, radius, and longitude (in km/s).
+        v_grid_amb: Array of ambient model speed excluding ConeCMEs for each time, radius, and longitude (in km/s).
+        v_grid_cme: Array of model speed inlcuding ConeCMEs for each time, radius, and longitude (in km/s).
+        br_grid_amb: Array of ambient model Br excluding ConeCMEs for each time, radius, and longitude (in km/s).
+        br_grid_cme: Array of model Br inlcuding ConeCMEs for each time, radius, and longitude (in km/s).
         v_max: Maximum model speed (in km/s), used with the CFL condition to set the model time step. 
     """
 
@@ -370,7 +372,7 @@ class HUXt:
         :param cr_num: Integer Carrington rotation number. Used to determine the planetary and spacecraft positions
         :param cr_lon_init: Carrington longitude of Earth at model initialisation, in degrees.
         :param latitude: Helio latitude (from equator) of HUXt plane, in degrees
-        :param lon_out: A specific single longitude to compute HUXt solution along.
+        :param lon_out: A specific single longitude (relative to Earth_ to compute HUXt solution along, in degrees
         :param lon_start: The first longitude (in a clockwise sense) of the longitude range to solve HUXt over.
         :param lon_stop: The last longitude (in a clockwise sense) of the longitude range to solve HUXt over.
         :param r_min: The radial inner boundary distance of HUXt.
@@ -1531,7 +1533,8 @@ def _is_in_cme_boundary_(r_boundary, lon, lat, time, cme_params):
 
 def load_HUXt_run(filepath):
     """
-    Load in data from a saved HUXt run.
+    Load in data from a saved HUXt run. If Br fields are not saved, pads with
+    NaN to avoid conflicts with other HUXt routines.
 
     :param filepath: The full path to a HDF5 file containing the output from HUXt.save()
     :return: cme_list: A list of instances of ConeCME
