@@ -76,7 +76,7 @@ class HUXt3d:
         assert( len(v_map_lat) == len(v_map[1,:]) )
         assert( len(v_map_long) == len(v_map[:,1]) )
         
-        if isnan(br_map):
+        if np.all(np.isnan(br_map)):
             br_map_lat=v_map_lat
             br_map_long=v_map_long
             br_map=v_map.value*0.0
@@ -164,7 +164,7 @@ class HUXt3d:
         for n in range(0,self.nlat):
             model=self.HUXtlat[n]
             if field== 'cme':
-                ymin=200; ymax=810
+                ymin=200; ymax=610
                 ylab='Solar Wind Speed (km/s)'
                 label = 'CME Run'
                 mercut[:,n]=model.v_grid_cme[id_t, :, id_lon]
@@ -172,7 +172,7 @@ class HUXt3d:
             elif field == 'ambient':
                 label = 'Ambient'
                 ylab='Solar Wind Speed (km/s)'
-                ymin=200; ymax=810
+                ymin=200; ymax=610
                 mercut[:,n]=model.v_grid_amb[id_t, :, id_lon]
                 mymap = mpl.cm.viridis
             elif field == 'br_cme':

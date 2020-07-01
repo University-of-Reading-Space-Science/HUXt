@@ -1307,7 +1307,7 @@ def solve_radial(vinput, brinput, model_time, rrel, lon, params, do_cme, cme_par
     :param params: Array of HUXt parameters
     :param do_cme: Boolean, if True any provided ConeCMEs are included in the solution.
     :param cme_params: Array of ConeCME parameters to include in the solution. 1 Row for each CME, with columns as
-                       required by _cone_cme_boundary_
+                       required by _is_in_cone_cme_boundary_
     :param latitude: Latitude (from equator) of the HUXt plane
 
     Returns:

@@ -11,6 +11,7 @@ import os
 from pyhdf.SD import SD, SDC  
 import numpy as np
 import astropy.units as u
+from scipy.io import netcdf
 
 
 # <codecell> Get MAS data from MHDweb
@@ -272,10 +273,17 @@ def get_MAS_maps(cr):
     Returns
     -------
     vr_map : NP ARRAY 
-        Solar wind speed as a Carrington longitude-latitude map. In km/s
+        Solar wind speed as a Carrington longitude-latitude map. In km/s   
+    vr_lats :
+        The latitudes for the Vr map, in radians from trhe equator   
+    vr_longs :
+        The Carrington longitudes for the Vr map, in radians
     br_map : NP ARRAY
         Br as a Carrington longitude-latitude map. Dimensionless
-
+    br_lats :
+        The latitudes for the Br map, in radians from trhe equator
+    br_longs :
+        The Carrington longitudes for the Br map, in radians 
     """
     
     assert(np.isnan(cr)==False and cr>0)
@@ -512,4 +520,60 @@ def map_ptracer_map_inwards(v_map, v_map_lat, v_map_long,
     
     return ptracer_map_inner *u.dimensionless_unscaled
 
+
+# <codecell> PFSSpy inputs
+
+def get_PFSS_maps(filepath):
+    """
+    a function to load, read and process PFSSpy output to provide HUXt boundary
+    conditions as lat-long maps, along with angle from equator for the maps
+    maps returned in native resolution, not HUXt resolution
+
+    Parameters
+    ----------
+    filepath : STR 
+        The filepath for the PFSSpy .nc file
+
+    Returns
+    -------
+    vr_map : NP ARRAY 
+        Solar wind speed as a Carrington longitude-latitude map. In km/s   
+    vr_lats :
+        The latitudes for the Vr map, in radians from trhe equator   
+    vr_longs :
+        The Carrington longitudes for the Vr map, in radians
+    br_map : NP ARRAY
+        Br as a Carrington longitude-latitude map. Dimensionless
+    br_lats :
+        The latitudes for the Br map, in radians from trhe equator
+    br_longs :
+        The Carrington longitudes for the Br map, in radians 
+
+    """
+    
+    assert os.path.exists(filepath)
+    nc = netcdf.netcdf_file(filepath,'r')
+    
+    #for i in nc.variables:
+    #    print(i, nc.variables[i])
+    
+    cotheta=nc.variables['cos(th)'].data  
+    vr_lats=np.arcsin(cotheta[:,0])*u.rad
+    br_lats=vr_lats
+    
+    phi=nc.variables['ph'].data
+    vr_longs = phi[0,:] * u.rad
+    br_longs=vr_longs
+    
+    br_map= np.rot90(nc.variables['br'].data) 
+    vr_map= np.rot90(nc.variables['vr'].data) * u.km /u.s
+    
+    #convert br into +/- 1
+    #br_in[br_in>=0.0]=1.0*u.dimensionless_unscaled
+    #br_in[br_in<0.0]=-1.0*u.dimensionless_unscaled
+    
+    return vr_map, vr_lats, vr_longs, br_map, br_lats, br_longs
+
+#filepath=os.environ['DBOX'] + 'Papers_WIP\\_coauthor\\AnthonyYeates\\windbound_b_pfss20181105.12.nc'
+#vr_map, vr_lats, vr_longs, br_map, br_lats, br_longs =  get_PFSS_maps(filepath)
 
