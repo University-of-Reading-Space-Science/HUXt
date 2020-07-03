@@ -770,7 +770,8 @@ class HUXt:
             #ylab="CME tracer"
             vmax=np.absolute(v_sub).max()
             dv=2*vmax/20
-            plotvmin=-vmax; plotvmax=vmax+dv; 
+            plotvmin=0; 
+            plotvmax=vmax+dv; 
             ylab="B_R [code units]"
             mymap = mpl.cm.bwr
         elif field == 'br_ambient':
@@ -779,7 +780,7 @@ class HUXt:
             v_sub = self.br_grid_amb.value[id_t, :, :].copy()
             vmax=np.absolute(v_sub).max()
             dv=2*vmax/20
-            plotvmin=-vmax; plotvmax=vmax+dv; 
+            plotvmin=0; plotvmax=vmax+dv; 
             ylab="B_R [code units]"
             mymap = mpl.cm.bwr
 
