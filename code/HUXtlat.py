@@ -128,7 +128,7 @@ class HUXt3d:
         return
     
     @u.quantity_input(time=u.day)
-    def plot(self, time, field='cme', lon=np.NaN*u.deg):
+    def plot(self, time, field='v', lon=np.NaN*u.deg):
         """
         Make a contour plot on polar axis of the solar wind solution at a specific time.
         :param time: Time to look up closet model time to (with an astropy.unit of time).
@@ -138,9 +138,9 @@ class HUXt3d:
         :return ax: Axes handle.
         """
         
-        if field not in ['cme', 'ambient','br_cme','br_ambient']:
-            print("Error, field must be either 'cme', 'ambient','br_cme','br_ambient'. Default to CME")
-            field = 'cme'
+        if field not in ['v', 'br','rho','cme']:
+            print("Error, field must be either v', 'br','rho','cme'. Default to v")
+            field = 'v'
          
         #get the metadata from one of the individual HUXt elements
         model=self.HUXtlat[0]
@@ -163,40 +163,30 @@ class HUXt3d:
         ymax=0.0
         for n in range(0,self.nlat):
             model=self.HUXtlat[n]
-            if field== 'cme':
-                ymin=200; ymax=610
+            if field== 'v':
+                ymin=200; ymax=810
                 ylab='Solar Wind Speed (km/s)'
-                label = 'CME Run'
-                mercut[:,n]=model.v_grid_cme[id_t, :, id_lon]
+                mercut[:,n]=model.v_grid[id_t, :, id_lon]
                 mymap = mpl.cm.viridis
-            elif field == 'ambient':
-                label = 'Ambient'
-                ylab='Solar Wind Speed (km/s)'
-                ymin=200; ymax=610
-                mercut[:,n]=model.v_grid_amb[id_t, :, id_lon]
-                mymap = mpl.cm.viridis
-            elif field == 'br_cme':
+            elif field == 'br':
                 if np.all(np.isnan(model.br_grid_cme)):
                     return -1
-                label = 'CME Run'
                 ylab='Magnetic field polarity (code units)'
-                mercut[:,n]=model.br_grid_cme[id_t, :, id_lon]
-                brmax=np.absolute(model.br_grid_cme[id_t, :, id_lon]).max()
+                mercut[:,n]=model.br_grid[id_t, :, id_lon]
+                brmax=np.absolute(model.br_grid[id_t, :, id_lon]).max()
                 if brmax>ymax:
                     ymax=brmax
                     ymin=-ymax
                 mymap = mpl.cm.bwr
-            elif field == 'br_ambient':
-                if np.all(np.isnan(model.br_grid_amb)):
+            elif field == 'rho':
+                if np.all(np.isnan(model.rhogrid)):
                     return -1
-                label = 'Ambient'
-                ylab='Magnetic field polarity (code units)'
-                mercut[:,n]=model.br_grid_amb[id_t, :, id_lon]
-                brmax=np.absolute(model.br_grid_amb[id_t, :, id_lon]).max()
-                if brmax>ymax:
-                    ymax=brmax
-                    ymin=-ymax
-                mymap = mpl.cm.bwr
+                ylab='Density (code units)'
+                mercut[:,n]=model.rho_grid[id_t, :, id_lon]
+                rhomax=np.absolute(model.rho_grid[id_t, :, id_lon]).max()
+                if rhomax>ymax:
+                    ymax=rhomax
+                    ymin=0
 
         dv=((ymax-ymin)/100.0)
         mymap.set_over('lightgrey')

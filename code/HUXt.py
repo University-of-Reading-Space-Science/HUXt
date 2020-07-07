@@ -157,8 +157,11 @@ class ConeCME:
         :return: updates the ConeCME.coords dictionary of CME coordinates.
         """
         # Owens definition of CME in HUXt:
-        diff = model.v_grid_cme - model.v_grid_amb
-        cme_bool = diff >= 20 * model.kms
+        #diff = model.v_grid_cme - model.v_grid_amb
+        #cme_bool = diff >= 20 * model.kms
+        
+        #Find the CMEs from the CME tracer field
+        cme_bool = model.CMEtracer_grid >= huxt_constants()['cmetracerthreshold']
 
         # Workflow: Loop over each CME, track CME through each time step,
         # find contours of boundary, save to dict.
@@ -225,8 +228,11 @@ class ConeCME:
         """
 
         # Owens definition of CME in HUXt:
-        diff = model.v_grid_cme - model.v_grid_amb
-        cme_bool = diff >= 20 * model.kms
+        #diff = model.v_grid_cme - model.v_grid_amb
+        #cme_bool = diff >= 20 * model.kms
+        
+        #Find the CMEs from the CME tracer field
+        cme_bool = model.CMEtracer_grid >= huxt_constants()['cmetracerthreshold']
 
         # Find index of middle longitude for centering arrays on the CMEs
         id_mid_lon = np.argmin(np.abs(model.lon - np.median(model.lon)))
@@ -348,27 +354,31 @@ class HUXt:
         time_out: Array of output model time steps (in seconds).
         twopi: two pi radians
         v_boundary: Inner boundary solar wind speed profile (in km/s).
-        v_grid_amb: Array of ambient model speed excluding ConeCMEs for each time, radius, and longitude (in km/s).
-        v_grid_cme: Array of model speed inlcuding ConeCMEs for each time, radius, and longitude (in km/s).
-        br_grid_amb: Array of ambient model Br excluding ConeCMEs for each time, radius, and longitude (in km/s).
-        br_grid_cme: Array of model Br inlcuding ConeCMEs for each time, radius, and longitude (in km/s).
         v_max: Maximum model speed (in km/s), used with the CFL condition to set the model time step. 
+        
+        v_grid: Array of model speed inlcuding ConeCMEs for each time, radius, and longitude (in km/s).
+        br_grid: Array of model Br inlcuding ConeCMEs for each time, radius, and longitude (dimensionless).
+        
     """
 
     # Decorators to check units on input arguments
     @u.quantity_input(v_boundary=(u.km / u.s))
     @u.quantity_input(simtime=u.day)
     @u.quantity_input(cr_lon_init=u.deg)
-    def __init__(self, v_boundary=np.NaN * (u.km / u.s),  br_boundary=np.NaN * u.dimensionless_unscaled,
+    def __init__(self, 
+                 v_boundary = np.NaN * (u.km / u.s),  
+                 br_boundary = np.NaN * u.dimensionless_unscaled,
+                 rho_boundary = np.NAN *u.dimensionless_unscaled,
                  cr_num=np.NaN, cr_lon_init=360.0 * u.deg, latitude = 0*u.deg,
                  r_min=30 * u.solRad, r_max=240 * u.solRad,
                  lon_out=np.NaN * u.rad, lon_start=np.NaN * u.rad, lon_stop=np.NaN * u.rad,
                  simtime=5.0 * u.day, dt_scale=1.0):
         """
-        Initialise the HUXt instance.
+        Initialise the HUXt model instance.
 
         :param v_boundary: Inner solar wind speed boundary condition. Must be an array of size 128 with units of km/s.
-        :param br_boundary: Inner passive tracer boundary condition. Must be an array of size 128 with no units
+        :param br_boundary: Inner passive tracer boundary condition used for Br. Must be an array of size 128 with no units
+        :param rho_boundary: Inner passive tracer boundary condition used for density. Must be an array of size 128 with no units
         :param cr_num: Integer Carrington rotation number. Used to determine the planetary and spacecraft positions
         :param cr_lon_init: Carrington longitude of Earth at model initialisation, in degrees.
         :param latitude: Helio latitude (from equator) of HUXt plane, in degrees
@@ -422,39 +432,46 @@ class HUXt:
         self.dt_out = time_grid_dict['dt_out']
         self.time_out = time_grid_dict['time_out']
         del time_grid_dict
+         
+        # Establish the speed boundary condition
+        if np.all(np.isnan(v_boundary)):
+            print("Warning: No V boundary conditions supplied. Using default")
+            self.v_boundary = 400 * np.ones(self.nlong) * self.kms
+        elif not np.all(np.isnan(v_boundary)):
+            assert v_boundary.size == self.nlong
+            self.v_boundary = v_boundary
+        
+        # Now establish the Br passive tracer boundary conditions
+        if np.all(np.isnan(br_boundary)):
+            print("Warning: No Br boundary conditions supplied. Using default")
+            self.br_boundary = 1.0 * np.ones(self.nlong) *  u.dimensionless_unscaled
+        elif not np.all(np.isnan(br_boundary)):
+            assert br_boundary.size == self.nlong
+            self.br_boundary = br_boundary * u.dimensionless_unscaled  
+            
+        # Now establish the rho passive tracer boundary conditions
+        if np.all(np.isnan(rho_boundary)):
+            print("Warning: No rho boundary conditions supplied. Using default")
+            #create a density map assuming constant mass flux
+            n_in = self.v_boundary.value*0.0 + 4.0
+            self.rho_boundary =n_in + ((650 - self.v_boundary.value) /400)*5.0 * u.dimensionless_unscaled 
+        elif not np.all(np.isnan(rho_boundary)):
+            assert rho_boundary.size == self.nlong
+            self.rho_boundary = rho_boundary * u.dimensionless_unscaled  
+        
+        #keep a flag to determine whether the rho enhancement by grad(v) has been performed
+        self.rho_post_processed = False
 
+        # Keep a protected version that isn't processed for use in saving/loading model runs
+        self._v_boundary_init_ = self.v_boundary.copy()
+        self._br_boundary_init_ = self.br_boundary.copy()   
+        self._rho_boundary_init_ = self.rho_boundary.copy() 
+        
         # Check cr_lon_init, make sure in 0-2pi range.
         self.cr_lon_init = cr_lon_init.to('rad')
         if (self.cr_lon_init < 0.0 * u.rad) | (self.cr_lon_init > self.twopi * u.rad):
             print("Warning: cr_lon_init={}, outside expected range. Rectifying to 0-2pi.".format(self.cr_lon_init))
-            self.cr_lon_init = _zerototwopi_(self.cr_lon_init.value) * u.rad
-
-        # Determine the boundary conditions from input v_boundary and cr_num, and cr_lon_init
-        if np.all(np.isnan(v_boundary)) & np.isnan(cr_num):
-            print("Warning: No boundary conditions supplied. Defaulting to 400 km/s boundary")
-            self.v_boundary = 400 * np.ones(self.nlong) * self.kms
-            self.cr_num = 9999 * u.dimensionless_unscaled
-        elif not np.all(np.isnan(v_boundary)):
-            assert v_boundary.size == self.nlong
-            self.v_boundary = v_boundary
-            if np.isnan(cr_num):
-                # Set dummy number for cr_num
-                self.cr_num = 9999 * u.dimensionless_unscaled
-            else:
-                self.cr_num = cr_num * u.dimensionless_unscaled       
-                
-        # Now establish the passive tracer boundary conditions
-        if np.all(np.isnan(br_boundary)):
-            print("Warning: No Br boundary conditions supplied. Using default")
-            self.br_boundary = 1.0 * np.ones(self.nlong) *  u.dimensionless_unscaled
-            #self.br_boundary[int(self.nlong/2):] = -1.0 *  u.dimensionless_unscaled
-        elif not np.all(np.isnan(br_boundary)):
-            assert br_boundary.size == self.nlong
-            self.br_boundary = br_boundary * u.dimensionless_unscaled           
-
-        # Keep a protected version that isn't processed for use in saving/loading model runs
-        self._v_boundary_init_ = self.v_boundary.copy()
-        self._br_boundary_init_ = self.br_boundary.copy()       
+            self.cr_lon_init = _zerototwopi_(self.cr_lon_init.value) * u.rad          
 
         # Rotate the boundary condition as required by cr_lon_init.
         if self.cr_lon_init != 360 * u.rad:
@@ -464,9 +481,17 @@ class HUXt:
             lon_shifted = lon_shifted[id_sort]
             v_b_shifted = self.v_boundary[id_sort]
             br_b_shifted = self.br_boundary[id_sort]
+            rho_b_shifted = self.rho_boundary[id_sort]
             self.v_boundary = np.interp(lon_boundary.value, lon_shifted, v_b_shifted, period=self.twopi)
             self.br_boundary = np.interp(lon_boundary.value, lon_shifted, br_b_shifted, period=self.twopi)
+            self.rho_boundary = np.interp(lon_boundary.value, lon_shifted, rho_b_shifted, period=self.twopi)
 
+        # Determine CR number, used for spacecraft/planetary positions
+        if np.isnan(cr_num):
+            self.cr_num = 9999 * u.dimensionless_unscaled
+        else:
+            self.cr_num = cr_num * u.dimensionless_unscaled 
+                     
         # Compute model UTC initalisation time, if using Carrington map boundary.
         if self.cr_num.value != 9999:
             cr_frac = self.cr_num.value + ((self.twopi - self.cr_lon_init.value) / self.twopi)
@@ -475,10 +500,10 @@ class HUXt:
             self.time_init = np.NaN
 
         # Preallocate space for the output for the solar wind fields for the cme and ambient solution.
-        self.v_grid_cme = np.zeros((self.nt_out, self.nr, self.nlon)) * self.kms
-        self.v_grid_amb = np.zeros((self.nt_out, self.nr, self.nlon)) * self.kms
-        self.br_grid_amb = np.zeros((self.nt_out, self.nr, self.nlon)) * u.dimensionless_unscaled
-        self.br_grid_cme = np.zeros((self.nt_out, self.nr, self.nlon)) * u.dimensionless_unscaled
+        self.v_grid = np.zeros((self.nt_out, self.nr, self.nlon)) * self.kms
+        self.br_grid = np.zeros((self.nt_out, self.nr, self.nlon)) * u.dimensionless_unscaled
+        self.rho_grid = np.zeros((self.nt_out, self.nr, self.nlon)) * u.dimensionless_unscaled
+        self.CMEtracer_grid = np.zeros((self.nt_out, self.nr, self.nlon)) * u.dimensionless_unscaled
 
         # Mesh the spatial coordinates.
         self.lon_grid, self.r_grid = np.meshgrid(self.lon, self.r)
@@ -555,21 +580,20 @@ class HUXt:
             # Interpolate the inner boundary speed to this higher resolution
             vinit = np.interp(loninit, all_lons.value, self.v_boundary.value, period=2 * np.pi)
             brinit = np.interp(loninit, all_lons.value, self.br_boundary.value, period=2 * np.pi)
+            rhoinit = np.interp(loninit, all_lons.value, self.rho_boundary.value, period=2 * np.pi)
             # convert from cr longitude to timesolve
             vinput = np.flipud(vinit)
             brinput = np.flipud(brinit)
+            rhoinput = np.flipud(rhoinit)
 
-            v_amb, v_cme, br_amb, br_cme  = solve_radial(vinput,brinput, 
-                                                                   model_time, 
-                                                                   self.rrel.value, 
-                                                                   lon_out, 
-                                                                   self.model_params, 
-                                                                   do_cme,  cme_params,
-                                                                   self.latitude.value)
-            self.v_grid_amb[:, :, i] = v_amb * self.kms
-            self.v_grid_cme[:, :, i] = v_cme * self.kms
-            self.br_grid_amb[:, :, i] = br_amb * u.dimensionless_unscaled
-            self.br_grid_cme[:, :, i] = br_cme * u.dimensionless_unscaled
+            v, br, rho, CMEtracer  = solve_radial(vinput, brinput, rhoinput,
+                                         model_time, self.rrel.value, lon_out,
+                                         self.model_params, do_cme, cme_params,
+                                         self.latitude.value)
+            self.v_grid[:, :, i] = v * self.kms
+            self.br_grid[:, :, i] = br * u.dimensionless_unscaled
+            self.rho_grid[:, :, i] = rho * u.dimensionless_unscaled
+            self.CMEtracer_grid[:, :, i] = CMEtracer * u.dimensionless_unscaled
 
         # Update CMEs positions by tracking through the solution.
         updated_cmes = []
@@ -631,7 +655,7 @@ class HUXt:
         # Loop over the attributes of model instance and save select keys/attributes.
         keys = ['cr_num', 'cr_lon_init', 'simtime', 'dt', 'v_max', 'r_accel', 'alpha',
                 'dt_scale', 'time_out', 'dt_out', 'r', 'dr', 'lon', 'dlon', 'r_grid', 'lon_grid',
-                'v_grid_cme', 'v_grid_amb', 'v_boundary', '_v_boundary_init_', 'latitude']
+                'v_grid', 'CMEtracer_grid', 'v_boundary', '_v_boundary_init_', 'latitude']
 
         for k, v in self.__dict__.items():
 
@@ -646,7 +670,7 @@ class HUXt:
                     dset.dims[1].label = 'longitude'
 
                 # Add on the dimensions of the output speed fields.
-                if k in ['v_grid_cme', 'v_grid_amb']:
+                if k in ['v_grid', 'CME_tracer_grid']:
                     dset.dims[0].label = 'time'
                     dset.dims[1].label = 'radius'
                     dset.dims[2].label = 'longitude'
@@ -694,13 +718,18 @@ class HUXt:
                             dset = timegrp.create_dataset(pos_label, data=pos_data.value)
                             dset.attrs['unit'] = pos_data.unit.to_string()
                             out_file.flush()
+                            
+        #check that the 
+        if self.rho_post_processed==False:
+            self.rho_post_process()
 
         # Loop over the attributes of model instance and save select keys/attributes.
         keys = ['cr_num', 'cr_lon_init', 'simtime', 'dt', 'v_max', 'r_accel', 'alpha',
                 'dt_scale', 'time_out', 'dt_out', 'r', 'dr', 'lon', 'dlon', 'r_grid', 'lon_grid',
-                'v_grid_cme', 'v_grid_amb', 'br_grid_cme', 'br_grid_amb',
-                'v_boundary', '_v_boundary_init_', 'latitude',
-                'br_boundary', '_br_boundary_init_']
+                'v_grid', 'rho_grid', 'br_grid', 'CMEtracer_grid', 'latitude',
+                'v_boundary', '_v_boundary_init_',
+                'br_boundary', '_br_boundary_init_',
+                'rho_boundary', '_rho_boundary_init_']
 
         for k, v in self.__dict__.items():
 
@@ -715,7 +744,7 @@ class HUXt:
                     dset.dims[1].label = 'longitude'
 
                 # Add on the dimensions of the output speed fields.
-                if k in ['v_grid_cme', 'v_grid_amb', 'br_grid_amb', 'br_grid_cme']:
+                if k in ['v_grid', 'br_grid', 'rho_grid', 'CMEtracer_grid']:
                     dset.dims[0].label = 'time'
                     dset.dims[1].label = 'radius'
                     dset.dims[2].label = 'longitude'
@@ -726,7 +755,7 @@ class HUXt:
         return out_filepath
     
     @u.quantity_input(time=u.day)
-    def plot(self, time, field='cme', save=False, tag=''):
+    def plot(self, time, field='v', save=False, tag=''):
         """
         Make a contour plot on polar axis of the solar wind solution at a specific time.
         :param time: Time to look up closet model time to (with an astropy.unit of time). 
@@ -737,9 +766,9 @@ class HUXt:
         :return ax: Axes handle.
         """
 
-        if field not in ['cme', 'ambient','br_cme','br_ambient']:
-            print("Error, field must be either 'cme', 'ambient','br_cme','br_amb'. Default to CME")
-            field = 'cme'
+        if field not in ['v', 'br','rho','cme']:
+            print("Error, field must be either v', 'br','rho','cme'. Default to v")
+            field = 'v'
 
         if (time < self.time_out.min()) | (time > (self.time_out.max())):
             print("Error, input time outside span of model times. Defaulting to closest time")
@@ -750,38 +779,47 @@ class HUXt:
         lon_arr, dlon, nlon = longitude_grid()
         lon, rad = np.meshgrid(lon_arr.value, self.r.value)
         mymap = mpl.cm.viridis
-        if field == 'cme':
-            v_sub = self.v_grid_cme.value[id_t, :, :].copy()
+        if field == 'v':
+            v_sub = self.v_grid.value[id_t, :, :].copy()
             plotvmin=200; plotvmax=810; dv=10
             ylab="Solar Wind Speed (km/s)"
-        elif field == 'ambient':
-            v_sub = self.v_grid_amb.value[id_t, :, :].copy()
-            plotvmin=200; plotvmax=810; dv=10
-            ylab="Solar Wind Speed (km/s)"
-        elif field == 'br_cme':
-            if np.all(np.isnan(self.br_grid_cme)):
+        elif field == 'br':
+            if np.all(np.isnan(self.br_grid)):
                 return -1
-            v_sub = self.br_grid_cme.value[id_t, :, :].copy()
+            v_sub = self.br_grid.value[id_t, :, :].copy()
+            vmax=np.absolute(v_sub).max()
+            dv=2*vmax/20
+            plotvmin=-vmax; 
+            plotvmax=vmax+dv; 
+            ylab="B_R [code units]"
+            mymap = mpl.cm.bwr
+        elif field == 'rho':
+            if np.all(np.isnan(self.rho_grid)):
+                return -1
+            if self.rho_post_processed == False:
+                print('Warning: Rho post-processing not completed. Run model.rho_post_process()')
+            v_sub = self.rho_grid.value[id_t, :, :].copy()
+            vmax=np.absolute(v_sub).max()
+            dv=2*vmax/20
+            plotvmin=0; plotvmax=vmax+dv; 
+            ylab="Density [code units]"
+        elif field == 'cme':
+            if np.all(np.isnan(self.CMEtracer_grid)):
+                return -1
             #flat-field the CME tracer
             #constants=huxt_constants()
             #v_sub[v_sub>=constants['cmetracerthreshold']]=1.0
             #v_sub[v_sub<constants['cmetracerthreshold']]=0.0
             #plotvmin=0.0; plotvmax=1.1; dv=0.1
             #ylab="CME tracer"
+            v_sub = self.CMEtracer_grid.value[id_t, :, :].copy()
             vmax=np.absolute(v_sub).max()
-            dv=2*vmax/20
-            plotvmin=0; 
-            plotvmax=vmax+dv; 
-            ylab="B_R [code units]"
-            mymap = mpl.cm.bwr
-        elif field == 'br_ambient':
-            if np.all(np.isnan(self.br_grid_amb)):
+            if vmax < huxt_constants()['cmetracerthreshold']:
+                print('Error: No CMEs detected')
                 return -1
-            v_sub = self.br_grid_amb.value[id_t, :, :].copy()
-            vmax=np.absolute(v_sub).max()
             dv=2*vmax/20
             plotvmin=0; plotvmax=vmax+dv; 
-            ylab="B_R [code units]"
+            ylab="CME tracer"
             mymap = mpl.cm.bwr
 
         # Insert into full array
@@ -811,11 +849,10 @@ class HUXt:
         cnt = ax.contourf(lon, rad, v, levels=levels, cmap=mymap, extend='both')
 
         # Add on CME boundaries
-        if field == 'cme':
-            cme_colors = ['r', 'c', 'm', 'y', 'deeppink', 'darkorange']
-            for j, cme in enumerate(self.cmes):
-                cid = np.mod(j, len(cme_colors))
-                ax.plot(cme.coords[id_t]['lon'], cme.coords[id_t]['r'], '-', color=cme_colors[cid], linewidth=3)
+        cme_colors = ['r', 'c', 'm', 'y', 'deeppink', 'darkorange']
+        for j, cme in enumerate(self.cmes):
+            cid = np.mod(j, len(cme_colors))
+            ax.plot(cme.coords[id_t]['lon'], cme.coords[id_t]['r'], '-', color=cme_colors[cid], linewidth=3)
 
         # Add on observers if looking at a Carrington rotation.
         if self.cr_num.value != 9999:
@@ -892,7 +929,7 @@ class HUXt:
         animation.write_videofile(filepath, fps=24, codec='libx264')
         return
 
-    def plot_radial(self, time, lon, field='cme', save=False, tag=''):
+    def plot_radial(self, time, lon, field='v', save=False, tag=''):
         """
         Plot the radial solar wind profile at model time closest to specified time.
         :param time: Time (in seconds) to find the closest model time step to.
@@ -904,9 +941,9 @@ class HUXt:
         :return: ax: Axes handle
         """
 
-        if field not in ['cme', 'ambient', 'br_ambient','br_cme','both']:
-            print("Error, field must be either 'ambient', 'cme', 'br_ambient','br_cme','both'. Default to cme")
-            field = 'cme'
+        if field not in ['v', 'br','rho','cme']:
+            print("Error, field must be either v', 'br','rho','cme'. Default to v")
+            field = 'v'
 
         if (time < self.time_out.min()) | (time > (self.time_out.max())):
             print("Error, input time outside span of model times. Defaulting to closest time")
@@ -931,50 +968,43 @@ class HUXt:
             id_lon = np.argmin(np.abs(self.lon - lon))
             lon_out = self.lon[id_lon].to(u.deg).value
 
-        if field == 'cme':
-            label = 'CME Run'
+        if field == 'v':
             ylab='Solar Wind Speed (km/s)'
-            ax.plot(self.r, self.v_grid_cme[id_t, :, id_lon], 'k-', label=label)
+            ax.plot(self.r, self.v_grid[id_t, :, id_lon], 'k-')
             ymin=200; ymax=1000
-        elif field == 'ambient':
-            label = 'Ambient'
-            ylab='Solar Wind Speed (km/s)'
-            ax.plot(self.r, self.v_grid_amb[id_t, :, id_lon], '--', color='slategrey', label=label)
-            ymin=200; ymax=1000
-        elif field == 'both':
-            label = 'Cone Run'
-            ylab='Solar Wind Speed (km/s)'
-            ax.plot(self.r, self.v_grid_cme[id_t, :, id_lon], 'k-', label=label)
-            label = 'Ambient'
-            ax.plot(self.r, self.v_grid_amb[id_t, :, id_lon], '--', color='slategrey', label=label)
-            ymin=200; ymax=1000
-        elif field == 'br_cme':
-            if np.all(np.isnan(self.br_grid_cme)):
+        elif field == 'br':
+            if np.all(np.isnan(self.br_grid)):
                 return -1
-            label = 'CME Run'
             ylab='Magnetic field polarity (code units)'
-            ax.plot(self.r, self.br_grid_cme[id_t, :, id_lon], '--', color='slategrey', label=label)
+            ax.plot(self.r, self.br_grid_cme[id_t, :, id_lon], '--', color='slategrey')
             ymax=np.absolute(self.br_grid_cme[id_t, :, id_lon]).max()
             ymin=-ymax
-        elif field == 'br_ambient':
-            if np.all(np.isnan(self.br_grid_amb)):
+        elif field == 'rho':
+            if self.rho_post_processed == False:
+                print('Warning: Rho post-processing not completed. Run model.rho_post_process()')
+            if np.all(np.isnan(self.rho_grid)):
                 return -1
-            label = 'Ambient'
-            ylab='Magnetic field polarity (code units)'
-            ax.plot(self.r, self.br_grid_amb[id_t, :, id_lon], '--', color='slategrey', label=label)
-            ymax=np.absolute(self.br_grid_amb[id_t, :, id_lon]).max()
-            ymin=-ymax
-            #plot a zero line
-            ax.plot(self.r, 0.0*self.br_grid_amb[id_t, :, id_lon], '-', color='slategrey')
+            ylab='Density (code units)'
+            ax.plot(self.r, self.rho_grid[id_t, :, id_lon], '--', color='slategrey')
+            ymax=np.absolute(self.rho_grid[id_t, :, id_lon]).max()
+            ymin=0
+        elif field == 'cme':
+            if np.all(np.isnan(self.CMEtracer_grid)):
+                return -1
+            ylab='CME tracer (code units)'
+            ax.plot(self.r, self.CMEtracer_grid[id_t, :, id_lon], '--', color='slategrey')
+            ymax=np.absolute(self.CMEtracer_grid[id_t, :, id_lon]).max()
+            ymin=0
+
 
         # Plot the CME points on if needed
-        if field in ['cme', 'both']:
-            cme_colors = ['r', 'c', 'm', 'y', 'deeppink', 'darkorange']
-            for c, cme in enumerate(self.cmes):
-                cc = np.mod(c, len(cme_colors))
-                id_r = np.int32(cme.coords[id_t]['r_pix'].value)
-                label = "CME {:02d}".format(c)
-                ax.plot(self.r[id_r], self.v_grid_cme[id_t, id_r, id_lon], '.', color=cme_colors[cc], label=label)
+        # if field in ['v', 'both']:
+        #     cme_colors = ['r', 'c', 'm', 'y', 'deeppink', 'darkorange']
+        #     for c, cme in enumerate(self.cmes):
+        #         cc = np.mod(c, len(cme_colors))
+        #         id_r = np.int32(cme.coords[id_t]['r_pix'].value)
+        #         label = "CME {:02d}".format(c)
+        #         ax.plot(self.r[id_r], self.v_grid_cme[id_t, id_r, id_lon], '.', color=cme_colors[cc], label=label)
 
         ax.set_ylim(ymin, ymax)
         ax.set_ylabel(ylab)
@@ -999,7 +1029,7 @@ class HUXt:
 
         return fig, ax
 
-    def plot_timeseries(self, radius, lon, field='cme', save=False, tag=''):
+    def plot_timeseries(self, radius, lon, field='v', save=False, tag=''):
         """
         Plot the solar wind model timeseries at model radius and longitude closest to those specified.
         :param radius: Radius to find the closest model radius to.
@@ -1011,9 +1041,9 @@ class HUXt:
         :return: ax: Axes handle
         """
 
-        if field not in ['cme', 'ambient', 'br_ambient','br_cme','both']:
-            print("Error, field must be either 'ambient', 'cme', 'br_ambient','br_cme','both'. Default to cme")
-            field = 'cme'
+        if field not in ['v', 'br','rho','cme']:
+            print("Error, field must be either v', 'br','rho','cme'. Default to v")
+            field = 'v'
 
         if (radius < self.r.min()) | (radius > (self.r.max())):
             print("Error, specified radius outside of model radial grid")
@@ -1036,37 +1066,34 @@ class HUXt:
             lon_out = self.lon[id_lon].value
 
         t_day = self.time_out.to(u.day)
-        if field == 'cme':
-            label = 'CME Run'
-            ax.plot(t_day, self.v_grid_cme[:, id_r, id_lon], 'k-', label=label)
+        if field == 'v':
+            ax.plot(t_day, self.v_grid[:, id_r, id_lon], 'k-')
             ylab='Solar Wind Speed (km/s)'
             ymin=200; ymax=1000
-        elif field == 'ambient':
-            label = 'Ambient'
-            ax.plot(t_day, self.v_grid_amb[:, id_r, id_lon], '--', color='slategrey', label=label)
-            ylab='Solar Wind Speed (km/s)'
-            ymin=200; ymax=1000
-        elif field == 'both':
-            label = 'Cone Run'
-            ax.plot(t_day, self.v_grid_cme[:, id_r, id_lon], 'k-', label=label)
-            label = 'Ambient'
-            ax.plot(t_day, self.v_grid_amb[:, id_r, id_lon], '--', color='slategrey', label=label)
-            ylab='Solar Wind Speed (km/s)'
-            ymin=200; ymax=1000
-        elif field == 'br_cme':
-            label = 'CME Run'
+        elif field == 'br':
+            if np.all(np.isnan(self.br_grid)):
+                return -1
             ylab='Magnetic field polarity (code units)'
-            ax.plot(t_day, self.br_grid_cme[:, id_r, id_lon], 'k-', label=label)
-            ymax=np.absolute(self.br_grid_cme[:, id_r, id_lon]).max()
+            ax.plot(t_day, self.br_grid[:, id_r, id_lon], 'k-')
+            ymax=np.absolute(self.br_grid[:, id_r, id_lon]).max()
             ymin=-ymax
-        elif field == 'br_ambient':
-            label = 'Ambient'
-            ylab='Magnetic field polarity (code units)'
-            ax.plot(t_day, self.br_grid_amb[:, id_r, id_lon], '--', color='slategrey', label=label)
-            ymax=np.absolute(self.br_grid_amb[:, id_r, id_lon]).max()
-            ymin=-ymax
-            #plot a zero line
-            ax.plot(t_day, 0.0*self.br_grid_amb[:, id_r, id_lon], '-', color='slategrey')
+        elif field == 'rho':
+            if np.all(np.isnan(self.rho_grid)):
+                return -1
+            if self.rho_post_processed == False:
+                print('Warning: Rho post-processing not completed. Run model.rho_post_process()')
+            ylab='Density (code units)'
+            ax.plot(t_day, self.rho_grid[:, id_r, id_lon], '--', color='slategrey')
+            ymax=np.absolute(self.rho_grid[:, id_r, id_lon]).max()
+            ymin=0
+        elif field == 'cme':
+            if np.all(np.isnan(self.CMEtracer_grid)):
+                return -1
+            ylab='CME tracer '
+            ax.plot(t_day, self.CMEtracer_grid[:, id_r, id_lon], '--', color='slategrey')
+            ymax=np.absolute(self.CMEtracer_grid[:, id_r, id_lon]).max()
+            ymin=0
+
 
         ax.set_ylim(ymin, ymax)
         ax.set_ylabel(ylab)
@@ -1101,6 +1128,42 @@ class HUXt:
         times = self.time_init + self.time_out
         obs = Observer(body, times)
         return obs
+    
+    
+    
+    def rho_post_process(self):
+        """
+        A function to post-process the density field to account for compression 
+        and rarefaction, and introduce the 1/r^2 fall off.
+
+        """
+        
+        #check that the density post processing hasn't already been performed
+        if self.rho_post_processed:
+            print('Density has already been post processed')
+            return -1
+        
+        #loop through each time step and change the density based upon the speed gradient
+        for nt in range(0,self.nt_out):
+            for nlong in range(self.lon.size):
+                vup=self.v_grid[nt,1:,nlong]
+                vdown=self.v_grid[nt,:-1,nlong]
+                vgrad=(vdown-vup).value
+                #modify the density according to the speed gradient
+                nr=self.rho_grid[nt,:,nlong]
+                nr[1:]=nr[1:] + nr[1:] * vgrad * huxt_constants()['rho_compression_factor']
+                nr[nr<1.0]=1.0
+                
+                #add soem smoothing
+                nr = binomial_filter(nr,[1,2,3,4,3,2,1])
+                
+                #introduce the 1/r^2 factor
+                nr=215*215*nr/(self.r*self.r)
+                self.rho_grid[nt,:,nlong]=nr.value
+        
+        self.rho_post_processed = True
+        return 1
+        
 
 
 def huxt_constants():
@@ -1114,15 +1177,16 @@ def huxt_constants():
     r_accel = 50 * u.solRad  # Spatial scale parameter for residual SW acceleration
     synodic_period = 27.2753 * daysec  # Solar Synodic rotation period from Earth.
     v_max = 2000 * kms
-    dr = 1.5 * u.solRad  # Radial grid step. With v_max, this sets the model time step.
+    dr = 1 * u.solRad  # Radial grid step. With v_max, this sets the model time step.
     cmetracerthreshold=0.02 # Threshold of CME tracer field to use for CME identification
-    nlong=128  #number of longitude bins for a full longitude grid 
+    nlong=360  #number of longitude bins for a full longitude grid 
     nlat=45    #number of ltitude bins for a full ltitude grid
+    rho_compression_factor = 0.1 #comprsssion/expansion factor for density post processing
     
     constants = {'twopi': twopi, 'daysec': daysec, 'kms': kms, 'alpha': alpha,
                  'r_accel': r_accel, 'synodic_period': synodic_period, 'v_max': v_max,
                  'dr': dr, 'cmetracerthreshold' : cmetracerthreshold,
-                 'nlong' : nlong, 'nlat' : nlat}
+                 'nlong' : nlong, 'nlat' : nlat, 'rho_compression_factor' : rho_compression_factor}
     return constants
 
 
@@ -1295,7 +1359,8 @@ def _zerototwopi_(angles):
 
 
 @jit(nopython=True)
-def solve_radial(vinput, brinput, model_time, rrel, lon, params, do_cme, cme_params,latitude):
+def solve_radial(vinput, brinput, rhoinput, model_time, rrel, lon, params, 
+                 do_cme, cme_params,latitude):
     """
     Solve the radial profile as a function of time (including spinup), and return radial profile at specified
     output timesteps.
@@ -1326,11 +1391,10 @@ def solve_radial(vinput, brinput, model_time, rrel, lon, params, do_cme, cme_par
 
 
     # Preallocate space for solutions
-    v_grid_amb = np.zeros((nt_out, nr))
-    v_grid_cme = np.zeros((nt_out, nr))
-    
-    br_grid_amb = np.zeros((nt_out, nr))
-    br_grid_cme = np.zeros((nt_out, nr))
+    v_grid = np.zeros((nt_out, nr))    
+    br_grid = np.zeros((nt_out, nr))
+    rho_grid = np.zeros((nt_out, nr))
+    CMEtracer_grid = np.zeros((nt_out, nr))
 
     iter_count = 0
     t_out = 0
@@ -1340,16 +1404,16 @@ def solve_radial(vinput, brinput, model_time, rrel, lon, params, do_cme, cme_par
         # Get the initial condition, which will update in the loop,
         # and snapshots saved to output at right steps.
         if t == 0:
-            v_cme = np.ones(nr) * 400
-            v_amb = np.ones(nr) * 400
-            br_cme = np.ones(nr) * 0.0
-            br_amb = np.ones(nr) * 0.0
+            v = np.ones(nr) * 400
+            br = np.ones(nr) * 0.0
+            rho = np.ones(nr) * 8.0
+            CMEtracer = np.ones(nr) * 0.0
 
         # Update the inner boundary conditions
-        v_amb[0] = vinput[t]
-        v_cme[0] = vinput[t]
-        br_amb[0] = brinput[t]
-        br_cme[0] = brinput[t]
+        v[0] = vinput[t]
+        br[0] = brinput[t]
+        rho[0] = rhoinput[t]
+        CMEtracer[0] = 0.0
 
         # Compute boundary speed of each CME at this time. 
         # Set boundary to the maximum CME speed at this time.
@@ -1357,56 +1421,57 @@ def solve_radial(vinput, brinput, model_time, rrel, lon, params, do_cme, cme_par
             if do_cme == 1:
                 n_cme = cme_params.shape[0]
                 v_update_cme = np.zeros(n_cme)*np.nan
-                #ptracer_update_cme = np.zeros(n_cme)
+                #CMEtracer_update = np.zeros(n_cme)
                 for i in range(n_cme):
                     cme = cme_params[i, :]
                     #check if this point is within the cone CME
                     if _is_in_cme_boundary_(r_boundary, lon, latitude, time, cme):                
                         v_update_cme[i] = cme[4]
-                        #ptracer_update_cme[i] = 1.0 #the CME number
+                        #CMEtracer_update[i] = 1.0 #the CME number
                         
                 #see if there are any CMEs
                 if not np.all(np.isnan(v_update_cme)):
-                    v_cme[0] = np.nanmax(v_update_cme)
-                    br_cme[0] = 0.0
+                    v[0] = np.nanmax(v_update_cme)
+                    CMEtracer[0] = 1.0
+                    br[0] = 0.0
+                    rho[0] = 1.0
                
 
         # update cone cme v(r) for the given longitude
         # =====================================
-        u_up = v_cme[1:].copy()
-        u_dn = v_cme[:-1].copy()
-        br_up = br_cme[1:].copy()
-        br_dn = br_cme[:-1].copy() 
-        u_up_next, br_up_next = _upwind_step_ptracer_(u_up, u_dn, 
-                                                   br_up, br_dn,
+        u_up = v[1:].copy()
+        u_dn = v[:-1].copy()
+        br_up = br[1:].copy()
+        br_dn = br[:-1].copy() 
+        rho_up = rho[1:].copy()
+        rho_dn = rho[:-1].copy() 
+        CMEtracer_up = CMEtracer[1:].copy()
+        CMEtracer_dn = CMEtracer[:-1].copy() 
+        u_up_next, br_up_next, rho_up_next, CMEtracer_up_next = _upwind_step_ptracers_(u_up, u_dn, 
+                                                   br_up, br_dn, rho_up, rho_dn,
+                                                   CMEtracer_up, CMEtracer_dn,
                                                    dtdr, alpha, r_accel, rrel)
         # Save the updated time step
-        v_cme[1:] = u_up_next.copy()
-        br_cme[1:] = br_up_next.copy()
+        v[1:] = u_up_next.copy()
+        br[1:] = br_up_next.copy()
+        rho[1:] = rho_up_next.copy()
+        CMEtracer[1:] = CMEtracer_up_next.copy()
 
-        u_up = v_amb[1:].copy()
-        u_dn = v_amb[:-1].copy()
-        br_up = br_amb[1:].copy()
-        br_dn = br_amb[:-1].copy()
-        u_up_next, br_up_next = _upwind_step_ptracer_(u_up, u_dn, 
-                                                   br_up, br_dn,
-                                                   dtdr, alpha, r_accel, rrel)   # Save the updated time step
-        v_amb[1:] = u_up_next.copy()
-        br_amb[1:] = br_up_next.copy()
 
         # Save this frame to output if output
         if time >= 0:
             iter_count = iter_count + 1
             if iter_count == dt_scale:
                 if t_out <= nt_out - 1:
-                    v_grid_amb[t_out, :] = v_amb.copy()
-                    v_grid_cme[t_out, :] = v_cme.copy()
-                    br_grid_amb[t_out, :] = br_amb.copy()
-                    br_grid_cme[t_out, :] = br_cme.copy()
+                    v_grid[t_out, :] = v.copy()
+                    br_grid[t_out, :] = br.copy()
+                    rho_grid[t_out, :] = rho.copy()
+                    CMEtracer_grid[t_out, :] = CMEtracer.copy()
+                    
                     t_out = t_out + 1
                     iter_count = 0
 
-    return v_grid_amb, v_grid_cme, br_grid_amb, br_grid_cme
+    return v_grid, br_grid, rho_grid, CMEtracer_grid
 
 @jit(nopython=True)
 def _upwind_step_(v_up, v_dn, dtdr, alpha, r_accel, rrel):
@@ -1437,7 +1502,8 @@ def _upwind_step_(v_up, v_dn, dtdr, alpha, r_accel, rrel):
 
 
 @jit(nopython=True)
-def _upwind_step_ptracer_(v_up, v_dn, ptracer_up, ptracer_dn, dtdr, alpha, r_accel, rrel):
+def _upwind_step_ptracers_(v_up, v_dn, br_up, br_dn, rho_up, rho_dn,
+                           CMEtracer_up, CMEtracer_dn, dtdr, alpha, r_accel, rrel):
     """
     Compute the next step in the upwind scheme of Burgers equation with added acceleration of the solar wind.
     :param v_up: A numpy array of the upwind radial values. Units of km/s.
@@ -1465,10 +1531,12 @@ def _upwind_step_ptracer_(v_up, v_dn, ptracer_up, ptracer_dn, dtdr, alpha, r_acc
     v_up_next = v_up_next + (v_dn * dtdr * v_diff)
     
     
-    #now advect the passive tracer
-    ptracer_up_next = ptracer_up - dtdr * v_up * (ptracer_up - ptracer_dn)
+    #now advect the passive tracers
+    br_up_next = br_up - dtdr * v_up * (br_up - br_dn)
+    rho_up_next = rho_up - dtdr * v_up * (rho_up - rho_dn)
+    CMEtracer_up_next = CMEtracer_up - dtdr * v_up * (CMEtracer_up - CMEtracer_dn)
     
-    return v_up_next, ptracer_up_next
+    return v_up_next, br_up_next, rho_up_next, CMEtracer_up_next
 
 @jit(nopython=True)
 def _is_in_cme_boundary_(r_boundary, lon, lat, time, cme_params):
@@ -1561,27 +1629,40 @@ def load_HUXt_run(filepath):
             br_boundary = data['_br_boundary_init_'][()] * u.Unit(data['_br_boundary_init_'].attrs['unit'])
         else:
             br_boundary = v_boundary * np.nan
+        if '_rho_boundary_init_' in data.keys():
+            rho_boundary = data['_rho_boundary_init_'][()] * u.Unit(data['_rho_boundary_init_'].attrs['unit'])
+        else:
+            rho_boundary = v_boundary * np.nan
+
 
         if nlon == 1:
-            model = HUXt(v_boundary=v_boundary, br_boundary=br_boundary, cr_num=cr_num,
+            model = HUXt(v_boundary=v_boundary, br_boundary=br_boundary, rho_boundary=rho_boundary, cr_num=cr_num,
                          cr_lon_init=cr_lon_init, r_min=r.min(), r_max=r.max(),
                          lon_out=lon, simtime=simtime, dt_scale=dt_scale, latitude=lat)
         elif nlon > 1:
-            model = HUXt(v_boundary=v_boundary, br_boundary=br_boundary, cr_num=cr_num,
+            model = HUXt(v_boundary=v_boundary, br_boundary=br_boundary, rho_boundary=rho_boundary, cr_num=cr_num,
                          cr_lon_init=cr_lon_init, r_min=r.min(), r_max=r.max(),
                          lon_start=lon.min(), lon_stop=lon.max(), simtime=simtime, 
                          dt_scale=dt_scale, latitude=lat)
+        
 
-        model.v_grid_cme[:, :, :] = data['v_grid_cme'][()] * u.Unit(data['v_boundary'].attrs['unit'])
-        model.v_grid_amb[:, :, :] = data['v_grid_amb'][()] * u.Unit(data['v_boundary'].attrs['unit'])
+        model.v_grid[:, :, :] = data['v_grid'][()] * u.Unit(data['v_boundary'].attrs['unit'])
         #check if br data was saved
-        if 'br_grid_amb' in data.keys():
-            model.br_grid_cme[:, :, :] = data['br_grid_cme'][()] * u.Unit(data['br_boundary'].attrs['unit'])
-            model.br_grid_amb[:, :, :] = data['br_grid_amb'][()] * u.Unit(data['br_boundary'].attrs['unit'])
+        if 'br_grid' in data.keys():
+            model.br_grid[:, :, :] = data['br_grid'][()] * u.Unit(data['br_boundary'].attrs['unit'])
         else:
             print('No Br data, creating empty fields')
-            model.br_grid_cme[:, :, :] = data['v_grid_cme'][()] * np.nan
-            model.br_grid_amb[:, :, :] = data['v_grid_cme'][()] * np.nan
+            model.br_grid[:, :, :] = data['v_grid'][()] * np.nan
+        #check if rho data was saved
+        if 'rho_grid' in data.keys():
+            model.rho_grid[:, :, :] = data['rho_grid'][()] * u.Unit(data['rho_boundary'].attrs['unit'])
+            #set the post-processing flag
+            model.rho_post_processed = True
+        else:
+            print('No rho data, creating empty fields')
+            model.rho_grid[:, :, :] = data['v_grid'][()] * np.nan
+
+
 
         # Create list of the ConeCMEs
         cme_list = []
@@ -1626,3 +1707,40 @@ def load_HUXt_run(filepath):
     return model, cme_list
 
 
+
+def binomial_filter(series, weights=np.nan):
+    
+    if np.all(np.isnan(weights)):
+        weights = [  1,   2,  3,  4,  3, 2,   1] 
+    
+    
+    nweights=len(weights)
+    nbuffer=int((nweights -1)/2)
+    L=len(series)
+    
+    #create a list of the terms that produce teh filter
+    terms=[]
+    for n in range(0,nweights):
+        terms.append(series[n:L-nweights+n+1])
+    
+    #multiple each term by the weighting    
+    series_binomial=series*0.0
+    for n in range(0,nweights):
+        series_binomial[nbuffer:-nbuffer]= (series_binomial[nbuffer:-nbuffer] +
+                                            terms[n] * weights[n])
+    #re-normalise
+    series_binomial=series_binomial/np.sum(weights)
+    
+    #edge effects - not fully implemented here!
+    series_binomial[:nbuffer]=series[:nbuffer]
+    series_binomial[-nbuffer:]=series[-nbuffer:]
+
+    # for n in range(0,nbuffer-1):
+    #     series_binomial[n]=0.0
+    #     for i in range(0,n)
+    #         series_binomial[n]=series_binomial[n] + series []
+
+
+    #plt.plot(series)
+    #plt.plot(series_binomial)    
+    return series_binomial
