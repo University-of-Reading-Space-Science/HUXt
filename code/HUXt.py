@@ -1156,6 +1156,10 @@ def huxt_constants():
     """
     Return some constants used in all HUXt model classes
     """
+    nlong=360  #number of longitude bins for a full longitude grid 
+    dr = 1 * u.solRad  # Radial grid step. With v_max, this sets the model time step.
+    nlat=45    #number of ltitude bins for a full ltitude grid
+    
     twopi = 2.0 * np.pi
     daysec = 24 * 60 * 60 * u.s
     kms = u.km / u.s
@@ -1163,13 +1167,9 @@ def huxt_constants():
     r_accel = 50 * u.solRad  # Spatial scale parameter for residual SW acceleration
     synodic_period = 27.2753 * daysec  # Solar Synodic rotation period from Earth.
     v_max = 2000 * kms
-    dr = 1 * u.solRad  # Radial grid step. With v_max, this sets the model time step.
     cmetracerthreshold=0.02 # Threshold of CME tracer field to use for CME identification
-    nlong=360  #number of longitude bins for a full longitude grid 
-    nlat=45    #number of ltitude bins for a full ltitude grid
     rho_compression_factor = 0.2 #comprsssion/expansion factor for density post processing
     CMEdensity = -1 # -1 for ambient density
-    
     constants = {'twopi': twopi, 'daysec': daysec, 'kms': kms, 'alpha': alpha,
                  'r_accel': r_accel, 'synodic_period': synodic_period, 'v_max': v_max,
                  'dr': dr, 'cmetracerthreshold' : cmetracerthreshold,
@@ -1700,9 +1700,6 @@ def load_HUXt_run(filepath):
     return model, cme_list
 
 
-
-
-
 @jit(nopython=True)
 def stream_interactions(v_grid, rho_grid, nt_out, lon, r, rho_compression_factor):
     """
@@ -1710,7 +1707,6 @@ def stream_interactions(v_grid, rho_grid, nt_out, lon, r, rho_compression_factor
     is called by rho_post_processing and is a stand alone function to allow
     numba JIT complition.
     """
-    
        
     def binomial_filter(series, weights=[]):
         """
