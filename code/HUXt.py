@@ -147,7 +147,7 @@ class ConeCME:
         """
         cme_parameters = [self.t_launch.to('s').value, self.longitude.to('rad').value, self.latitude.to('rad').value,
                           self.width.to('rad').value, self.v.value, self.initial_height.to('km').value,
-                          self.radius.to('km').value, self.thickness.to('km').value]
+                          self.radius.to('km').value, self.thickness.to('km').value, huxt_constants()['CMEdensity']]
         return cme_parameters
 
     def _track_1d_(self, model):
@@ -549,7 +549,7 @@ class HUXt:
             do_cme = 1
         else:
             do_cme = 0
-            cme_params = np.NaN * np.zeros((1, 8))
+            cme_params = np.NaN * np.zeros((1, 9))
 
         buffersteps = np.fix(self.buffertime.to(u.s) / self.dt)
         buffertime = buffersteps * self.dt
@@ -1143,24 +1143,10 @@ class HUXt:
             print('Density has already been post processed')
             return -1
         
-        #loop through each time step and change the density based upon the speed gradient
-        for nt in range(0,self.nt_out):
-            for nlong in range(self.lon.size):
-                vup=self.v_grid[nt,1:,nlong]
-                vdown=self.v_grid[nt,:-1,nlong]
-                vgrad=(vdown-vup).value
-                #modify the density according to the speed gradient
-                nr=self.rho_grid[nt,:,nlong]
-                nr[1:]=nr[1:] + nr[1:] * vgrad * huxt_constants()['rho_compression_factor']
-                nr[nr<1.0]=1.0
-                
-                #add soem smoothing
-                nr = binomial_filter(nr,[1,2,3,4,3,2,1])
-                
-                #introduce the 1/r^2 factor
-                nr=215*215*nr/(self.r*self.r)
-                self.rho_grid[nt,:,nlong]=nr.value
-        
+        rho_compression_factor=huxt_constants()['rho_compression_factor']
+        self.rho_grid = stream_interactions(self.v_grid.value, self.rho_grid, self.nt_out, 
+                                            self.lon.value, self.r.value, 
+                                            rho_compression_factor)
         self.rho_post_processed = True
         return 1
         
@@ -1181,12 +1167,16 @@ def huxt_constants():
     cmetracerthreshold=0.02 # Threshold of CME tracer field to use for CME identification
     nlong=360  #number of longitude bins for a full longitude grid 
     nlat=45    #number of ltitude bins for a full ltitude grid
-    rho_compression_factor = 0.1 #comprsssion/expansion factor for density post processing
+    rho_compression_factor = 0.2 #comprsssion/expansion factor for density post processing
+    CMEdensity = -1 # -1 for ambient density
     
     constants = {'twopi': twopi, 'daysec': daysec, 'kms': kms, 'alpha': alpha,
                  'r_accel': r_accel, 'synodic_period': synodic_period, 'v_max': v_max,
                  'dr': dr, 'cmetracerthreshold' : cmetracerthreshold,
-                 'nlong' : nlong, 'nlat' : nlat, 'rho_compression_factor' : rho_compression_factor}
+                 'nlong' : nlong, 'nlat' : nlat, 
+                 'rho_compression_factor' : rho_compression_factor,
+                 'CMEdensity' : CMEdensity}
+            
     return constants
 
 
@@ -1434,7 +1424,10 @@ def solve_radial(vinput, brinput, rhoinput, model_time, rrel, lon, params,
                     v[0] = np.nanmax(v_update_cme)
                     CMEtracer[0] = 1.0
                     br[0] = 0.0
-                    rho[0] = 1.0
+                    if cme[8] < 0 :
+                        rho[0] = rho[0]
+                    else:
+                        rho[0] = cme[8]
                
 
         # update cone cme v(r) for the given longitude
@@ -1708,39 +1701,80 @@ def load_HUXt_run(filepath):
 
 
 
-def binomial_filter(series, weights=np.nan):
-    
-    if np.all(np.isnan(weights)):
-        weights = [  1,   2,  3,  4,  3, 2,   1] 
-    
-    
-    nweights=len(weights)
-    nbuffer=int((nweights -1)/2)
-    L=len(series)
-    
-    #create a list of the terms that produce teh filter
-    terms=[]
-    for n in range(0,nweights):
-        terms.append(series[n:L-nweights+n+1])
-    
-    #multiple each term by the weighting    
-    series_binomial=series*0.0
-    for n in range(0,nweights):
-        series_binomial[nbuffer:-nbuffer]= (series_binomial[nbuffer:-nbuffer] +
-                                            terms[n] * weights[n])
-    #re-normalise
-    series_binomial=series_binomial/np.sum(weights)
-    
-    #edge effects - not fully implemented here!
-    series_binomial[:nbuffer]=series[:nbuffer]
-    series_binomial[-nbuffer:]=series[-nbuffer:]
-
-    # for n in range(0,nbuffer-1):
-    #     series_binomial[n]=0.0
-    #     for i in range(0,n)
-    #         series_binomial[n]=series_binomial[n] + series []
 
 
-    #plt.plot(series)
-    #plt.plot(series_binomial)    
-    return series_binomial
+@jit(nopython=True)
+def stream_interactions(v_grid, rho_grid, nt_out, lon, r, rho_compression_factor):
+    """
+    The function for introducing density enhancement and 1/r^2 scaling. This
+    is called by rho_post_processing and is a stand alone function to allow
+    numba JIT complition.
+    """
+    
+       
+    def binomial_filter(series, weights=[]):
+        """
+        A function for smoothing using a weighted filter
+
+        """
+        
+        if not weights:
+            weights = [1,  4,  6,  4,  1] 
+        
+        #np.sum seems to cause numba problems.
+        totalweight=0
+        for i in range(0,len(weights)):
+            totalweight = totalweight + weights[i]
+        
+        nweights=len(weights)
+        nbuffer=int((nweights -1)/2)
+        L=len(series)
+        
+        #create a list of the terms that produce teh filter
+        terms=[]
+        for n in range(0,nweights):
+            terms.append(series[n:L-nweights+n+1])
+        
+        #multiple each term by the weighting    
+        series_binomial=series*0.0
+        for n in range(0,nweights):
+            series_binomial[nbuffer:-nbuffer]= (series_binomial[nbuffer:-nbuffer] +
+                                                terms[n] * weights[n])
+        #re-normalise
+        series_binomial=series_binomial/totalweight
+        
+        #edge effects - not fully implemented here!
+        series_binomial[:nbuffer]=series[:nbuffer]
+        series_binomial[-nbuffer:]=series[-nbuffer:]
+    
+        # for n in range(0,nbuffer-1):
+        #     series_binomial[n]=0.0
+        #     for i in range(0,n)
+        #         series_binomial[n]=series_binomial[n] + series []
+    
+        #plt.plot(series)
+        #plt.plot(series_binomial)    
+        return series_binomial
+    
+    #loop through each time step and change the density based upon the speed gradient
+    for nt in range(0,nt_out):
+        for nlong in range(lon.size):
+            vup=v_grid[nt,1:,nlong]
+            vdown=v_grid[nt,:-1,nlong]
+            
+            vgrad=np.zeros(len(vup))
+            vgrad=vdown-vup
+            #modify the density according to the speed gradient
+            nr=rho_grid[nt,:,nlong]
+            nr[1:]=nr[1:] + nr[1:] * vgrad * rho_compression_factor
+            nr[nr<1.0]=1.0
+            
+            #add soem smoothing
+            nr = binomial_filter(nr,[1,3,4,5,4,3,1])
+            
+            #introduce the 1/r^2 factor
+            nr=(215-r[0])*(215-r[0])*nr/(r*r)
+            rho_grid[nt,:,nlong]=nr
+    
+    
+    return rho_grid
