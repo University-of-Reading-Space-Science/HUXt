@@ -902,9 +902,9 @@ class HUXt:
         :param tag: String to append to the filename of the animation.
         """
 
-        if field not in ['cme', 'ambient','br_cme','br_ambient']:
-            print("Error, field must be either 'cme', 'ambient','br_cme','br_amb'. Default to CME")
-            field = 'cme'
+        if field not in ['v', 'br','rho','cme']:
+            print("Error, field must be either v', 'br','rho','cme'. Default to v")
+            field = 'v'
 
         # Set the duration of the movie
         # Scaled so a 5 day simulation with dt_scale=4 is a 10 second movie.
@@ -976,8 +976,8 @@ class HUXt:
             if np.all(np.isnan(self.br_grid)):
                 return -1
             ylab='Magnetic field polarity (code units)'
-            ax.plot(self.r, self.br_grid_cme[id_t, :, id_lon], '--', color='slategrey')
-            ymax=np.absolute(self.br_grid_cme[id_t, :, id_lon]).max()
+            ax.plot(self.r, self.br_grid[id_t, :, id_lon], '--', color='slategrey')
+            ymax=np.absolute(self.br_grid[id_t, :, id_lon]).max()
             ymin=-ymax
         elif field == 'rho':
             if self.rho_post_processed == False:
@@ -1145,7 +1145,7 @@ class HUXt:
         
         rho_compression_factor=huxt_constants()['rho_compression_factor']
         self.rho_grid = stream_interactions(self.v_grid.value, self.rho_grid, self.nt_out, 
-                                            self.lon.value, self.r.value, 
+                                            self.lon.size, self.r.value, 
                                             rho_compression_factor)
         self.rho_post_processed = True
         return 1
@@ -1156,8 +1156,8 @@ def huxt_constants():
     """
     Return some constants used in all HUXt model classes
     """
-    nlong=360  #number of longitude bins for a full longitude grid 
-    dr = 1 * u.solRad  # Radial grid step. With v_max, this sets the model time step.
+    nlong=128  #number of longitude bins for a full longitude grid 
+    dr = 1.5 * u.solRad  # Radial grid step. With v_max, this sets the model time step.
     nlat=45    #number of ltitude bins for a full ltitude grid
     
     twopi = 2.0 * np.pi
@@ -1701,7 +1701,7 @@ def load_HUXt_run(filepath):
 
 
 @jit(nopython=True)
-def stream_interactions(v_grid, rho_grid, nt_out, lon, r, rho_compression_factor):
+def stream_interactions(v_grid, rho_grid, nt_out, Nlon, r, rho_compression_factor):
     """
     The function for introducing density enhancement and 1/r^2 scaling. This
     is called by rho_post_processing and is a stand alone function to allow
@@ -1754,7 +1754,7 @@ def stream_interactions(v_grid, rho_grid, nt_out, lon, r, rho_compression_factor
     
     #loop through each time step and change the density based upon the speed gradient
     for nt in range(0,nt_out):
-        for nlong in range(lon.size):
+        for nlong in range(0,Nlon):
             vup=v_grid[nt,1:,nlong]
             vdown=v_grid[nt,:-1,nlong]
             

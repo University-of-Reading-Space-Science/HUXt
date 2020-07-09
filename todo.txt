@@ -1,6 +1,6 @@
 HUXt todo:
 
-- Modify load/save to save disc space: Ignore tracer field if no Br was specified. Ignore CME tracer and CME fields if there's no CME
+- Add CME boundary tracing to Lat slice
 - Add HCS identification
 
 
