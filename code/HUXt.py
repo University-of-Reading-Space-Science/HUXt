@@ -161,7 +161,8 @@ class ConeCME:
         #cme_bool = diff >= 20 * model.kms
         
         #Find the CMEs from the CME tracer field
-        cme_bool = model.CMEtracer_grid >= huxt_constants()['cmetracerthreshold']
+        #cme_bool = model.CMEtracer_grid >= huxt_constants()['cmetracerthreshold']
+        cme_bool=CMEbool(model.CMEtracer_grid,model.nt_out,model.nlon, huxt_constants()['cmetracerthreshold'])
 
         # Workflow: Loop over each CME, track CME through each time step,
         # find contours of boundary, save to dict.
@@ -232,7 +233,8 @@ class ConeCME:
         #cme_bool = diff >= 20 * model.kms
         
         #Find the CMEs from the CME tracer field
-        cme_bool = model.CMEtracer_grid >= huxt_constants()['cmetracerthreshold']
+        #cme_bool = model.CMEtracer_grid >= huxt_constants()['cmetracerthreshold']
+        cme_bool=CMEbool(model.CMEtracer_grid, model.nt_out, model.nlon,huxt_constants()['cmetracerthreshold'])
 
         # Find index of middle longitude for centering arrays on the CMEs
         id_mid_lon = np.argmin(np.abs(model.lon - np.median(model.lon)))
@@ -1018,7 +1020,7 @@ class HUXt:
         lon_label = " Lon: {:3.2f}$^\circ$".format(lon_out)
         label = "HUXt" + time_label + lon_label
         ax.set_title(label, fontsize=20)
-        ax.legend(loc=1)
+        #ax.legend(loc=1)
         if save:
             cr_num = np.int32(self.cr_num.value)
             lon_tag = "{}deg".format(lon.to(u.deg).value)
@@ -1089,7 +1091,7 @@ class HUXt:
         elif field == 'cme':
             if np.all(np.isnan(self.CMEtracer_grid)):
                 return -1
-            ylab='CME tracer '
+            ylab='CME tracer (code units)'
             ax.plot(t_day, self.CMEtracer_grid[:, id_r, id_lon], '--', color='slategrey')
             ymax=np.absolute(self.CMEtracer_grid[:, id_r, id_lon]).max()
             ymin=0
@@ -1107,7 +1109,7 @@ class HUXt:
         lon_label = " Longitude: {:3.2f}".format(lon_out) + "$^\circ$"
         label = "HUXt" + radius_label + lon_label
         ax.set_title(label, fontsize=20)
-        ax.legend(loc=1)
+        #ax.legend(loc=1)
         if save:
             cr_num = np.int32(self.cr_num.value)
             r_tag = np.int32(r_out)
@@ -1168,7 +1170,7 @@ def huxt_constants():
     synodic_period = 27.2753 * daysec  # Solar Synodic rotation period from Earth.
     v_max = 2000 * kms
     cmetracerthreshold=0.02 # Threshold of CME tracer field to use for CME identification
-    rho_compression_factor = 0.2 #comprsssion/expansion factor for density post processing
+    rho_compression_factor = 0.01 #comprsssion/expansion factor for density post processing
     CMEdensity = -1 # -1 for ambient density
     constants = {'twopi': twopi, 'daysec': daysec, 'kms': kms, 'alpha': alpha,
                  'r_accel': r_accel, 'synodic_period': synodic_period, 'v_max': v_max,
@@ -1774,3 +1776,31 @@ def stream_interactions(v_grid, rho_grid, nt_out, Nlon, r, rho_compression_facto
     
     
     return rho_grid
+
+
+
+
+
+@jit(nopython=True)
+def CMEbool(tracer,nt,nlon,cmethresh):
+    #a function to create a CME/no-CME mask to the CMEtracer_grid array.
+    #uses the FWHM along each radial cut as the criterion
+    
+    cmebool=np.ones(tracer.shape)*0
+    for t in range(0,nt):
+        for l in range(0,nlon):
+            rslice=tracer[t,:,l]
+            boolslice=cmebool[t,:,l]
+            
+            #find the number of CMEs along a slice by looking at the gradient of the passive tracer
+            #dup=rslice[:-2]-rslice[2:]
+            #ddown=rslice[1:]-rslice[]
+            
+
+            #find the maximum tracer value along a given radial line
+            pmax=rslice.max()
+            if pmax > cmethresh:
+                #set everything over 0.5 of the pmax to be in a CME
+                boolslice[rslice>pmax/2.0]=1
+                cmebool[t,:,l]=boolslice
+    return cmebool
