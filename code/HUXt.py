@@ -12,13 +12,19 @@ from moviepy.video.io.bindings import mplfig_to_npimage
 from skimage import measure
 import scipy.ndimage as ndi
 from numba import jit
+
 import HUXtinput as Hin
 import HUXtlat as Hlat
+
+from packaging import version
+#check the numpy version, as this can cause all manner of difficult-to-diagnose problems
+assert(version.parse(np.version.version) >= version.parse("1.18"))
 
 mpl.rc("axes", labelsize=16)
 mpl.rc("ytick", labelsize=16)
 mpl.rc("xtick", labelsize=16)
 mpl.rc("legend", fontsize=16)
+
 
 
 class Observer:
@@ -808,12 +814,6 @@ class HUXt:
         elif field == 'cme':
             if np.all(np.isnan(self.CMEtracer_grid)):
                 return -1
-            #flat-field the CME tracer
-            #constants=huxt_constants()
-            #v_sub[v_sub>=constants['cmetracerthreshold']]=1.0
-            #v_sub[v_sub<constants['cmetracerthreshold']]=0.0
-            #plotvmin=0.0; plotvmax=1.1; dv=0.1
-            #ylab="CME tracer"
             v_sub = self.CMEtracer_grid.value[id_t, :, :].copy()
             vmax=np.absolute(v_sub).max()
             if vmax < huxt_constants()['cmetracerthreshold']:
@@ -1000,13 +1000,13 @@ class HUXt:
 
 
         # Plot the CME points on if needed
-        # if field in ['v', 'both']:
-        #     cme_colors = ['r', 'c', 'm', 'y', 'deeppink', 'darkorange']
-        #     for c, cme in enumerate(self.cmes):
-        #         cc = np.mod(c, len(cme_colors))
-        #         id_r = np.int32(cme.coords[id_t]['r_pix'].value)
-        #         label = "CME {:02d}".format(c)
-        #         ax.plot(self.r[id_r], self.v_grid_cme[id_t, id_r, id_lon], '.', color=cme_colors[cc], label=label)
+        if field in ['v']:
+            cme_colors = ['r', 'c', 'm', 'y', 'deeppink', 'darkorange']
+            for c, cme in enumerate(self.cmes):
+                cc = np.mod(c, len(cme_colors))
+                id_r = np.int32(cme.coords[id_t]['r_pix'].value)
+                label = "CME {:02d}".format(c)
+                ax.plot(self.r[id_r], self.v_grid[id_t, id_r, id_lon], '.', color=cme_colors[cc], label=label)
 
         ax.set_ylim(ymin, ymax)
         ax.set_ylabel(ylab)
@@ -1196,7 +1196,7 @@ def radial_grid(r_min=30.0 * u.solRad, r_max=240. * u.solRad):
         r_min = 30 * u.solRad
         r_max = 240 * u.solRad
 
-    if r_min < 5.0 * u.solRad:
+    if r_min < 2.0 * u.solRad:
         print("Warning, r_min should not be less than 5.0rs. Defaulting to 5.0rs")
         r_min = 5.0 * u.solRad
 
@@ -1209,7 +1209,7 @@ def radial_grid(r_min=30.0 * u.solRad, r_max=240. * u.solRad):
     r = np.arange(r_min.value, r_max.value + dr.value, dr.value)
     r = r * dr.unit
     nr = r.size
-    rrel = r - r[0]
+    rrel = r - 30*u.solRad
     return r, dr, rrel, nr
 
 
@@ -1779,12 +1779,25 @@ def stream_interactions(v_grid, rho_grid, nt_out, Nlon, r, rho_compression_facto
 
 
 
-
-
 @jit(nopython=True)
 def CMEbool(tracer,nt,nlon,cmethresh):
-    #a function to create a CME/no-CME mask to the CMEtracer_grid array.
-    #uses the FWHM along each radial cut as the criterion
+    """
+    a function to create a CME/no-CME mask to the CMEtracer_grid array.
+    uses the FWHM along each radial cut as the criterion
+
+    Parameters
+    ----------
+    tracer : Numpy Array. The HUXt tracer field: model.CMEtracer_grid
+    nt : INT. Number of time steps (i.e., length of dim 0 in tracer)
+    nlon : INT. Number of longitude steps (i.e., length of dim 2 in tracer)
+    cmethresh : FLOAT. The minimum CME tracer value to consider, contained in huxt_constants
+
+    Returns
+    -------
+    cmebool : Numpy Array. Of dimensions tracer.shape. 0/1 for no-CME/CME.
+
+    """
+    
     
     cmebool=np.ones(tracer.shape)*0
     for t in range(0,nt):
@@ -1793,14 +1806,14 @@ def CMEbool(tracer,nt,nlon,cmethresh):
             boolslice=cmebool[t,:,l]
             
             #find the number of CMEs along a slice by looking at the gradient of the passive tracer
-            #dup=rslice[:-2]-rslice[2:]
-            #ddown=rslice[1:]-rslice[]
+            #ddown=rslice[1]-rslice[0]
+            #dup=rslice[2]-rslice[1]
             
 
             #find the maximum tracer value along a given radial line
             pmax=rslice.max()
             if pmax > cmethresh:
                 #set everything over 0.5 of the pmax to be in a CME
-                boolslice[rslice>pmax/2.0]=1
+                boolslice[rslice>=pmax/4.0]=1
                 cmebool[t,:,l]=boolslice
     return cmebool

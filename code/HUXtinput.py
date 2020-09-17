@@ -337,8 +337,8 @@ def map_v_inwards(v_outer, r_outer, lon_outer, r_inner):
     :return lon_inner: Carrington longitude at r_inner. Units of rad.
     """
 
-    if r_outer < r_inner:
-        raise ValueError("Warning: r_outer < r_inner. Mapping will not work.")
+    #if r_outer < r_inner:
+    #    raise ValueError("Warning: r_outer < r_inner. Mapping will not work.")
 
     # get the acceleration parameters
     constants = H.huxt_constants()
@@ -347,9 +347,16 @@ def map_v_inwards(v_outer, r_outer, lon_outer, r_inner):
     Tsyn = constants['synodic_period'].to(u.s).value
     r_outer = r_outer.to(u.km).value
     r_inner = r_inner.to(u.km).value
+    r_30 = 30*u.solRad
+    r_30=r_30.to(u.km).value
 
+    
+    #compute the 30 rS speed
+    v30= v_outer.value * (1 + alpha * (1 - np.exp((r_30 - r_outer) / rH)))
+    
     # compute the speed at the new inner boundary height (using Vacc term, equation 5 in the paper)
-    v0 = v_outer.value / (1 + alpha * (1 - np.exp((r_inner - r_outer) / rH)))
+    #v0 = v_outer.value / (1 + alpha * (1 - np.exp((r_inner - r_outer) / rH)))
+    v0 = v30 * (1 + alpha * (1 - np.exp((r_30 - r_inner) / rH)))
 
     # compute the transit time from the new to old inner boundary heights (i.e., integrate equations 3 and 4 wrt to r)
     A = v0 + alpha * v0
