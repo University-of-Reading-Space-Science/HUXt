@@ -807,10 +807,15 @@ class HUXt:
             if self.rho_post_processed == False:
                 print('Warning: Rho post-processing not completed. Run model.rho_post_process()')
             v_sub = self.rho_grid.value[id_t, :, :].copy()
+            #normalise by r^2
+            for i in range(0,self.nlon):
+                v_sub[:,i]=v_sub[:,i]*self.r*self.r
+
             vmax=np.absolute(v_sub).max()
-            dv=2*vmax/20
-            plotvmin=0; plotvmax=vmax+dv; 
-            ylab="Density [code units]"
+            vmin=np.absolute(v_sub).min()
+            dv=(vmax-vmin)/20
+            plotvmin=vmin-dv; plotvmax=vmax+dv; 
+            ylab="Density R^2 [code units]"
         elif field == 'cme':
             if np.all(np.isnan(self.CMEtracer_grid)):
                 return -1
