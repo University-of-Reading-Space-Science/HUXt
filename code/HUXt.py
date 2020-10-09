@@ -380,7 +380,7 @@ class HUXt:
                  cr_num=np.NaN, cr_lon_init=360.0 * u.deg, latitude = 0*u.deg,
                  r_min=30 * u.solRad, r_max=240 * u.solRad,
                  lon_out=np.NaN * u.rad, lon_start=np.NaN * u.rad, lon_stop=np.NaN * u.rad,
-                 simtime=5.0 * u.day, dt_scale=1.0):
+                 simtime=5.0 * u.day, dt_scale=1.0, frame='synodic'):
         """
         Initialise the HUXt model instance.
 
@@ -397,6 +397,7 @@ class HUXt:
         :param r_max: The radial outer boundary distance of HUXt.
         :param simtime: Duration of the simulation window, in days.
         :param dt_scale: Integer scaling number to set the model output time step relative to the models CFL time.
+        :param frame: string determining the rotation frame for the model
         """
 
         # some constants and units
@@ -406,7 +407,13 @@ class HUXt:
         self.kms = constants['kms']
         self.alpha = constants['alpha']  # Scale parameter for residual SW acceleration
         self.r_accel = constants['r_accel']  # Spatial scale parameter for residual SW acceleration
-        self.synodic_period = constants['synodic_period']  # Solar Synodic rotation period from Earth.
+        
+        assert(frame == 'synodic' or frame == 'sidereal')
+        if (frame == 'synodic'):
+            self.rotation_period = constants['synodic_period']  # Solar Synodic rotation period from Earth.
+        elif (frame == 'sidereal'):
+            self.rotation_period = constants['synodic_sidereal'] 
+            
         self.v_max = constants['v_max']
         self.nlong = constants['nlong']
         del constants
@@ -562,13 +569,13 @@ class HUXt:
         buffersteps = np.fix(self.buffertime.to(u.s) / self.dt)
         buffertime = buffersteps * self.dt
         model_time = np.arange(-buffertime.value, (self.simtime.to('s') + self.dt).value, self.dt.value) * self.dt.unit
-        dlondt = self.twopi * self.dt / self.synodic_period
+        dlondt = self.twopi * self.dt / self.rotation_period
         all_lons, dlon, nlon = longitude_grid()
 
         # How many radians of Carrington rotation in this simulation length
-        simlon = self.twopi * self.simtime / self.synodic_period
+        simlon = self.twopi * self.simtime / self.rotation_period
         # How many radians of Carrington rotation in the spin up period
-        bufferlon = self.twopi * buffertime / self.synodic_period
+        bufferlon = self.twopi * buffertime / self.rotation_period
 
         # Loop through model longitudes and solve each radial profile.
         for i in range(self.lon.size):
@@ -1173,12 +1180,14 @@ def huxt_constants():
     alpha = 0.15 * u.dimensionless_unscaled  # Scale parameter for residual SW acceleration
     r_accel = 50 * u.solRad  # Spatial scale parameter for residual SW acceleration
     synodic_period = 27.2753 * daysec  # Solar Synodic rotation period from Earth.
+    sidereal_period = 25.38 *daysec # Solar sidereal rotation period 
     v_max = 2000 * kms
     cmetracerthreshold=0.02 # Threshold of CME tracer field to use for CME identification
     rho_compression_factor = 0.01 #comprsssion/expansion factor for density post processing
     CMEdensity = -1 # -1 for ambient density
     constants = {'twopi': twopi, 'daysec': daysec, 'kms': kms, 'alpha': alpha,
-                 'r_accel': r_accel, 'synodic_period': synodic_period, 'v_max': v_max,
+                 'r_accel': r_accel, 'synodic_period': synodic_period, 
+                 'sidereal_period': sidereal_period, 'v_max': v_max,
                  'dr': dr, 'cmetracerthreshold' : cmetracerthreshold,
                  'nlong' : nlong, 'nlat' : nlat, 
                  'rho_compression_factor' : rho_compression_factor,
