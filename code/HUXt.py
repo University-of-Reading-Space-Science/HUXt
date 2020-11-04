@@ -412,7 +412,7 @@ class HUXt:
         if (frame == 'synodic'):
             self.rotation_period = constants['synodic_period']  # Solar Synodic rotation period from Earth.
         elif (frame == 'sidereal'):
-            self.rotation_period = constants['synodic_sidereal'] 
+            self.rotation_period = constants['sidereal_period'] 
             
         self.v_max = constants['v_max']
         self.nlong = constants['nlong']
@@ -1214,7 +1214,7 @@ def radial_grid(r_min=30.0 * u.solRad, r_max=240. * u.solRad):
         print("Warning, r_min should not be less than 5.0rs. Defaulting to 5.0rs")
         r_min = 5.0 * u.solRad
 
-    if r_max > 400 * u.solRad:
+    if r_max > 3000 * u.solRad:
         print("Warning, r_max should not be more than 400rs. Defaulting to 400rs")
         r_max = 400 * u.solRad
 
