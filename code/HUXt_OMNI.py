@@ -13,8 +13,19 @@ from skimage import measure
 import scipy.ndimage as ndi
 from numba import jit
 
+
+import pandas as pd
+os.chdir(os.path.abspath(os.environ['DBOX'] + 'python'))
+import helio_time as htime
+
+#change to the HUXt dir so that the config.dat is found
+os.chdir(os.path.abspath(os.environ['DBOX'] + 'python_repos\\HUXt\\code'))
+
 import HUXtinput as Hin
 import HUXtlat as Hlat
+
+
+
 
 from packaging import version
 #check the numpy version, as this can cause all manner of difficult-to-diagnose problems
@@ -323,7 +334,7 @@ class ConeCME:
         return
 
 
-class HUXt:
+class HUXt_OMNI:
     """
     A class containing the HUXt model described in Owens et al. (2020, DOI: 10.1007/s11207-020-01605-3)
 
@@ -370,15 +381,17 @@ class HUXt:
     """
 
     # Decorators to check units on input arguments
-    @u.quantity_input(v_boundary=(u.km / u.s))
     @u.quantity_input(simtime=u.day)
     @u.quantity_input(cr_lon_init=u.deg)
     def __init__(self, 
-                 v_boundary = np.NaN * (u.km / u.s),  
-                 br_boundary = np.NaN * u.dimensionless_unscaled,
-                 rho_boundary = np.NAN *u.dimensionless_unscaled,
-                 cr_num=np.NaN, cr_lon_init=360.0 * u.deg, latitude = 0*u.deg,
-                 r_min=30 * u.solRad, r_max=240 * u.solRad,
+                 input_days = np.NaN * (u.day),
+                 input_vr = np.NaN * (u.km / u.s),
+                 input_br = np.NaN * u.dimensionless_unscaled,
+                 input_rho = np.NaN * u.dimensionless_unscaled,
+                 input_CarrLong = np.NaN * u.rad,
+                 cr_num=np.NaN,
+                 latitude = 0*u.deg,
+                 r_min=214 * u.solRad, r_max=10*215 * u.solRad,
                  lon_out=np.NaN * u.rad, lon_start=np.NaN * u.rad, lon_stop=np.NaN * u.rad,
                  simtime=5.0 * u.day, dt_scale=1.0, frame='synodic'):
         """
@@ -387,8 +400,8 @@ class HUXt:
         :param v_boundary: Inner solar wind speed boundary condition. Must be an array of size 128 with units of km/s.
         :param br_boundary: Inner passive tracer boundary condition used for Br. Must be an array of size 128 with no units
         :param rho_boundary: Inner passive tracer boundary condition used for density. Must be an array of size 128 with no units
-        :param cr_num: Integer Carrington rotation number. Used to determine the planetary and spacecraft positions
-        :param cr_lon_init: Carrington longitude of Earth at model initialisation, in degrees.
+        
+        
         :param latitude: Helio latitude (from equator) of HUXt plane, in degrees
         :param lon_out: A specific single longitude (relative to Earth_ to compute HUXt solution along, in degrees
         :param lon_start: The first longitude (in a clockwise sense) of the longitude range to solve HUXt over.
@@ -428,6 +441,7 @@ class HUXt:
         # Setup radial coordinates - in solar radius
         self.r, self.dr, self.rrel, self.nr = radial_grid(r_min=r_min, r_max=r_max)
         self.buffertime = ((8.0 * u.day) / (210 * u.solRad)) * self.rrel[-1]
+        self.buffertime = 5 *u.day
 
         # Setup longitude coordinates - in radians.
         self.lon, self.dlon, self.nlon = longitude_grid(lon_out=lon_out, lon_start=lon_start, lon_stop=lon_stop)
@@ -448,58 +462,66 @@ class HUXt:
         self.time_out = time_grid_dict['time_out']
         del time_grid_dict
          
-        # Establish the speed boundary condition
-        if np.all(np.isnan(v_boundary)):
-            print("Warning: No V boundary conditions supplied. Using default")
-            self.v_boundary = 400 * np.ones(self.nlong) * self.kms
-        elif not np.all(np.isnan(v_boundary)):
-            assert v_boundary.size == self.nlong
-            self.v_boundary = v_boundary
+     
+        #make the time relative to the start time
+        self.input_t0 = input_days[0]
+        self.input_days = input_days - self.input_t0 
         
-        # Now establish the Br passive tracer boundary conditions
-        if np.all(np.isnan(br_boundary)):
-            print("Warning: No Br boundary conditions supplied. Using default")
-            self.br_boundary = 1.0 * np.ones(self.nlong) *  u.dimensionless_unscaled
-        elif not np.all(np.isnan(br_boundary)):
-            assert br_boundary.size == self.nlong
-            self.br_boundary = br_boundary * u.dimensionless_unscaled  
+        self.input_vr = input_vr
+        self.input_br = input_br
+        self.input_rho = input_rho
+        self.input_CarrLong = input_CarrLong
+        # if np.all(np.isnan(v_boundary)):
+        #     print("Warning: No V boundary conditions supplied. Using default")
+        #     self.v_boundary = 400 * np.ones(self.nlong) * self.kms
+        # elif not np.all(np.isnan(v_boundary)):
+        #     assert v_boundary.size == self.nlong
+        #     self.v_boundary = v_boundary
+        
+        # # Now establish the Br passive tracer boundary conditions
+        # if np.all(np.isnan(br_boundary)):
+        #     print("Warning: No Br boundary conditions supplied. Using default")
+        #     self.br_boundary = 1.0 * np.ones(self.nlong) *  u.dimensionless_unscaled
+        # elif not np.all(np.isnan(br_boundary)):
+        #     assert br_boundary.size == self.nlong
+        #     self.br_boundary = br_boundary * u.dimensionless_unscaled  
             
-        # Now establish the rho passive tracer boundary conditions
-        if np.all(np.isnan(rho_boundary)):
-            print("Warning: No rho boundary conditions supplied. Using default")
-            #create a density map assuming constant mass flux
-            n_in = self.v_boundary.value*0.0 + 4.0
-            self.rho_boundary =n_in + ((650 - self.v_boundary.value) /400)*5.0 * u.dimensionless_unscaled 
-        elif not np.all(np.isnan(rho_boundary)):
-            assert rho_boundary.size == self.nlong
-            self.rho_boundary = rho_boundary * u.dimensionless_unscaled  
+        # # Now establish the rho passive tracer boundary conditions
+        # if np.all(np.isnan(rho_boundary)):
+        #     print("Warning: No rho boundary conditions supplied. Using default")
+        #     #create a density map assuming constant mass flux
+        #     n_in = self.v_boundary.value*0.0 + 4.0
+        #     self.rho_boundary =n_in + ((650 - self.v_boundary.value) /400)*5.0 * u.dimensionless_unscaled 
+        # elif not np.all(np.isnan(rho_boundary)):
+        #     assert rho_boundary.size == self.nlong
+        #     self.rho_boundary = rho_boundary * u.dimensionless_unscaled  
         
         #keep a flag to determine whether the rho enhancement by grad(v) has been performed
         self.rho_post_processed = False
 
         # Keep a protected version that isn't processed for use in saving/loading model runs
-        self._v_boundary_init_ = self.v_boundary.copy()
-        self._br_boundary_init_ = self.br_boundary.copy()   
-        self._rho_boundary_init_ = self.rho_boundary.copy() 
+        # self._v_boundary_init_ = self.v_boundary.copy()
+        # self._br_boundary_init_ = self.br_boundary.copy()   
+        # self._rho_boundary_init_ = self.rho_boundary.copy() 
         
         # Check cr_lon_init, make sure in 0-2pi range.
-        self.cr_lon_init = cr_lon_init.to('rad')
-        if (self.cr_lon_init < 0.0 * u.rad) | (self.cr_lon_init > self.twopi * u.rad):
-            print("Warning: cr_lon_init={}, outside expected range. Rectifying to 0-2pi.".format(self.cr_lon_init))
-            self.cr_lon_init = _zerototwopi_(self.cr_lon_init.value) * u.rad          
+        # self.cr_lon_init = cr_lon_init.to('rad')
+        # if (self.cr_lon_init < 0.0 * u.rad) | (self.cr_lon_init > self.twopi * u.rad):
+        #     print("Warning: cr_lon_init={}, outside expected range. Rectifying to 0-2pi.".format(self.cr_lon_init))
+        #     self.cr_lon_init = _zerototwopi_(self.cr_lon_init.value) * u.rad          
 
-        # Rotate the boundary condition as required by cr_lon_init.
-        if self.cr_lon_init != 360 * u.rad:
-            lon_boundary, dlon, nlon = longitude_grid()
-            lon_shifted = _zerototwopi_((lon_boundary - self.cr_lon_init).value)
-            id_sort = np.argsort(lon_shifted)
-            lon_shifted = lon_shifted[id_sort]
-            v_b_shifted = self.v_boundary[id_sort]
-            br_b_shifted = self.br_boundary[id_sort]
-            rho_b_shifted = self.rho_boundary[id_sort]
-            self.v_boundary = np.interp(lon_boundary.value, lon_shifted, v_b_shifted, period=self.twopi)
-            self.br_boundary = np.interp(lon_boundary.value, lon_shifted, br_b_shifted, period=self.twopi)
-            self.rho_boundary = np.interp(lon_boundary.value, lon_shifted, rho_b_shifted, period=self.twopi)
+        # # Rotate the boundary condition as required by cr_lon_init.
+        # if self.cr_lon_init != 360 * u.rad:
+        #     lon_boundary, dlon, nlon = longitude_grid()
+        #     lon_shifted = _zerototwopi_((lon_boundary - self.cr_lon_init).value)
+        #     id_sort = np.argsort(lon_shifted)
+        #     lon_shifted = lon_shifted[id_sort]
+        #     v_b_shifted = self.v_boundary[id_sort]
+        #     br_b_shifted = self.br_boundary[id_sort]
+        #     rho_b_shifted = self.rho_boundary[id_sort]
+        #     self.v_boundary = np.interp(lon_boundary.value, lon_shifted, v_b_shifted, period=self.twopi)
+        #     self.br_boundary = np.interp(lon_boundary.value, lon_shifted, br_b_shifted, period=self.twopi)
+        #     self.rho_boundary = np.interp(lon_boundary.value, lon_shifted, rho_b_shifted, period=self.twopi)
 
         # Determine CR number, used for spacecraft/planetary positions
         if np.isnan(cr_num):
@@ -507,12 +529,12 @@ class HUXt:
         else:
             self.cr_num = cr_num * u.dimensionless_unscaled 
                      
-        # Compute model UTC initalisation time, if using Carrington map boundary.
-        if self.cr_num.value != 9999:
-            cr_frac = self.cr_num.value + ((self.twopi - self.cr_lon_init.value) / self.twopi)
-            self.time_init = sun.carrington_rotation_time(cr_frac)
-        else:
-            self.time_init = np.NaN
+        # # Compute model UTC initalisation time, if using Carrington map boundary.
+        # if self.cr_num.value != 9999:
+        #     cr_frac = self.cr_num.value + ((self.twopi - self.cr_lon_init.value) / self.twopi)
+        #     self.time_init = sun.carrington_rotation_time(cr_frac)
+        # else:
+        #     self.time_init = np.NaN
 
         # Preallocate space for the output for the solar wind fields for the cme and ambient solution.
         self.v_grid = np.zeros((self.nt_out, self.nr, self.nlon)) * self.kms
@@ -569,13 +591,36 @@ class HUXt:
         buffersteps = np.fix(self.buffertime.to(u.s) / self.dt)
         buffertime = buffersteps * self.dt
         model_time = np.arange(-buffertime.value, (self.simtime.to('s') + self.dt).value, self.dt.value) * self.dt.unit
-        dlondt = self.twopi * self.dt / self.rotation_period
-        all_lons, dlon, nlon = longitude_grid()
+        # dlondt = self.twopi * self.dt / self.rotation_period
+        #all_lons, dlon, nlon = longitude_grid()
+        
+        #work out how much data padding is required for the spin-up time
+        
+        #work out how much data padding is required for the spin-up time  
+        tsyn = huxt_constants()['synodic_period'].to(u.day)
+        tsid = huxt_constants()['sidereal_period'].to(u.day)
+        nCRs = int(np.ceil(buffertime.to(u.day)/tsyn).value) + 1
+        
+        # cut out the first Carrington rotation of data for initialisation
+        pos = np.argwhere(self.input_days.value < tsyn.value)
+        
+        #create a padded set of variables for interpolation in the buffer period
+        pad_days = self.input_days
+        pad_vr = self.input_vr
+        pad_br = self.input_br
+        pad_rho = self.input_rho
+        for n in range(0,nCRs):
+            deltat = (self.input_days[pos] - (n+1)*tsyn).flatten()
+            pad_days = np.concatenate((deltat, pad_days))  
+            pad_vr =  np.concatenate((self.input_vr[pos].flatten(), pad_vr))
+            pad_br =  np.concatenate((self.input_br[pos].flatten(), pad_br))
+            pad_rho =  np.concatenate((self.input_rho[pos].flatten(), pad_rho))
 
-        # How many radians of Carrington rotation in this simulation length
-        simlon = self.twopi * self.simtime / self.rotation_period
-        # How many radians of Carrington rotation in the spin up period
-        bufferlon = self.twopi * buffertime / self.rotation_period
+        
+        # # How many radians of Carrington rotation in this simulation length
+        # simlon = self.twopi * self.simtime / self.rotation_period
+        # # How many radians of Carrington rotation in the spin up period
+        # bufferlon = self.twopi * buffertime / self.rotation_period
 
         # Loop through model longitudes and solve each radial profile.
         for i in range(self.lon.size):
@@ -584,25 +629,41 @@ class HUXt:
                 lon_out = self.lon.value
             else:
                 lon_out = self.lon[i].value
+                
+            
+            #find the angle from Earth
+            phi_E = _zerototwopi_( lon_out -   model_time * 2 *np.pi *(1/tsid -1/tsyn) )
+            
+            #change the time based on the drift of Earth/OMNI in the sidereal frame
+            #pad_days_thislong = pad_days - pad_days *(1 - tsid/tsyn)
+            
+            #change the time based on the longitude from 0
+            modeltime_thislong = model_time + tsyn*(2*np.pi-phi_E) / (2*np.pi)
+            modeltime_thislong = modeltime_thislong.to(u.s)
+            
+            # (lon_out/2*np.pi *  huxt_constants()['sidereal_period'].to(u.day)   + pad_days)
 
-            # Find the Carrigton longitude range spanned by the spin up and simulation period,
-            # centered on simulation longitude
-            lon_start = (lon_out - simlon - dlondt)
-            lon_stop = (lon_out + bufferlon)
-            lonint = np.arange(lon_start, lon_stop, dlondt)
-            # Rectify so that it is between 0 - 2pi
-            loninit = _zerototwopi_(lonint)
+            #plt.plot(pad_days_thislong,pad_vr)
+
+
+            # # Find the Carrigton longitude range spanned by the spin up and simulation period,
+            # # centered on simulation longitude
+            # lon_start = (lon_out - simlon - dlondt)
+            # lon_stop = (lon_out + bufferlon)
+            # lonint = np.arange(lon_start, lon_stop, dlondt)
+            # # Rectify so that it is between 0 - 2pi
+            # loninit = _zerototwopi_(lonint)
             # Interpolate the inner boundary speed to this higher resolution
-            vinit = np.interp(loninit, all_lons.value, self.v_boundary.value, period=2 * np.pi)
-            brinit = np.interp(loninit, all_lons.value, self.br_boundary.value, period=2 * np.pi)
-            rhoinit = np.interp(loninit, all_lons.value, self.rho_boundary.value, period=2 * np.pi)
-            # convert from cr longitude to timesolve
-            vinput = np.flipud(vinit)
-            brinput = np.flipud(brinit)
-            rhoinput = np.flipud(rhoinit)
+            #assert(model_time[0]>= pad_days_thislong[0])
+            #assert(model_time[-1]< pad_days_thislong[-1])
+            
+            vinput = np.interp(modeltime_thislong, pad_days, pad_vr)
+            brinput = np.interp(modeltime_thislong, pad_days, pad_br)
+            rhoinput = np.interp(modeltime_thislong, pad_days, pad_rho)
             
             
             #plt.plot(model_time,vinput)
+            
 
             v, br, rho, CMEtracer  = solve_radial(vinput, brinput, rhoinput,
                                          model_time, self.rrel.value, lon_out,
@@ -784,8 +845,8 @@ class HUXt:
         :return ax: Axes handle.
         """
 
-        if field not in ['v', 'br','rho','cme']:
-            print("Error, field must be either v', 'br','rho','cme'. Default to v")
+        if field not in ['v', 'br','rho','cme','bpol']:
+            print("Error, field must be either v', 'br','rho','cme', 'bpol'. Default to v")
             field = 'v'
 
         if (time < self.time_out.min()) | (time > (self.time_out.max())):
@@ -805,11 +866,25 @@ class HUXt:
             if np.all(np.isnan(self.br_grid)):
                 return -1
             v_sub = self.br_grid.value[id_t, :, :].copy()
+
+                
             vmax=np.absolute(v_sub).max()
             dv=2*vmax/20
             plotvmin=-vmax; 
             plotvmax=vmax+dv; 
             ylab="B_R [code units]"
+            mymap = mpl.cm.bwr
+        elif field == 'bpol':
+            if np.all(np.isnan(self.br_grid)):
+                return -1
+            v_sub = self.br_grid.value[id_t, :, :].copy()
+            v_sub=np.where(v_sub > 0, 1,-1)
+                
+            vmax=1
+            dv=2*vmax/20
+            plotvmin=-vmax; 
+            plotvmax=vmax+dv; 
+            ylab="B_R polarity [code units]"
             mymap = mpl.cm.bwr
         elif field == 'rho':
             if np.all(np.isnan(self.rho_grid)):
@@ -879,12 +954,57 @@ class HUXt:
 
             # Add on a legend.
             fig.legend(ncol=5, loc='lower center', frameon=False, handletextpad=0.2, columnspacing=1.0)
+            
+        #add Earth location
+        # tsyn = huxt_constants()['synodic_period'].to(u.day)
+        # tsid = huxt_constants()['sidereal_period'].to(u.day)
+        # phi_E = _zerototwopi_(time * 2 *np.pi *(1/tsid -1/tsyn))
+        # r_E = 215*u.solRad
+        # ax.plot(phi_E, r_E, 'co', markersize=8, label='Earth')
+        dirpath = os.environ['DBOX'] + 'Papers_WIP\\_coauthor\\JonnyNichols\\'
+
+        #Earth
+        filepath = dirpath + 'Earth_HGI.lst'
+        pos_Earth = pd.read_csv(filepath,
+                             skiprows = 1, delim_whitespace=True,
+                             names=['year','doy',
+                                    'rad_au','HGI_lat','HGI_lon'])
+        #convert to mjd
+        pos_Earth['mjd'] = htime.doyyr2mjd(pos_Earth['doy'],pos_Earth['year'])
+        
+        #Saturn
+        filepath = dirpath + 'Saturn_HGI.lst'
+        pos_Saturn = pd.read_csv(filepath,
+                             skiprows = 1, delim_whitespace=True,
+                             names=['year','doy',
+                                    'rad_au','HGI_lat','HGI_lon'])
+        #convert to mjd
+        pos_Saturn['mjd'] = htime.doyyr2mjd(pos_Saturn['doy'],pos_Saturn['year'])
+        
+        #determine the HGI longitude at t = 0
+        HGI_lon_0 = np.interp(self.input_t0.value,pos_Earth['mjd'],pos_Earth['HGI_lon'])*np.pi/180
+        
+        tmjd=(self.input_t0.to(u.day) + time.to(u.day)).value
+        phi_E = _zerototwopi_(np.interp(tmjd, pos_Earth['mjd'].to_numpy(),
+                                             pos_Earth['HGI_lon'].to_numpy(),
+                                             left =np.nan, right =np.nan)*np.pi/180 - HGI_lon_0)
+        phi_S = _zerototwopi_(np.interp(tmjd, pos_Saturn['mjd'].to_numpy(),
+                                             pos_Saturn['HGI_lon'].to_numpy(),
+                                             left =np.nan, right =np.nan)*np.pi/180 - HGI_lon_0)
+        r_E = np.interp(tmjd,pos_Earth['mjd'].to_numpy(),
+                         pos_Earth['rad_au'].to_numpy(),left =np.nan, right =np.nan)*215.032
+        r_S = np.interp(tmjd,pos_Saturn['mjd'].to_numpy(),
+                         pos_Saturn['rad_au'].to_numpy(),left =np.nan, right =np.nan)*215.032
+        
+        ax.plot(phi_E, r_E, 'ro', markersize=8, label='Earth')
+        ax.plot(phi_S, r_S, 'r+', markersize=8, label='Saturn')
 
         ax.set_ylim(0, self.r.value.max())
         ax.set_yticklabels([])
         ax.set_xticklabels([])
         ax.patch.set_facecolor('slategrey')
         fig.subplots_adjust(left=0.05, bottom=0.16, right=0.95, top=0.99)
+        fig.legend(ncol=5, loc='lower center', frameon=False, handletextpad=0.2, columnspacing=1.0)
 
         # Add color bar
         pos = ax.get_position()
@@ -899,7 +1019,7 @@ class HUXt:
         cbar1.set_ticks(np.arange(plotvmin, plotvmax, dv*10))
 
         # Add label
-        label = "Time: {:3.2f} days".format(self.time_out[id_t].to(u.day).value)
+        label = "Time: {}".format(htime.mjd2datetime(tmjd))
         fig.text(0.675, pos.y0, label, fontsize=16)
         label = "HUXt2D"
         fig.text(0.175, pos.y0, label, fontsize=16)
