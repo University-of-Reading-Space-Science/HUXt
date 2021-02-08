@@ -3,6 +3,8 @@
 Created on Fri Oct  9 13:50:03 2020
 
 @author: mathewjowens
+
+examples scripts for driving HUXt with OMNI data 
 """
 
 import numpy as np
@@ -185,7 +187,7 @@ os.chdir(os.path.abspath(os.environ['DBOX'] + 'python'))
 os.chdir(os.path.abspath(os.environ['DBOX'] + 'python_repos\\HUXt\\code'))
 
 starttime = datetime(2020, 8, 1, 0, 0, 0)
-endtime =  datetime(2020, 11, 27, 0, 0, 0)
+endtime =  datetime(2020, 12, 31, 0, 0, 0)
 
 temp=omni.h0_mrg1hr(starttime, endtime)
 data=temp.data
@@ -198,37 +200,33 @@ input_vr = data['V'].to_numpy()*u.km/u.s
 
 
 
-# <codecell> Run HUXt_OMNI
+# <codecell> Load in STEREO data
 
-#double up the last CR to extend the run
+import heliopy.data.stereo as stereo
 
-pos = np.where(input_days.value >= input_days.value[-1] - 27.27)
-pad_vr=np.append(input_vr,input_vr[pos])
-dt=np.nanmean(input_days[1:]-input_days[:-1])
-pad_days = np.append(input_days,input_days[pos] + 27.27*u.day +dt)
+from datetime import datetime
 
-pos = np.where(input_days.value >= input_days.value[-1] - 27.27)
-pad_vr=np.append(pad_vr,input_vr[pos])
-dt=np.nanmean(input_days[1:]-input_days[:-1])
-pad_days = np.append(pad_days,input_days[pos] + 2*27.27*u.day +dt)
+os.chdir(os.path.abspath(os.environ['DBOX'] + 'python'))
+#change to the HUXt dir so that the config.dat is found
+os.chdir(os.path.abspath(os.environ['DBOX'] + 'python_repos\\HUXt\\code'))
+
+starttime = datetime(2020, 8, 1, 0, 0, 0)
+endtime =  datetime(2020, 12, 31, 0, 0, 0)
+
+temp=stereo.coho1hr_merged('A',starttime, endtime)
+data=temp.data
+
+#remove nans
+data.dropna(subset=['plasmaSpeed'], inplace=True)
+
+input_days_stereo = htime.datetime2mjd(data.index).to_numpy()*u.day
+input_vr_stereo = data['plasmaSpeed'].to_numpy()*u.km/u.s
 
 
-modelOMNI = Homni.HUXt_OMNI(input_vr = pad_vr, 
-                            input_br = pad_vr.value*0*u.dimensionless_unscaled,
-                            input_days = pad_days, 
-                            input_rho = pad_vr.value*0.0*u.dimensionless_unscaled +1000.0*u.dimensionless_unscaled,
-               latitude=0*u.deg, #lon_out=longitude,
-               r_min=215*u.solRad, r_max = 2165*u.solRad,
-               simtime=130*u.day, dt_scale=30,
-               frame='sidereal')
 
-modelOMNI.solve([]) 
-#modelOMNI.animate(field='v',tag='omni_test')
 
-t = 50*u.day
-modelOMNI.plot(t, field='rho')
 
-# <codecell> extract the Earth time series, assuming it is at phi = 0 at t=0
+# <codecell> Get HGI positions of objects
 
 #generate the density profile
 #modelOMNI.rho_post_process()
@@ -255,22 +253,100 @@ pos_Saturn = pd.read_csv(filepath,
 #convert to mjd
 pos_Saturn['mjd'] = htime.doyyr2mjd(pos_Saturn['doy'],pos_Saturn['year'])
 
+#STEREO-A
+filepath = dirpath + 'STEREO-A_HGI.lst'
+pos_STA = pd.read_csv(filepath,
+                     skiprows = 1, delim_whitespace=True,
+                     names=['year','doy',
+                            'rad_au','HGI_lat','HGI_lon'])
+#convert to mjd
+pos_STA['mjd'] = htime.doyyr2mjd(pos_STA['doy'],pos_STA['year'])
+
+#produce a time series of STA long diff from Earth
+lon_Earth = np.interp(input_days_stereo.value,pos_Earth['mjd'],pos_Earth['HGI_lon']*np.pi/180)
+lon_STA = np.interp(input_days_stereo.value,pos_STA['mjd'],pos_STA['HGI_lon']*np.pi/180)
+
+#plt.plot(lon_Earth,label='Earth')
+#plt.plot(lon_STA,label='STA')
+#plt.legend()
+
+STA_lon_diff = H._zerototwopi_(lon_STA-lon_Earth)
+
+# <codecell> Run HUXt_OMNI with OMNI data
+
+# #double up the last CR to extend the run
+
+# pos = np.where(input_days.value >= input_days.value[-1] - 27.27)
+# pad_vr=np.append(input_vr,input_vr[pos])
+# dt=np.nanmean(input_days[1:]-input_days[:-1])
+# pad_days = np.append(input_days,input_days[pos] + 27.27*u.day +dt)
+
+# pos = np.where(input_days.value >= input_days.value[-1] - 27.27)
+# pad_vr=np.append(pad_vr,input_vr[pos])
+# dt=np.nanmean(input_days[1:]-input_days[:-1])
+# pad_days = np.append(pad_days,input_days[pos] + 2*27.27*u.day +dt)
+
+
+# modelOMNI = Homni.HUXt_OMNI(input_vr = pad_vr, 
+#                             input_br = pad_vr.value*0*u.dimensionless_unscaled,
+#                             input_days = pad_days, 
+#                             input_rho = pad_vr.value*0.0*u.dimensionless_unscaled +1000.0*u.dimensionless_unscaled,
+#                latitude=0*u.deg, #lon_out=longitude,
+#                r_min=215*u.solRad, r_max = 2165*u.solRad,
+#                simtime=130*u.day, dt_scale=30,
+#                frame='sidereal')
+
+modelOMNI = Homni.HUXt_OMNI(input_vr = input_vr, 
+                            input_br = input_vr.value*0*u.dimensionless_unscaled,
+                            input_days = input_days, 
+                            input_rho = input_vr.value*0.0*u.dimensionless_unscaled +1000.0*u.dimensionless_unscaled,
+               latitude=0*u.deg, #lon_out=longitude,
+               r_min=215*u.solRad, r_max = 2165*u.solRad,
+               simtime=130*u.day, dt_scale=30,
+               frame='sidereal')
+
+modelOMNI.solve([]) 
+#modelOMNI.animate(field='v',tag='omni_test')
+
+t = 50*u.day
+modelOMNI.plot(t, field='v')
+# <codecell> Run HUXt_OMNI with STEREO-A data
+modelSTA = Homni.HUXt_OMNI(input_vr = input_vr_stereo, 
+                            input_br = input_vr_stereo.value*0*u.dimensionless_unscaled,
+                            input_days = input_days_stereo, 
+                            input_rho = input_vr_stereo.value*0.0*u.dimensionless_unscaled +1000.0*u.dimensionless_unscaled,
+                            input_angle_to_earth=STA_lon_diff *u.rad,
+               latitude=0*u.deg, #lon_out=longitude,
+               r_min=215*u.solRad, r_max = 2165*u.solRad,
+               simtime=130*u.day, dt_scale=30,
+               frame='sidereal')
+
+modelSTA.solve([]) 
+#modelOMNI.animate(field='v',tag='omni_test')
+
+t = 50*u.day
+modelSTA.plot(t, field='v')
+
+
+# <codecell> extract the Earth time series, assuming it is at phi = 0 at t=0
+
+model = modelSTA
 
 from astropy.coordinates import spherical_to_cartesian
 #convert the HUXt grid to cartesean
-gridx, gridy, gridz = spherical_to_cartesian(modelOMNI.r_grid.value, 
-                                             modelOMNI.lon_grid.value*0.0, 
-                                             modelOMNI.lon_grid.value)
+gridx, gridy, gridz = spherical_to_cartesian(model.r_grid.value, 
+                                             model.lon_grid.value*0.0, 
+                                             model.lon_grid.value)
 
 #determine the HGI longitude at t = 0
 HGI_lon_0 = np.interp(input_days[0].to(u.day).value,pos_Earth['mjd'],pos_Earth['HGI_lon'])*np.pi/180
 
-v_Earth = np.ones((len(modelOMNI.time_out),5))*np.nan
-v_Saturn = np.ones((len(modelOMNI.time_out),5))*np.nan
+v_Earth = np.ones((len(model.time_out),5))*np.nan
+v_Saturn = np.ones((len(model.time_out),5))*np.nan
 
 #time
-v_Earth[:,0] = modelOMNI.time_out.to(u.day).value + input_days[0].to(u.day).value 
-v_Saturn[:,0] = modelOMNI.time_out.to(u.day).value + input_days[0].to(u.day).value
+v_Earth[:,0] = model.time_out.to(u.day).value + input_days[0].to(u.day).value 
+v_Saturn[:,0] = model.time_out.to(u.day).value + input_days[0].to(u.day).value
 #radius, in rs
 v_Earth[:,1] = np.interp(v_Earth[:,0],pos_Earth['mjd'].to_numpy(),
                          pos_Earth['rad_au'].to_numpy(),left =np.nan, right =np.nan)*215.032
@@ -287,7 +363,7 @@ v_Saturn[:,2] = Homni._zerototwopi_(np.interp(v_Saturn[:,0],pos_Saturn['mjd'].to
                                               left =np.nan, right =np.nan)*np.pi/180 -
                                     HGI_lon_0)
 
-for t in range(0, len(modelOMNI.time_out)):
+for t in range(0, len(model.time_out)):
     #v_Earth[t,0] = modelOMNI.time_out[t].to(u.day).value + input_days[0].to(u.day).value  
     
     #tsyn_s = Homni.huxt_constants()['synodic_period'].to(u.s)
@@ -300,16 +376,16 @@ for t in range(0, len(modelOMNI.time_out)):
     #convert to cartesian
     x, y, z = spherical_to_cartesian(v_Earth[t,1],  0, v_Earth[t,2])
     #now interpolate the V solutions to the Earth pos
-    v_Earth[t,3] = interp2d(x.value, y.value, modelOMNI.v_grid[t,:,:].value, 
+    v_Earth[t,3] = interp2d(x.value, y.value, model.v_grid[t,:,:].value, 
                         gridx, gridy,  4)
-    v_Earth[t,4] = interp2d(x.value, y.value, modelOMNI.rho_grid[t,:,:].value, 
+    v_Earth[t,4] = interp2d(x.value, y.value, model.rho_grid[t,:,:].value, 
                         gridx, gridy,  4)
     #convert to cartesian
     x, y, z = spherical_to_cartesian(v_Saturn[t,1],  0, v_Saturn[t,2])
     #now interpolate the V solutions to the Earth pos
-    v_Saturn[t,3] = interp2d(x.value, y.value, modelOMNI.v_grid[t,:,:].value, 
+    v_Saturn[t,3] = interp2d(x.value, y.value, model.v_grid[t,:,:].value, 
                         gridx, gridy,  4)
-    v_Saturn[t,4] = interp2d(x.value, y.value, modelOMNI.rho_grid[t,:,:].value, 
+    v_Saturn[t,4] = interp2d(x.value, y.value, model.rho_grid[t,:,:].value, 
                         gridx, gridy,  4)
 
 from datetime import timedelta

@@ -12,6 +12,7 @@ from moviepy.video.io.bindings import mplfig_to_npimage
 from skimage import measure
 import scipy.ndimage as ndi
 from numba import jit
+import copy
 
 import HUXtinput as Hin
 import HUXtlat as Hlat
@@ -106,7 +107,7 @@ class ConeCME:
     A class containing the parameters of a cone model cme.
     Attributes:
         t_launch: Time of Cone CME launch, in seconds after the start of the simulation.
-        longitude: Longitude of the CME launch direction, in radians.
+        longitude: HEEQ Longitude of the CME launch direction, in radians.
         v: CME nose speed in km/s.
         width: Angular width of the CME, in radians.
         initial_height: Initiation height of the CME, in km. Defaults to HUXt inner boundary at 30 solar radii.
@@ -344,6 +345,7 @@ class HUXt:
         dt_out: Output model time step (in seconds).
         dt_scale: Integer scaling number to set the model output time step relative to the models CFL time step.
         dtdr: Ratio of the model time step and radial grid step (in seconds/km).
+        frame : either synodic or sidereal
         kms: astropy.unit instance of km/s.       
         lon: Array of model longtidues (in radians).
         r_grid: Array of longitudinal coordinates meshed with the radial coordinates (in radians).
@@ -355,8 +357,8 @@ class HUXt:
         r: Radial grid (in km).
         r_grid: Array of radial coordinates meshed with the longitudinal coordinates (in km).
         rrel: Radial grid relative to first grid point (in km).
+        rotation_period:  rotation period (in seconds), either synodic or sidereal
         simtime: Simulation time (in seconds).
-        synodic_period: Solar Synodic rotation period from Earth (in seconds).
         time: Array of model time steps, including spin up (in seconds).
         time_init: The UTC time corresonding to the initial Carrington rotation number and longitude. Else, NaN. 
         time_out: Array of output model time steps (in seconds).
@@ -408,11 +410,15 @@ class HUXt:
         self.alpha = constants['alpha']  # Scale parameter for residual SW acceleration
         self.r_accel = constants['r_accel']  # Spatial scale parameter for residual SW acceleration
         
+        #set the frame fo reference. Synodic keeps ES line at 0 longitude. 
+        #sidereal means Earth moves to increasing longitude with time
         assert(frame == 'synodic' or frame == 'sidereal')
+        self.frame = frame
         if (frame == 'synodic'):
             self.rotation_period = constants['synodic_period']  # Solar Synodic rotation period from Earth.
         elif (frame == 'sidereal'):
             self.rotation_period = constants['sidereal_period'] 
+
             
         self.v_max = constants['v_max']
         self.nlong = constants['nlong']
@@ -543,12 +549,26 @@ class HUXt:
         Returns:
 
         """
+        #make a copy of the CME list objects so that the originals are not modified
+        mycme_list = copy.deepcopy(cme_list)
 
-        # Check only cone cmes in cme list
+        # Check only cone cmes in cme list, adjust for sidereal frame if necessary
         cme_list_checked = []
-        for cme in cme_list:
+        for cme in mycme_list:
             if isinstance(cme, ConeCME):
+                if self.frame == 'sidereal':
+                    #if the solution is in the sideral frame, adjust CME longitudes
+                    print('Adjusting CME HEEQ longitude for sidereal frame')
+                    omega_syn = 2*np.pi*u.rad/huxt_constants()['synodic_period']
+                    omega_sid = 2*np.pi*u.rad/huxt_constants()['sidereal_period']
+                    
+                    
+                    cme.longitude = _zerototwopi_(cme.longitude 
+                                                  + cme.t_launch *(omega_sid-omega_syn) )*u.rad
+                    
+                #add the CME to the list  
                 cme_list_checked.append(cme)
+
             else:
                 print("Warning: cme_list contained objects other than ConeCME instances. These will be excluded")
 
@@ -875,7 +895,13 @@ class HUXt:
         if self.cr_num.value != 9999:
             for body, style in zip(['EARTH', 'VENUS', 'MERCURY', 'STA', 'STB'], ['co', 'mo', 'ko', 'rs', 'y^']):
                 obs = self.get_observer(body)
-                ax.plot(obs.lon[id_t], obs.r[id_t], style, markersize=16, label=body)
+                deltalon = 0.0*u.rad
+                if self.frame == 'sidereal':
+                    deltalon = (2*np.pi * time.to(u.day).value/365)*u.rad
+                    
+                obslon = _zerototwopi_(obs.lon[id_t] + deltalon)
+                
+                ax.plot(obslon, obs.r[id_t], style, markersize=16, label=body)
 
             # Add on a legend.
             fig.legend(ncol=5, loc='lower center', frameon=False, handletextpad=0.2, columnspacing=1.0)
@@ -1185,7 +1211,7 @@ def huxt_constants():
     synodic_period = 27.2753 * daysec  # Solar Synodic rotation period from Earth.
     sidereal_period = 25.38 *daysec # Solar sidereal rotation period 
     v_max = 2000 * kms
-    cmetracerthreshold=0.02 # Threshold of CME tracer field to use for CME identification
+    cmetracerthreshold=0.005 # Threshold of CME tracer field to use for CME identification [0.02]
     rho_compression_factor = 0.01 #comprsssion/expansion factor for density post processing
     CMEdensity = -1 # -1 for ambient density
     constants = {'twopi': twopi, 'daysec': daysec, 'kms': kms, 'alpha': alpha,

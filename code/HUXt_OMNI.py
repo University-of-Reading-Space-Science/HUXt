@@ -388,6 +388,7 @@ class HUXt_OMNI:
                  input_vr = np.NaN * (u.km / u.s),
                  input_br = np.NaN * u.dimensionless_unscaled,
                  input_rho = np.NaN * u.dimensionless_unscaled,
+                 input_angle_to_earth = np.NaN * u.rad,
                  input_CarrLong = np.NaN * u.rad,
                  cr_num=np.NaN,
                  latitude = 0*u.deg,
@@ -470,6 +471,14 @@ class HUXt_OMNI:
         self.input_vr = input_vr
         self.input_br = input_br
         self.input_rho = input_rho
+        
+        if np.any(np.isnan(input_angle_to_earth)):
+            print('No angle to Earth specified for input V. Assuming at Earth')
+            self.input_angle_to_earth = input_br.value * 0.0 * u.rad
+        else:
+            print('Using specificed angle to Earth for input V .')
+            self.input_angle_to_earth = input_angle_to_earth
+            
         self.input_CarrLong = input_CarrLong
         # if np.all(np.isnan(v_boundary)):
         #     print("Warning: No V boundary conditions supplied. Using default")
@@ -609,14 +618,19 @@ class HUXt_OMNI:
         pad_vr = self.input_vr
         pad_br = self.input_br
         pad_rho = self.input_rho
+        pad_angle_to_earth = self.input_angle_to_earth
         for n in range(0,nCRs):
             deltat = (self.input_days[pos] - (n+1)*tsyn).flatten()
             pad_days = np.concatenate((deltat, pad_days))  
             pad_vr =  np.concatenate((self.input_vr[pos].flatten(), pad_vr))
             pad_br =  np.concatenate((self.input_br[pos].flatten(), pad_br))
             pad_rho =  np.concatenate((self.input_rho[pos].flatten(), pad_rho))
+            pad_angle_to_earth =  np.concatenate((self.input_angle_to_earth[pos].flatten(), pad_angle_to_earth))
 
-        
+        #interpolate the angle to earth onto the modelstep
+        angle_to_earth = np.interp(model_time,pad_days,pad_angle_to_earth)
+
+
         # # How many radians of Carrington rotation in this simulation length
         # simlon = self.twopi * self.simtime / self.rotation_period
         # # How many radians of Carrington rotation in the spin up period
@@ -632,7 +646,9 @@ class HUXt_OMNI:
                 
             
             #find the angle from Earth
-            phi_E = _zerototwopi_( lon_out -   model_time * 2 *np.pi *(1/tsid -1/tsyn) )
+            phi_E = _zerototwopi_( lon_out -   
+                                  model_time * 2 *np.pi *(1/tsid -1/tsyn)
+                                  - angle_to_earth.value)
             
             #change the time based on the drift of Earth/OMNI in the sidereal frame
             #pad_days_thislong = pad_days - pad_days *(1 - tsid/tsyn)
