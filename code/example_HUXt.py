@@ -201,27 +201,32 @@ model.plot_timeseries(r, lon=0.0*u.deg,field='v')
 # HUXt2D runs in a similar manner. 
 
 #Form boundary conditions - background wind of 400 km/s with two fast streams.
-v_boundary = np.ones(128) * 400 * (u.km/u.s)
-v_boundary[30:50] = 600 * (u.km/u.s)
-v_boundary[95:125] = 700 * (u.km/u.s)
+vr_in = np.ones(128) * 400 * (u.km/u.s)
+#v_boundary[30:50] = 600 * (u.km/u.s)
+#v_boundary[95:125] = 700 * (u.km/u.s)
 #add a CME
-cme = H.ConeCME(t_launch=0.5*u.day, longitude=0.0*u.deg, width=30*u.deg, v=1000*(u.km/u.s), thickness=5*u.solRad)
+cme = H.ConeCME(t_launch=0.5*u.day, longitude=0.0*u.deg, width=40*u.deg, v=1000*(u.km/u.s), thickness=5*u.solRad)
 cme_list = [cme]
 
 # Setup HUXt to do a 5 day simulation, with model output every 4 timesteps (roughly half and hour time step), looking at 0 longitude
 
-model = H.HUXt(v_boundary=v_boundary, simtime=0.01*u.day, dt_scale=1)
-model.solve([])
+model = H.HUXt(v_boundary=vr_in, simtime=4*u.day, 
+               cr_lon_init =  70*u.deg,
+               lon_start= - np.pi/2 * u.rad , lon_stop = np.pi/2 * u.rad,
+               dt_scale=1)
+#model.solve([])
 model.solve(cme_list) # This takes a minute or so to run.
 
 #test load/save
 #out_path = model.save(tag='twoD_CME')
 #model, cme_list = H.load_HUXt_run(out_path)
 
-t_interest = 1.5*u.day
+t_interest = 3.5*u.day
 model.plot(t_interest, field='v')
-model.plot(t_interest, field='br')
-model.plot(t_interest, field='cme')
+#model.plot(t_interest, field='br')
+#model.plot(t_interest, field='cme')
+
+model.animate('v', tag='pancaking_CR2209')
 
 # <codecell> HUXt2D, animate output
 #==============================================================================
@@ -263,21 +268,25 @@ times = [0.5*daysec, 1.5*daysec, 3*daysec]
 speeds = [850, 1000, 700]
 lons = [0, 90, 300]
 widths = [30, 40, 20]
-thickness = [5, 4, 2]
+thickness = [15, 4, 2]
 cme_list = []
 for t, l, w, v, thick in zip(times, lons, widths, speeds, thickness):
     cme = H.ConeCME(t_launch=t*u.s, longitude=l*u.deg, width=w*u.deg, v=v*model.kms, thickness=thick*u.solRad)
     cme_list.append(cme)
 
-model.solve(cme_list, save=True, tag='multi_cones') # This takes a minute or so to run.
+start=time.time(); 
+model.solve(cme_list) # This takes a minute or so to run.
+end = time.time()
+print("Fast solve (after compilation) = %s" % (end - start)) 
 
 
-
-t_interest=4.5*u.day
+t_interest=4*u.day
 model.plot(t_interest, field='v')
-model.plot(t_interest, field='br')
-model.plot(t_interest, field='rho')
-model.plot(t_interest, field='cme')
+#model.plot(t_interest, field='br')
+#model.plot(t_interest, field='rho')
+#model.plot(t_interest, field='cme')
+
+#model.animate('v', tag='testparticle')
 
 # <codecell> Load and save
 
@@ -363,7 +372,7 @@ cme = H.ConeCME(t_launch=0.5*u.day, longitude=0.0*u.deg, latitude=0.0*u.deg,
 model.solve([cme]) 
 
 t_interest=3*u.day
-model.plot(t_interest, field='ambient')
+model.plot(t_interest, field='v')
 model.plot(t_interest, field='cme')
 model.plot(t_interest, field='br_cme')
 model.plot(t_interest, field='br_ambient')

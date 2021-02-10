@@ -247,9 +247,9 @@ modelsyn.solve(cme_list)
 
 modelsyn.animate('v', tag='synodic_test')
 
-t_interest=11*u.day
-modelsyn.plot(t_interest, field='cme')
-modelsid.plot(t_interest, field='cme')
+t_interest=13*u.day
+modelsyn.plot(t_interest, field='v')
+modelsid.plot(t_interest, field='v')
 
 # t_interest=13*u.day
 # modelsyn.plot(t_interest, field='v')

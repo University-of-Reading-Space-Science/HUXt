@@ -11,6 +11,7 @@ import moviepy.editor as mpy
 from moviepy.video.io.bindings import mplfig_to_npimage
 from skimage import measure
 import scipy.ndimage as ndi
+from scipy.interpolate import interp1d
 from numba import jit
 import copy
 
@@ -525,7 +526,7 @@ class HUXt:
         self.br_grid = np.zeros((self.nt_out, self.nr, self.nlon)) * u.dimensionless_unscaled
         self.rho_grid = np.zeros((self.nt_out, self.nr, self.nlon)) * u.dimensionless_unscaled
         self.CMEtracer_grid = np.zeros((self.nt_out, self.nr, self.nlon)) * u.dimensionless_unscaled
-
+        
         # Mesh the spatial coordinates.
         self.lon_grid, self.r_grid = np.meshgrid(self.lon, self.r)
 
@@ -582,6 +583,9 @@ class HUXt:
             id_sort = np.argsort(cme_params[:, 0])
             cme_params = cme_params[id_sort]
             do_cme = 1
+            
+            #set up the test particle position field
+            self.CMErbound_testparticle = np.zeros((self.nt_out, len(self.cmes), 2, self.nlon)) 
         else:
             do_cme = 0
             cme_params = np.NaN * np.zeros((1, 9))
@@ -624,15 +628,20 @@ class HUXt:
             
             #plt.plot(model_time,vinput)
 
-            v, br, rho, CMEtracer  = solve_radial(vinput, brinput, rhoinput,
-                                         model_time, self.rrel.value, lon_out,
-                                         self.model_params, do_cme, cme_params,
-                                         self.latitude.value)
+            # v, br, rho, CMEtracer  = solve_radial(vinput, brinput, rhoinput,
+            #                               model_time, self.rrel.value, lon_out,
+            #                               self.model_params, do_cme, cme_params,
+            #                               self.latitude.value)
+            v, br, rho, CMEtracer, CMErbounds  = solve_radial_testparticle(vinput, 
+                                          brinput, rhoinput,
+                                          model_time, self.rrel.value, lon_out,
+                                          self.model_params, do_cme, cme_params,
+                                          self.latitude.value, self.dt.value)
             self.v_grid[:, :, i] = v * self.kms
             self.br_grid[:, :, i] = br * u.dimensionless_unscaled
             self.rho_grid[:, :, i] = rho * u.dimensionless_unscaled
             self.CMEtracer_grid[:, :, i] = CMEtracer * u.dimensionless_unscaled
-
+            self.CMErbound_testparticle[:, :, :, i] = CMErbounds * u.dimensionless_unscaled
         # Update CMEs positions by tracking through the solution.
         updated_cmes = []
         for cme in self.cmes:
@@ -905,7 +914,15 @@ class HUXt:
 
             # Add on a legend.
             fig.legend(ncol=5, loc='lower center', frameon=False, handletextpad=0.2, columnspacing=1.0)
+       
+        # Add test particle CME boundaries
+        for j, cme in enumerate(self.cmes):
+            for n in range(0,self.nlon):
+                ax.plot(self.lon[n], self.CMErbound_testparticle[id_t,j,0,n]/695700, 'k+', linewidth=3)
+                ax.plot(self.lon[n], self.CMErbound_testparticle[id_t,j,1,n]/695700, 'r+', linewidth=3)
 
+        
+        
         ax.set_ylim(0, self.r.value.max())
         ax.set_yticklabels([])
         ax.set_xticklabels([])
@@ -1211,7 +1228,7 @@ def huxt_constants():
     synodic_period = 27.2753 * daysec  # Solar Synodic rotation period from Earth.
     sidereal_period = 25.38 *daysec # Solar sidereal rotation period 
     v_max = 2000 * kms
-    cmetracerthreshold=0.005 # Threshold of CME tracer field to use for CME identification [0.02]
+    cmetracerthreshold=0.02 # Threshold of CME tracer field to use for CME identification [0.02]
     rho_compression_factor = 0.01 #comprsssion/expansion factor for density post processing
     CMEdensity = -1 # -1 for ambient density
     constants = {'twopi': twopi, 'daysec': daysec, 'kms': kms, 'alpha': alpha,
@@ -1415,7 +1432,7 @@ def solve_radial(vinput, brinput, rhoinput, model_time, rrel, lon, params,
 
     """
     # Main model loop
-    # ----------------------------------------------------------------------------------------
+    
     dtdr = params[0]
     alpha = params[1]
     r_accel = params[2]
@@ -1510,6 +1527,168 @@ def solve_radial(vinput, brinput, rhoinput, model_time, rrel, lon, params,
                     iter_count = 0
 
     return v_grid, br_grid, rho_grid, CMEtracer_grid
+
+
+
+
+@jit(nopython=False)
+def solve_radial_testparticle(vinput, brinput, rhoinput, model_time, rrel, lon, params, 
+                 do_cme, cme_params,latitude, dt):
+    """
+    Solve the radial profile as a function of time (including spinup), and return radial profile at specified
+    output timesteps.
+    
+    THIS VERSION ADDS TEST PARTICLES AT CME BOUNDARIES
+
+    :param vinput: Timeseries of inner boundary solar wind speeds
+    :param vinput: Timeseries of inner boundary passive tracer
+    :param model_time: Array of model timesteps
+    :param rrel: Array of model radial coordinates relative to inner boundary coordinate
+    :param lon: The longitude of this radial
+    :param params: Array of HUXt parameters
+    :param do_cme: Boolean, if True any provided ConeCMEs are included in the solution.
+    :param cme_params: Array of ConeCME parameters to include in the solution. 1 Row for each CME, with columns as
+                       required by _is_in_cone_cme_boundary_
+    :param latitude: Latitude (from equator) of the HUXt plane
+
+    Returns:
+
+    """
+    # Main model loop
+    
+    dtdr = params[0]
+    alpha = params[1]
+    r_accel = params[2]
+    dt_scale = np.int32(params[3])
+    nt_out = np.int32(params[4])
+    nr = np.int32(params[5])
+    r_boundary = params[7]
+    n_cme = cme_params.shape[0]
+    
+    #compute the radial grid for the test particles
+    rgrid = rrel*695700 + r_boundary
+    dr=rgrid[1]-rgrid[0]
+    dt = dtdr*dr
+    
+
+    # Preallocate space for solutions
+    v_grid = np.zeros((nt_out, nr))    
+    br_grid = np.zeros((nt_out, nr))
+    rho_grid = np.zeros((nt_out, nr))
+    CMEtracer_grid = np.zeros((nt_out, nr))
+    CMErbound_testparticle = np.zeros((nt_out, n_cme, 2))*np.nan
+
+    iter_count = 0
+    t_out = 0
+    
+    for t, time in enumerate(model_time):
+        
+        
+                
+
+        # Get the initial condition, which will update in the loop,
+        # and snapshots saved to output at right steps.
+        if t == 0:
+            v = np.ones(nr) * 400
+            br = np.ones(nr) * 0.0
+            rho = np.ones(nr) * 8.0
+            CMEtracer = np.ones(nr) * 0.0
+            r_testparticles = np.ones((n_cme, 2))*np.nan
+             
+
+        # Update the inner boundary conditions
+        v[0] = vinput[t]
+        br[0] = brinput[t]
+        rho[0] = rhoinput[t]
+        CMEtracer[0] = 0.0
+
+        # Compute boundary speed of each CME at this time. 
+        # Set boundary to the maximum CME speed at this time.
+        if time > 0:
+            if do_cme == 1:
+                
+                v_update_cme = np.zeros(n_cme)*np.nan
+                #CMEtracer_update = np.zeros(n_cme)
+                for n in range(n_cme):
+                    cme = cme_params[n, :]
+                    #check if this point is within the cone CME
+                    if _is_in_cme_boundary_(r_boundary, lon, latitude, time, cme):                
+                        v_update_cme[n] = cme[4]
+                        #CMEtracer_update[n] = 1.0 #the CME number
+                        
+                        #put the CME trailing edge test particle at the inner boundary
+                        r_testparticles[n,1] = r_boundary
+                        #if the leading edge test particle doesn't exist, add it
+                        if np.isnan(r_testparticles[n,0]):
+                            r_testparticles[n,0] = r_boundary
+                        
+                #see if there are any CMEs
+                if not np.all(np.isnan(v_update_cme)):
+                    v[0] = np.nanmax(v_update_cme)
+                    CMEtracer[0] = 1.0
+                    br[0] = 0.0
+                    if cme[8] < 0 :
+                        rho[0] = rho[0]
+                    else:
+                        rho[0] = cme[8]
+                        
+        
+        # update all fields for the given longitude
+        # =====================================
+        u_up = v[1:].copy()
+        u_dn = v[:-1].copy()
+        br_up = br[1:].copy()
+        br_dn = br[:-1].copy() 
+        rho_up = rho[1:].copy()
+        rho_dn = rho[:-1].copy() 
+        CMEtracer_up = CMEtracer[1:].copy()
+        CMEtracer_dn = CMEtracer[:-1].copy() 
+        u_up_next, br_up_next, rho_up_next, CMEtracer_up_next = _upwind_step_ptracers_(u_up, u_dn, 
+                                                   br_up, br_dn, rho_up, rho_dn,
+                                                   CMEtracer_up, CMEtracer_dn,
+                                                   dtdr, alpha, r_accel, rrel)
+        # Save the updated time step
+        v[1:] = u_up_next.copy()
+        br[1:] = br_up_next.copy()
+        rho[1:] = rho_up_next.copy()
+        CMEtracer[1:] = CMEtracer_up_next.copy()
+
+        #move the test particles forward
+        #v_test = np.interp(35,  [30,40], [100,200])
+        if t > 0:        
+             for n in range(0,n_cme):  #loop over each CME
+                 for bound in range(0,2): #loop over front and rear boundaries
+                     if (np.isnan(r_testparticles[n,bound]) == False):
+                         #linearly interpolate the speed
+                         v_test = np.interp(r_testparticles[n,bound] - dr/2, rgrid, v)
+                         #advance the test particle
+                         r_testparticles[n,bound] = (r_testparticles[n,bound] 
+                                                     + v_test * dt)
+                 if r_testparticles[n,0] > rgrid[-1]:
+                     #if the leading edge is past the outer boundary, put it at the outer boundary
+                     r_testparticles[n,0] = rgrid[-1]
+                 if r_testparticles[n,1] > rgrid[-1]:
+                     #if the trailing edge is past the outer boundary,delete
+                     r_testparticles[n,:] = np.nan
+
+      
+
+        # Save this frame to output if it is an output timestep
+        if time >= 0:
+            iter_count = iter_count + 1
+            if iter_count == dt_scale:
+                if t_out <= nt_out - 1:
+                    v_grid[t_out, :] = v.copy()
+                    br_grid[t_out, :] = br.copy()
+                    rho_grid[t_out, :] = rho.copy()
+                    CMEtracer_grid[t_out, :] = CMEtracer.copy()
+                    CMErbound_testparticle[t_out, :, :] = r_testparticles.copy()
+                    
+                    t_out = t_out + 1
+                    iter_count = 0
+
+    return v_grid, br_grid, rho_grid, CMEtracer_grid, CMErbound_testparticle
+
 
 @jit(nopython=True)
 def _upwind_step_(v_up, v_dn, dtdr, alpha, r_accel, rrel):
