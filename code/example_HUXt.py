@@ -92,13 +92,7 @@ cme_list = [cme]
 model = H.HUXt(v_boundary=v_boundary, lon_out=0.0*u.deg, simtime=5*u.day, dt_scale=1)
 
 # Run the model, and this time save the results to file.
-#model.solve(cme_list, save=True, tag='1d_conecme_test')
-model.solve(cme_list)
-
-#test load/save
-#out_path = model.save(tag='oneD_CME')
-#model, cme_list = H.load_HUXt_run(out_path)
-
+model.solve(cme_list, save=True, tag='1d_conecme_test')
 
 # Plot the radial profile and time series of both the ambient and ConeCME solutions at a fixed time (in days). 
 # Save both to file as well. These are saved in HUXt>figures>HUXt1D
@@ -149,10 +143,6 @@ model.plot_radial(1.0*u.day, lon=0.0,field='cme')
 model.plot_radial(1.5*u.day, lon=0.0,field='cme')
 model.plot_radial(2.0*u.day, lon=0.0,field='cme')
 
-# CME_r=np.ones(model.time_out.size)
-# for time, t in model.time_out:
-    
-
 
 
 
@@ -202,8 +192,8 @@ model.plot_timeseries(r, lon=0.0*u.deg,field='v')
 
 #Form boundary conditions - background wind of 400 km/s with two fast streams.
 vr_in = np.ones(128) * 400 * (u.km/u.s)
-#v_boundary[30:50] = 600 * (u.km/u.s)
-#v_boundary[95:125] = 700 * (u.km/u.s)
+vr_in[30:50] = 600 * (u.km/u.s)
+vr_in[95:125] = 700 * (u.km/u.s)
 #add a CME
 cme = H.ConeCME(t_launch=0.5*u.day, longitude=0.0*u.deg, width=40*u.deg, v=1000*(u.km/u.s), thickness=5*u.solRad)
 cme_list = [cme]
@@ -218,15 +208,15 @@ model = H.HUXt(v_boundary=vr_in, simtime=4*u.day,
 model.solve(cme_list) # This takes a minute or so to run.
 
 #test load/save
-#out_path = model.save(tag='twoD_CME')
-#model, cme_list = H.load_HUXt_run(out_path)
+out_path = model.save(tag='twoD_CME')
+model, cme_list = H.load_HUXt_run(out_path)
 
 t_interest = 3.5*u.day
 model.plot(t_interest, field='v')
-#model.plot(t_interest, field='br')
-#model.plot(t_interest, field='cme')
+model.plot(t_interest, field='br')
+model.plot(t_interest, field='cme')
 
-model.animate('v', tag='pancaking_CR2209')
+
 
 # <codecell> HUXt2D, animate output
 #==============================================================================
