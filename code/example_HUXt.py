@@ -20,7 +20,6 @@ os.chdir(os.path.abspath(os.environ['DBOX'] + 'python_repos\\HUXt\\code'))
 
 
 
-
 # <codecell> HUXt1D, no CME
 #==============================================================================
 #Run HUXt1D with user specified boundary conditions and no CMEs
@@ -40,7 +39,7 @@ ax.set_ylabel('Input Wind Speed (km/s)')
 ax.set_xlim(0,128)
 
 # Setup HUXt to do a 5 day simulation, with model output every 4 timesteps (roughly half and hour time step), looking at 0 longitude
-model = H.HUXt(v_boundary=v_boundary, lon_out=0.0*u.deg, simtime=5*u.day, dt_scale=4)
+model = H.HUXt(v_boundary=v_boundary, lon_out=0.0*u.deg, simtime=27*u.day, dt_scale=4)
 
 # Solve these conditions, with no ConeCMEs added.
 cme_list = []
@@ -57,13 +56,13 @@ r = 1.0*u.AU
 model.plot_timeseries(r,lon=0.0,field='v')
 
 #now post-process the results to mimic compression at stream interactions and the 1/R^2 fall off.
-model.rho_post_process()
-model.plot_radial(t, lon=0.0*u.deg,field='rho')
-model.plot_timeseries(r, lon=0.0*u.deg,field='rho')
+#model.rho_post_process()
+#model.plot_radial(t, lon=0.0*u.deg,field='rho')
+#model.plot_timeseries(r, lon=0.0*u.deg,field='rho')
 
-# #test load/save
-# out_path = model.save(tag='oneD_noCME')
-# model2, cme_list2 = H.load_HUXt_run(out_path)
+#test load/save
+out_path = model.save(tag='oneD_noCME')
+model2, cme_list2 = H.load_HUXt_run(out_path)
 
 # # Plot the radial profile of the ambient wind profile at a fixed time (in days). 
 # t = 1.5*u.day
@@ -72,9 +71,6 @@ model.plot_timeseries(r, lon=0.0*u.deg,field='rho')
 # # Plot the time series of the ambient wind profile at a fixed radius. 
 # r = 1.0*u.AU
 # model2.plot_timeseries(r,lon=0.0,field='ambient')
-
-
-
 
 
 
@@ -208,15 +204,20 @@ model = H.HUXt(v_boundary=vr_in, simtime=4*u.day,
 model.solve(cme_list) # This takes a minute or so to run.
 
 #test load/save
-out_path = model.save(tag='twoD_CME')
-model, cme_list = H.load_HUXt_run(out_path)
+#out_path = model.save(tag='twoD_CME')
+#model, cme_list = H.load_HUXt_run(out_path)
 
 t_interest = 3.5*u.day
 model.plot(t_interest, field='v')
-model.plot(t_interest, field='br')
-model.plot(t_interest, field='cme')
+#model.plot(t_interest, field='br')
 
+r = 1*u.au
+model.plot_timeseries(r, lon=0.0*u.deg,field='v')
 
+#get Earth time series
+earth_time_series = model.get_earth_timeseries()        
+plt.figure()
+plt.plot(earth_time_series[:,0]-earth_time_series[0,0],earth_time_series[:,1])
 
 # <codecell> HUXt2D, animate output
 #==============================================================================
@@ -251,6 +252,7 @@ cr=2209
 vr_in, br_in = H.Hin.get_MAS_long_profile(cr)
 
 model = H.HUXt(v_boundary=vr_in, cr_num=cr, br_boundary=br_in,
+               lon_start= -np.pi/4 * u.rad , lon_stop = np.pi/4  * u.rad,
                simtime=5*u.day, cr_lon_init=60*u.deg, dt_scale=4)
 
 daysec = 86400
@@ -270,13 +272,19 @@ end = time.time()
 print("Fast solve (after compilation) = %s" % (end - start)) 
 
 
-t_interest=4*u.day
+t_interest=1*u.day
 model.plot(t_interest, field='v')
 #model.plot(t_interest, field='br')
 #model.plot(t_interest, field='rho')
 #model.plot(t_interest, field='cme')
 
 #model.animate('v', tag='testparticle')
+
+#save the data
+out_path = model.save(tag='cone_cme_testb')
+
+# And loaded back in with
+model2, cme_list2 = H.load_HUXt_run(out_path)
 
 # <codecell> Load and save
 
@@ -292,11 +300,7 @@ model2.plot(t_interest, field='br_cme')
 model2.plot(t_interest, field='br_ambient')
 
 
-#save the speed and Br fields
-out_path = model.save_all(tag='cone_cme_test')
 
-# And loaded back in with
-model2, cme_list2 = H.load_HUXt_run(out_path)
 t_interest=4.5*u.day
 model2.plot(t_interest, field='ambient')
 model2.plot(t_interest, field='cme')

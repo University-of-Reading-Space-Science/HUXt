@@ -26,7 +26,7 @@ os.chdir(os.path.abspath(os.environ['DBOX'] + 'python_repos\\HUXt\\code'))
 
 
 
-startdate=datetime.datetime(2004,5,20,2,40,23,999999)
+startdate=datetime.datetime(1977,9,27,0,0,0,999999)
 runtime = 15*u.day
 
 #create a bunch of CMEs
@@ -74,8 +74,11 @@ modelsid.solve(cme_list)
 # t_interest=11*u.day
 # modelsid.plot(t_interest, field='v')
 
-# t_interest=13*u.day
-# modelsid.plot(t_interest, field='v')
+t_interest=13*u.day
+modelsid.plot(t_interest, field='v')
+
+r = 1.0*u.AU
+modelsid.plot_timeseries(r, lon=0.0*u.deg,field='v')
 
 modelsid.animate('v', tag='sidereal_test')
 
