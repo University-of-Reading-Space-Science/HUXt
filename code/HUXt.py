@@ -665,11 +665,20 @@ class HUXt:
                 if self.frame == 'sidereal':
                     #if the solution is in the sideral frame, adjust CME longitudes
                     print('Adjusting CME HEEQ longitude for sidereal frame')
-                    omega_syn = 2*np.pi*u.rad/huxt_constants()['synodic_period']
-                    omega_sid = 2*np.pi*u.rad/huxt_constants()['sidereal_period']
+                    # omega_syn = 2*np.pi*u.rad/huxt_constants()['synodic_period']
+                    # omega_sid = 2*np.pi*u.rad/huxt_constants()['sidereal_period']
 
+                    # cme.longitude = _zerototwopi_(cme.longitude 
+                    #                               + cme.t_launch *(omega_sid-omega_syn) )*u.rad
+                    Earthpos = self.get_observer('EARTH')
+                    #time and longitude from start of run
+                    dt_t0 = (Earthpos.time - self.time_init).to(u.s)
+                    dlon_t0 = Earthpos.lon_hae -  Earthpos.lon_hae[0]
+                    #find the CME hae longitude relative to the run start
+                    cme_hae = np.interp(cme.t_launch.value,dt_t0.value,dlon_t0)
+                    #adjust the CME HEEQ longitude accordingly
                     cme.longitude = _zerototwopi_(cme.longitude 
-                                                  + cme.t_launch *(omega_sid-omega_syn) )*u.rad
+                                                   + cme_hae )*u.rad
                 #add the CME to the list  
                 cme_list_checked.append(cme)
 
@@ -951,7 +960,9 @@ class HUXt:
             obs = self.get_observer(body)
             deltalon = 0.0*u.rad
             if self.frame == 'sidereal':
-                deltalon = (2*np.pi * time.to(u.day).value/365)*u.rad    
+                Earthpos = self.get_observer('EARTH')
+                #deltalon = (2*np.pi * time.to(u.day).value/365)*u.rad    
+                deltalon = Earthpos.lon_hae[id_t] -  Earthpos.lon_hae[0]
             obslon = _zerototwopi_(obs.lon[id_t] + deltalon)
             ax.plot(obslon, obs.r[id_t], style, markersize=16, label=body)
             
@@ -1245,8 +1256,8 @@ class HUXt:
 
         #adjust the HEEQ coordinates if the sidereal frame has been used
         if self.frame == 'sidereal':
-            #lonheeq = H._zerototwopi_(Earthpos.lon_hae.value - Earthpos.lon_hae[0].value)
-            deltalon = (2*np.pi * self.time_out.to(u.day).value/365)*u.rad
+            #deltalon = (2*np.pi * self.time_out.to(u.day).value/365)*u.rad
+            deltalon = Earthpos.lon_hae -  Earthpos.lon_hae[0]
             lonheeq = _zerototwopi_(Earthpos.lon.value + deltalon.value)
         elif self.frame == 'synodic':
             lonheeq = Earthpos.lon.value 

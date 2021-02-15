@@ -265,18 +265,17 @@ cme_list = []
 for t, l, w, v, thick in zip(times, lons, widths, speeds, thickness):
     cme = H.ConeCME(t_launch=t*u.s, longitude=l*u.deg, width=w*u.deg, v=v*model.kms, thickness=thick*u.solRad)
     cme_list.append(cme)
-
+    
+model.solve(cme_list)
 start=time.time(); 
-model.solve(cme_list) # This takes a minute or so to run.
+model.solve(cme_list) 
 end = time.time()
 print("Fast solve (after compilation) = %s" % (end - start)) 
 
 
-t_interest=1*u.day
+t_interest=3*u.day
 model.plot(t_interest, field='v')
-#model.plot(t_interest, field='br')
-#model.plot(t_interest, field='rho')
-#model.plot(t_interest, field='cme')
+
 
 #model.animate('v', tag='testparticle')
 
@@ -286,6 +285,57 @@ out_path = model.save(tag='cone_cme_testb')
 # And loaded back in with
 model2, cme_list2 = H.load_HUXt_run(out_path)
 
+# <codecell> HUXt2D, multiple CMEs in sidereal frame
+#==============================================================================
+#Both HUXt1D and HUXt2D can be run with multiple ConeCMEs.
+#==============================================================================
+# Setup HUXt to do a 5 day simulation, with model output every 4 timesteps (roughly half and hour time step), looking at 0 longitude
+cr=2209
+vr_in, br_in = H.Hin.get_MAS_long_profile(cr)
+
+modelsid = H.HUXt(v_boundary=vr_in, cr_num=cr, br_boundary=br_in,
+               lon_start= -np.pi/4 * u.rad , lon_stop = np.pi/4  * u.rad,
+               simtime=15*u.day, cr_lon_init=60*u.deg, dt_scale=4,
+               frame = 'sidereal')
+
+daysec = 86400
+times = [7*daysec, 10*daysec, 12*daysec]
+speeds = [850, 1000, 700]
+lons = [0, 0, 0]
+widths = [30, 40, 20]
+thickness = [15, 4, 2]
+cme_list = []
+for t, l, w, v, thick in zip(times, lons, widths, speeds, thickness):
+    cme = H.ConeCME(t_launch=t*u.s, longitude=l*u.deg, width=w*u.deg, v=v*model.kms, thickness=thick*u.solRad)
+    cme_list.append(cme)
+    
+modelsid.solve(cme_list)
+
+t_interest=13*u.day
+modelsid.plot(t_interest, field='v')
+
+#Get the Earth time series
+Earth_sid = modelsid.get_earth_timeseries()
+
+#run the same model for the synodic frame
+modelsyn = H.HUXt(v_boundary=vr_in, cr_num=cr, br_boundary=br_in,
+               lon_start= -np.pi/4 * u.rad , lon_stop = np.pi/4  * u.rad,
+               simtime=15*u.day, cr_lon_init=60*u.deg, dt_scale=4,
+               frame = 'synodic')
+modelsyn.solve(cme_list)
+
+t_interest=13*u.day
+modelsyn.plot(t_interest, field='v')
+
+#Get the Earth time series
+Earth_syn = modelsyn.get_earth_timeseries()
+
+plt.figure()
+plt.plot(Earth_sid[:,0]-Earth_sid[0,0],Earth_sid[:,1],label = 'Sidereal')
+plt.plot(Earth_syn[:,0]-Earth_syn[0,0],Earth_syn[:,1],label = 'Synodic')
+plt.legend()
+plt.xlabel('Time [days]')
+plt.ylabel('Solar wind speed [km/s]')
 # <codecell> Load and save
 
 #save just the speed fields
