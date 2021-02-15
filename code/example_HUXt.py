@@ -60,17 +60,7 @@ model.plot_timeseries(r,lon=0.0,field='v')
 #model.plot_radial(t, lon=0.0*u.deg,field='rho')
 #model.plot_timeseries(r, lon=0.0*u.deg,field='rho')
 
-#test load/save
-out_path = model.save(tag='oneD_noCME')
-model2, cme_list2 = H.load_HUXt_run(out_path)
 
-# # Plot the radial profile of the ambient wind profile at a fixed time (in days). 
-# t = 1.5*u.day
-# model2.plot_radial(t, lon=0.0,field='ambient')
-
-# # Plot the time series of the ambient wind profile at a fixed radius. 
-# r = 1.0*u.AU
-# model2.plot_timeseries(r,lon=0.0,field='ambient')
 
 
 
@@ -94,11 +84,7 @@ model.solve(cme_list, save=True, tag='1d_conecme_test')
 # Save both to file as well. These are saved in HUXt>figures>HUXt1D
 t = 1*u.day
 model.plot_radial(t, lon=0.0*u.deg, field='v')
-#model.plot_radial(t, lon=0.0*u.deg, field='cme')
-#model.plot_radial(t, field='both', save=True, tag='1d_cone_test_radial')
 
-#r = 1.0*u.AU
-#model.plot_timeseries(r, lon=0.0*u.deg,field='v', tag='1d_cone_test_radial')
 
 #plot the CME front
 cmecoords=model.cmes[0].coords
@@ -135,9 +121,9 @@ v_boundary=450*np.ones(128) * u.km/u.s
 model = H.HUXt(v_boundary=v_boundary, lon_out=0.0*u.deg, simtime=5*u.day, dt_scale=4)
 model.solve(cme_list)
 
-model.plot_radial(1.0*u.day, lon=0.0,field='cme')
-model.plot_radial(1.5*u.day, lon=0.0,field='cme')
-model.plot_radial(2.0*u.day, lon=0.0,field='cme')
+model.plot_radial(1.0*u.day, lon=0.0,field='v')
+model.plot_radial(1.5*u.day, lon=0.0,field='v')
+model.plot_radial(2.0*u.day, lon=0.0,field='v')
 
 
 
@@ -223,7 +209,7 @@ plt.plot(earth_time_series[:,0]-earth_time_series[0,0],earth_time_series[:,1])
 #==============================================================================
 #Animate a MP4 of the CME solution. These are saved in HUXt>figures>HUXt2D
 #==============================================================================
-model.animate('cme', tag='cone_cme_test') # This takes about a minute too.
+model.animate('v', tag='cone_cme_test') # This takes about a minute too.
 
 
 
@@ -232,7 +218,7 @@ model.animate('cme', tag='cone_cme_test') # This takes about a minute too.
 #Output the coordinates of the tracked CME boundary 
 #==============================================================================
 cme = model.cmes[0]
-timestep = 50
+timestep = 500
 rad = cme.coords[timestep]['r']
 lon = cme.coords[timestep]['lon']
 x = rad * np.cos(lon)
@@ -279,11 +265,7 @@ model.plot(t_interest, field='v')
 
 #model.animate('v', tag='testparticle')
 
-#save the data
-out_path = model.save(tag='cone_cme_testb')
 
-# And loaded back in with
-model2, cme_list2 = H.load_HUXt_run(out_path)
 
 # <codecell> HUXt2D, multiple CMEs in sidereal frame
 #==============================================================================
@@ -338,36 +320,18 @@ plt.xlabel('Time [days]')
 plt.ylabel('Solar wind speed [km/s]')
 # <codecell> Load and save
 
+
+t_interest=4.5*u.day
+model.plot(t_interest, field='v')
+
 #save just the speed fields
 out_path = model.save(tag='cone_cme_test')
 
 # And loaded back in with
 model2, cme_list2 = H.load_HUXt_run(out_path)
-t_interest=4.5*u.day
-model2.plot(t_interest, field='ambient')
-model2.plot(t_interest, field='cme')
-model2.plot(t_interest, field='br_cme')
-model2.plot(t_interest, field='br_ambient')
-
-
 
 t_interest=4.5*u.day
-model2.plot(t_interest, field='ambient')
-model2.plot(t_interest, field='cme')
-model2.plot(t_interest, field='br_cme')
-model2.plot(t_interest, field='br_ambient')
-
-# #test the load/save function 
-# out_path = model.save(tag='multi_cones')
-# model2, cme_list2 = H.load_HUXt_run(out_path)
-
-# t_interest=4.5*u.day
-# model2.plot(t_interest, field='ambient')
-# model2.plot(t_interest, field='cme')
-# model2.plot(t_interest, field='ptracer_cme')
-# model2.plot(t_interest, field='ptracer_ambient')
-
-#model.animate('cme', tag='multi_cones')
+model2.plot(t_interest, field='v')
 
 # <codecell> Planetary and spacecraft positions
 #==============================================================================
@@ -560,27 +524,6 @@ model.animate('cme', tag='mercut_cme_test') # This takes about a minute too.
 
 
 
-# <codecell> Extract the properties at Earth latitude - not currently used
-
-#create the time series
-nlong=H.huxt_constants()['nlong']
-tstart=sunpy.coordinates.sun.carrington_rotation_time(cr)
-tstop=sunpy.coordinates.sun.carrington_rotation_time(cr+1)
-dt=(tstop-tstart)/nlong
-t=tstart + dt/2 + (tstop-tstart-dt) * np.linspace(0.,1.0,nlong)
-
-### Now get Earth's Carrington Longitude vs time and visualize
-earthSpiceKernel = spice_data.get_kernel("planet_trajectories")
-heliopy.spice.furnish(earthSpiceKernel)
-earthTrajectory = heliopy.spice.Trajectory("Earth")
-earthTrajectory.generate_positions(t,'Sun','IAU_SUN')
-earth = astropy.coordinates.SkyCoord(x=earthTrajectory.x,
-                                     y=earthTrajectory.y,
-                                     z=earthTrajectory.z,
-                                     frame = sunpy.coordinates.frames.HeliographicCarrington,
-                                     representation_type="cartesian"
-                                     )
-earth.representation_type="spherical"
 
 
 # <codecell> Test the HUXt inner boundary mapping

@@ -1861,8 +1861,12 @@ def load_HUXt_run(filepath):
         if '_br_boundary_init_' in data.keys():
             args = args +', br_boundary=br_boundary'
         if '_rho_boundary_init_' in data.keys():
-            args = args +', rho_boundary=rho_boundary'      
+            args = args +', rho_boundary=rho_boundary'  
+        
         model = eval('HUXt(' + args +')')
+        #reset the longitudes, as when onlyt a wedge is simulated, it gets confused.
+        model.lon=lon
+        model.nlon = nlon
 
         model.v_grid = data['v_grid'][()] * u.Unit(data['v_boundary'].attrs['unit'])
         model.CMEtracer_grid = data['CMEtracer_grid'][()] * u.dimensionless_unscaled
