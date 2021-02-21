@@ -354,6 +354,8 @@ class ConeCME:
                     # Update the target, so next iteration finds CME that overlaps with this frame.
                     target = cme_id.copy()
         return
+    
+    
     def compute_earth_arrival(self):
         """
         Function to compute arrival time at a set longitude and radius of the CME front.
@@ -586,12 +588,6 @@ class HUXt:
             #keep a flag to determine whether the rho enhancement by grad(v) has been performed
             self.rho_post_processed = False
 
-        
-         
-        
-        
-                 
-
         # Determine CR number, used for spacecraft/planetary positions
         if np.isnan(cr_num):
             print('No initiation time specified. Defaulting to 1977-9-27')
@@ -620,18 +616,7 @@ class HUXt:
         self.v_boundary = np.interp(lon_boundary.value, lon_shifted, v_b_shifted, period=self.twopi)
         # Preallocate space for the output for the solar wind fields for the cme and ambient solution.
         self.v_grid = np.zeros((self.nt_out, self.nr, self.nlon)) * self.kms
-        self.CMEtracer_grid = np.zeros((self.nt_out, self.nr, self.nlon)) * u.dimensionless_unscaled
         
-        if self.do_br:
-            br_b_shifted = self.br_boundary[id_sort]
-            self.br_boundary = np.interp(lon_boundary.value, lon_shifted, br_b_shifted, period=self.twopi)
-            self.br_grid = np.zeros((self.nt_out, self.nr, self.nlon)) * u.dimensionless_unscaled
-        if self.do_rho:
-            rho_b_shifted = self.rho_boundary[id_sort]
-            self.rho_boundary = np.interp(lon_boundary.value, lon_shifted, rho_b_shifted, period=self.twopi)
-            self.rho_grid = np.zeros((self.nt_out, self.nr, self.nlon)) * u.dimensionless_unscaled
-        
-            
         # Mesh the spatial coordinates.
         self.lon_grid, self.r_grid = np.meshgrid(self.lon, self.r)
 
@@ -644,6 +629,7 @@ class HUXt:
                                       self.r[0].to('km').value])
         return
 
+    
     def solve(self, cme_list, save=False, tag=''):
         """
         Solve HUXt for the provided boundary conditions and cme list
@@ -698,6 +684,7 @@ class HUXt:
         else:
             do_cme = 0
             cme_params = np.NaN * np.zeros((1, 9))
+            
         #set up the test particle position field
         self.CMErbound_testparticle = np.zeros((self.nt_out, len(self.cmes), 2, self.nlon)) * u.dimensionless_unscaled
 
@@ -732,32 +719,14 @@ class HUXt:
             # convert from cr longitude to timesolve
             vinput = np.flipud(vinit)
             
-            if self.do_br:
-                brinit = np.interp(loninit, all_lons.value, self.br_boundary.value, period=2 * np.pi)
-                brinput = np.flipud(brinit)
-            else:
-                brinput = vinput*np.nan
-                
-            if self.do_rho:
-                rhoinit = np.interp(loninit, all_lons.value, self.rho_boundary.value, period=2 * np.pi)
-                rhoinput = np.flipud(rhoinit)
-            else:
-                rhoinput = vinput*np.nan
-            
             #solve for these inputs, adding in CMEs where necessary
-            v, br, rho, CMEtracer, CMErbounds  = solve_radial_testparticle(vinput, 
-                                          brinput, rhoinput,
-                                          model_time, self.rrel.value, lon_out,
+            v, CMErbounds  = solve_radial_testparticle(vinput, model_time, self.rrel.value, lon_out,
                                           self.model_params, do_cme, cme_params,
-                                          self.latitude.value, self.dt.value)
+                                          self.latitude.value)
             #save the outputs
             self.v_grid[:, :, i] = v * self.kms
-            self.CMEtracer_grid[:, :, i] = CMEtracer * u.dimensionless_unscaled
+            
             self.CMErbound_testparticle[:, :, :, i] = CMErbounds * u.dimensionless_unscaled
-            if self.do_br:
-                self.br_grid[:, :, i] = br * u.dimensionless_unscaled
-            if self.do_rho:
-                self.rho_grid[:, :, i] = rho * u.dimensionless_unscaled
             
         # Update CMEs positions by tracking through the solution.
         updated_cmes = []
@@ -975,8 +944,6 @@ class HUXt:
                 ax.plot(self.lon[n], self.CMErbound_testparticle[id_t,j,0,n]/695700, 'k+', linewidth=3)
                 ax.plot(self.lon[n], self.CMErbound_testparticle[id_t,j,1,n]/695700, 'r+', linewidth=3)
 
-        
-        
         ax.set_ylim(0, self.r.value.max())
         ax.set_yticklabels([])
         ax.set_xticklabels([])
@@ -1301,28 +1268,6 @@ class HUXt:
                                          self.rho_grid[t,id_r,:].value,
                                          period = 2*np.pi)
         return earth_time_series
-        
-        
-    def rho_post_process(self):
-        """
-        A function to post-process the density field to account for compression 
-        and rarefaction, and introduce the 1/r^2 fall off.
-
-        """
-        
-        #check that the density post processing hasn't already been performed
-        if self.rho_post_processed:
-            print('Density has already been post processed')
-            return -1
-        
-        rho_compression_factor=huxt_constants()['rho_compression_factor']
-        self.rho_grid = stream_interactions(self.v_grid.value, self.rho_grid, self.nt_out, 
-                                            self.lon.size, self.r.value, 
-                                            rho_compression_factor)
-        self.rho_post_processed = True
-        return 1
-    
-   
 
 
 def huxt_constants():
@@ -1527,10 +1472,9 @@ def _zerototwopi_(angles):
     return angles_out
 
 
-
 @jit(nopython=True)
-def solve_radial_testparticle(vinput, brinput, rhoinput, model_time, rrel, lon, params, 
-                 do_cme, cme_params,latitude, dt):
+def solve_radial_testparticle(vinput, model_time, rrel, lon, params, 
+                 do_cme, cme_params, latitude):
     """
     Solve the radial profile as a function of time (including spinup), and return radial profile at specified
     output timesteps.
@@ -1570,14 +1514,8 @@ def solve_radial_testparticle(vinput, brinput, rhoinput, model_time, rrel, lon, 
    
     # Preallocate space for solutions
     v_grid = np.zeros((nt_out, nr)) 
-    CMEtracer_grid = np.zeros((nt_out, nr))
     CMErbound_testparticle = np.zeros((nt_out, n_cme, 2))*np.nan
     
-    br_grid = np.zeros((nt_out, nr))    
-    rho_grid = np.zeros((nt_out, nr))
-
-        
-
     iter_count = 0
     t_out = 0
     
@@ -1588,16 +1526,9 @@ def solve_radial_testparticle(vinput, brinput, rhoinput, model_time, rrel, lon, 
             v = np.ones(nr) * 400
             CMEtracer = np.ones(nr) * 0.0
             r_testparticles = np.ones((n_cme, 2))*np.nan
-            br = np.ones(nr) * 0.0
-            rho = np.ones(nr) * 8.0
-        
-             
-
+            
         # Update the inner boundary conditions
         v[0] = vinput[t]
-        CMEtracer[0] = 0.0
-        br[0] = brinput[t]
-        rho[0] = rhoinput[t]
         
         # Compute boundary speed of each CME at this time. 
         # Set boundary to the maximum CME speed at this time.
@@ -1622,59 +1553,33 @@ def solve_radial_testparticle(vinput, brinput, rhoinput, model_time, rrel, lon, 
                 #see if there are any CMEs
                 if not np.all(np.isnan(v_update_cme)):
                     v[0] = np.nanmax(v_update_cme)
-                    CMEtracer[0] = 1.0
-                    br[0] = 0.0
-                    if cme[8] < 0 :
-                        rho[0] = rho[0]
-                    else:
-                        rho[0] = cme[8]
                     
         
         # update all fields for the given longitude
         # =====================================
         u_up = v[1:].copy()
         u_dn = v[:-1].copy()
-        CMEtracer_up = CMEtracer[1:].copy()
-        CMEtracer_dn = CMEtracer[:-1].copy() 
-
-        br_up = br[1:].copy()
-        br_dn = br[:-1].copy() 
-
-        rho_up = rho[1:].copy()
-        rho_dn = rho[:-1].copy()
-
         
         #do a single model time step
-        u_up_next, br_up_next, rho_up_next, CMEtracer_up_next = _upwind_step_ptracers_(u_up, u_dn, 
-                                                   br_up, br_dn, rho_up, rho_dn,
-                                                   CMEtracer_up, CMEtracer_dn,
-                                                   dtdr, alpha, r_accel, rrel)
+        u_up_next = _upwind_step_ptracers_(u_up, u_dn, dtdr, alpha, r_accel, rrel)
         # Save the updated time step
         v[1:] = u_up_next.copy()
-        CMEtracer[1:] = CMEtracer_up_next.copy()
-        br[1:] = br_up_next.copy()
-        rho[1:] = rho_up_next.copy()
         
-
         #move the test particles forward
-        #v_test = np.interp(35,  [30,40], [100,200])
         if t > 0:        
-             for n in range(0,n_cme):  #loop over each CME
-                 for bound in range(0,2): #loop over front and rear boundaries
+            for n in range(0,n_cme):  #loop over each CME
+                for bound in range(0,2): #loop over front and rear boundaries
                      if (np.isnan(r_testparticles[n,bound]) == False):
                          #linearly interpolate the speed
                          v_test = np.interp(r_testparticles[n,bound] - dr/2, rgrid, v)
                          #advance the test particle
-                         r_testparticles[n,bound] = (r_testparticles[n,bound] 
-                                                     + v_test * dt)
-                 if r_testparticles[n,0] > rgrid[-1]:
-                     #if the leading edge is past the outer boundary, put it at the outer boundary
-                     r_testparticles[n,0] = rgrid[-1]
-                 if r_testparticles[n,1] > rgrid[-1]:
-                     #if the trailing edge is past the outer boundary,delete
-                     r_testparticles[n,:] = np.nan
-
-      
+                         r_testparticles[n,bound] = (r_testparticles[n,bound] + v_test * dt)
+                if r_testparticles[n,0] > rgrid[-1]:
+                    #if the leading edge is past the outer boundary, put it at the outer boundary
+                    r_testparticles[n,0] = rgrid[-1]
+                if r_testparticles[n,1] > rgrid[-1]:
+                    #if the trailing edge is past the outer boundary,delete
+                    r_testparticles[n,:] = np.nan
 
         # Save this frame to output if it is an output timestep
         if time >= 0:
@@ -1682,48 +1587,15 @@ def solve_radial_testparticle(vinput, brinput, rhoinput, model_time, rrel, lon, 
             if iter_count == dt_scale:
                 if t_out <= nt_out - 1:
                     v_grid[t_out, :] = v.copy()
-                    CMEtracer_grid[t_out, :] = CMEtracer.copy()
                     CMErbound_testparticle[t_out, :, :] = r_testparticles.copy()
-                    br_grid[t_out, :] = br.copy()
-                    rho_grid[t_out, :] = rho.copy()
-         
                     t_out = t_out + 1
                     iter_count = 0
     
-    return v_grid, br_grid, rho_grid, CMEtracer_grid, CMErbound_testparticle
+    return v_grid, CMErbound_testparticle
 
 
 @jit(nopython=True)
-def _upwind_step_(v_up, v_dn, dtdr, alpha, r_accel, rrel):
-    """
-    Compute the next step in the upwind scheme of Burgers equation with added acceleration of the solar wind.
-    :param v_up: A numpy array of the upwind radial values. Units of km/s.
-    :param v_dn: A numpy array of the downwind radial values. Units of km/s.
-    :param dtdr: Ratio of HUXts time step and radial grid step. Units of s/km.
-    :param alpha: Scale parameter for residual Solar wind acceleration.
-    :param r_accel: Spatial scale parameter of residual solar wind acceleration. Units of km.
-    :param rrel: The model radial grid relative to the radial inner boundary coordinate. Units of km.
-    :return: The upwind values at the next time step, numpy array with units of km/s.
-    """
-
-    # Arguments for computing the acceleration factor
-    accel_arg = -rrel[:-1] / r_accel
-    accel_arg_p = -rrel[1:] / r_accel
-
-    # Get estimate of next time step
-    v_up_next = v_up - dtdr * v_up * (v_up - v_dn)
-    # Compute the probable speed at 30rS from the observed speed at r
-    v_source = v_dn / (1.0 + alpha * (1.0 - np.exp(accel_arg)))
-    # Then compute the speed gain between r and r+dr
-    v_diff = alpha * v_source * (np.exp(accel_arg) - np.exp(accel_arg_p))
-    # Add the residual acceleration over this grid cell
-    v_up_next = v_up_next + (v_dn * dtdr * v_diff)
-    return v_up_next
-
-
-@jit(nopython=True)
-def _upwind_step_ptracers_(v_up, v_dn, br_up, br_dn, rho_up, rho_dn,
-                           CMEtracer_up, CMEtracer_dn, dtdr, alpha, r_accel, rrel):
+def _upwind_step_ptracers_(v_up, v_dn, dtdr, alpha, r_accel, rrel):
     """
     Compute the next step in the upwind scheme of Burgers equation with added acceleration of the solar wind.
     :param v_up: A numpy array of the upwind radial values. Units of km/s.
@@ -1750,14 +1622,8 @@ def _upwind_step_ptracers_(v_up, v_dn, br_up, br_dn, rho_up, rho_dn,
     # Add the residual acceleration over this grid cell
     v_up_next = v_up_next + (v_dn * dtdr * v_diff)
     
-    
-    #now advect the passive tracers
-    CMEtracer_up_next = CMEtracer_up - dtdr * v_up * (CMEtracer_up - CMEtracer_dn)
-    br_up_next = br_up - dtdr * v_up * (br_up - br_dn)
-    rho_up_next = rho_up - dtdr * v_up * (rho_up - rho_dn)
-    
-    
-    return v_up_next, br_up_next, rho_up_next, CMEtracer_up_next
+    return v_up_next
+
 
 @jit(nopython=True)
 def _is_in_cme_boundary_(r_boundary, lon, lat, time, cme_params):
@@ -1820,6 +1686,7 @@ def _is_in_cme_boundary_(r_boundary, lon, lat, time, cme_params):
             isincme=True
 
     return isincme
+
 
 def load_HUXt_run(filepath):
     """
@@ -1921,83 +1788,6 @@ def load_HUXt_run(filepath):
         model = []
 
     return model, cme_list
-
-
-@jit(nopython=True)
-def stream_interactions(v_grid, rho_grid, nt_out, Nlon, r, rho_compression_factor):
-    """
-    The function for introducing density enhancement and 1/r^2 scaling. This
-    is called by rho_post_processing and is a stand alone function to allow
-    numba JIT complition.
-    """
-       
-    def binomial_filter(series, weights=[]):
-        """
-        A function for smoothing using a weighted filter
-
-        """
-        
-        if not weights:
-            weights = [1,  4,  6,  4,  1] 
-        
-        #np.sum seems to cause numba problems.
-        totalweight=0
-        for i in range(0,len(weights)):
-            totalweight = totalweight + weights[i]
-        
-        nweights=len(weights)
-        nbuffer=int((nweights -1)/2)
-        L=len(series)
-        
-        #create a list of the terms that produce teh filter
-        terms=[]
-        for n in range(0,nweights):
-            terms.append(series[n:L-nweights+n+1])
-        
-        #multiple each term by the weighting    
-        series_binomial=series*0.0
-        for n in range(0,nweights):
-            series_binomial[nbuffer:-nbuffer]= (series_binomial[nbuffer:-nbuffer] +
-                                                terms[n] * weights[n])
-        #re-normalise
-        series_binomial=series_binomial/totalweight
-        
-        #edge effects - not fully implemented here!
-        series_binomial[:nbuffer]=series[:nbuffer]
-        series_binomial[-nbuffer:]=series[-nbuffer:]
-    
-        # for n in range(0,nbuffer-1):
-        #     series_binomial[n]=0.0
-        #     for i in range(0,n)
-        #         series_binomial[n]=series_binomial[n] + series []
-    
-        #plt.plot(series)
-        #plt.plot(series_binomial)    
-        return series_binomial
-    
-    #loop through each time step and change the density based upon the speed gradient
-    for nt in range(0,nt_out):
-        for nlong in range(0,Nlon):
-            vup=v_grid[nt,1:,nlong]
-            vdown=v_grid[nt,:-1,nlong]
-            
-            vgrad=np.zeros(len(vup))
-            vgrad=vdown-vup
-            #modify the density according to the speed gradient
-            nr=rho_grid[nt,:,nlong]
-            nr[1:]=nr[1:] + nr[1:] * vgrad * rho_compression_factor
-            nr[nr<1.0]=1.0
-            
-            #add soem smoothing
-            nr = binomial_filter(nr,[1,3,4,5,4,3,1])
-            
-            #introduce the 1/r^2 factor
-            nr=(215-r[0])*(215-r[0])*nr/(r*r)
-            rho_grid[nt,:,nlong]=nr
-    
-    
-    return rho_grid
-
 
 
 @jit(nopython=True)
