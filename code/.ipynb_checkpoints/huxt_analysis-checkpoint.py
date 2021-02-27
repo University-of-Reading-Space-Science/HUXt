@@ -14,6 +14,8 @@ import scipy.ndimage as ndi
 from numba import jit
 import copy
 
+import HUXt as H
+
 mpl.rc("axes", labelsize=16)
 mpl.rc("ytick", labelsize=16)
 mpl.rc("xtick", labelsize=16)
@@ -21,7 +23,7 @@ mpl.rc("legend", fontsize=16)
 
 
 @u.quantity_input(time=u.day)
-def plot(model, time, field='v', save=False, tag=''):
+def plot(model, time, save=False, tag=''):
     """
     Make a contour plot on polar axis of the solar wind solution at a specific time.
     :param time: Time to look up closet model time to (with an astropy.unit of time). 
@@ -32,61 +34,19 @@ def plot(model, time, field='v', save=False, tag=''):
     :return ax: Axes handle.
     """
 
-    if field not in ['v', 'br','rho','cme']:
-        print("Error, field must be either v', 'br','rho','cme'. Default to v")
-        field = 'v'
-
     if (time < model.time_out.min()) | (time > (model.time_out.max())):
         print("Error, input time outside span of model times. Defaulting to closest time")
 
     id_t = np.argmin(np.abs(model.time_out - time))
 
     # Get plotting data
-    lon_arr, dlon, nlon = longitude_grid()
+    lon_arr, dlon, nlon = H.longitude_grid()
     lon, rad = np.meshgrid(lon_arr.value, model.r.value)
     mymap = mpl.cm.viridis
-    if field == 'v':
-        v_sub = model.v_grid.value[id_t, :, :].copy()
-        plotvmin=200; plotvmax=810; dv=10
-        ylab="Solar Wind Speed (km/s)"
-    elif field == 'br':
-        if np.all(np.isnan(model.br_grid)):
-            return -1
-        v_sub = model.br_grid.value[id_t, :, :].copy()
-        vmax=np.absolute(v_sub).max()
-        dv=2*vmax/20
-        plotvmin=-vmax; 
-        plotvmax=vmax+dv; 
-        ylab="B_R [code units]"
-        mymap = mpl.cm.bwr
-    elif field == 'rho':
-        if np.all(np.isnan(model.rho_grid)):
-            return -1
-        if model.rho_post_processed == False:
-            print('Warning: Rho post-processing not completed. Run model.rho_post_process()')
-        v_sub = model.rho_grid.value[id_t, :, :].copy()
-        #normalise by r^2
-        for i in range(0,model.nlon):
-            v_sub[:,i]=v_sub[:,i]*model.r*model.r
-
-        vmax=np.absolute(v_sub).max()
-        vmin=np.absolute(v_sub).min()
-        dv=(vmax-vmin)/20
-        plotvmin=vmin-dv; plotvmax=vmax+dv; 
-        ylab="Density R^2 [code units]"
-    elif field == 'cme':
-        if np.all(np.isnan(model.CMEtracer_grid)):
-            return -1
-        v_sub = model.CMEtracer_grid.value[id_t, :, :].copy()
-        vmax=np.absolute(v_sub).max()
-        if vmax < huxt_constants()['cmetracerthreshold']:
-            print('Error: No CMEs detected')
-            return -1
-        dv=2*vmax/20
-        plotvmin=0; plotvmax=vmax+dv; 
-        ylab="CME tracer"
-        mymap = mpl.cm.bwr
-
+    v_sub = model.v_grid.value[id_t, :, :].copy()
+    plotvmin=200; plotvmax=810; dv=10
+    ylab="Solar Wind Speed (km/s)"
+    
     # Insert into full array
     if lon_arr.size != model.lon.size:
         v = np.zeros((model.nr, nlon)) * np.NaN
@@ -117,7 +77,13 @@ def plot(model, time, field='v', save=False, tag=''):
     cme_colors = ['r', 'c', 'm', 'y', 'deeppink', 'darkorange']
     for j, cme in enumerate(model.cmes):
         cid = np.mod(j, len(cme_colors))
-        ax.plot(cme.coords[id_t]['lon'], cme.coords[id_t]['r'], '-', color=cme_colors[cid], linewidth=3)
+        cme_lons = cme.coords[id_t]['lon']
+        cme_r = cme.coords[id_t]['r'].to(u.solRad)
+        if np.any(np.isfinite(cme_r)):
+            # Pad out to close the profile.
+            cme_lons = np.append(cme_lons, cme_lons[0])
+            cme_r = np.append(cme_r, cme_r[0])
+            ax.plot(cme_lons, cme_r, '-', color=cme_colors[cid], linewidth=3)
 
     # Add on observers 
     for body, style in zip(['EARTH', 'VENUS', 'MERCURY','STA', 'STB'], ['co', 'mo', 'ko','rs', 'y^']):
@@ -127,18 +93,12 @@ def plot(model, time, field='v', save=False, tag=''):
             Earthpos = model.get_observer('EARTH')
             #deltalon = (2*np.pi * time.to(u.day).value/365)*u.rad    
             deltalon = Earthpos.lon_hae[id_t] -  Earthpos.lon_hae[0]
-        obslon = _zerototwopi_(obs.lon[id_t] + deltalon)
+        obslon = H._zerototwopi_(obs.lon[id_t] + deltalon)
         ax.plot(obslon, obs.r[id_t], style, markersize=16, label=body)
 
     # Add on a legend.
     fig.legend(ncol=5, loc='lower center', frameon=False, handletextpad=0.2, columnspacing=1.0)
-
-    # Add test particle CME boundaries
-    for j, cme in enumerate(model.cmes):
-        for n in range(0,model.nlon):
-            ax.plot(model.lon[n], model.CMErbound_testparticle[id_t,j,0,n]/695700, 'k+', linewidth=3)
-            ax.plot(model.lon[n], model.CMErbound_testparticle[id_t,j,1,n]/695700, 'r+', linewidth=3)
-
+    
     ax.set_ylim(0, model.r.value.max())
     ax.set_yticklabels([])
     ax.set_xticklabels([])
@@ -172,16 +132,12 @@ def plot(model, time, field='v', save=False, tag=''):
     return fig, ax
 
 
-def animate(model, field, tag):
+def animate(model, tag):
     """
     Animate the model solution, and save as an MP4.
     :param field: String, either 'cme', or 'ambient', specifying which solution to animate.
     :param tag: String to append to the filename of the animation.
     """
-
-    if field not in ['v', 'br','rho','cme']:
-        print("Error, field must be either v', 'br','rho','cme'. Default to v")
-        field = 'v'
 
     # Set the duration of the movie
     # Scaled so a 5 day simulation with dt_scale=4 is a 10 second movie.
@@ -194,7 +150,7 @@ def animate(model, field, tag):
         """
         # Get the time index closest to this fraction of movie duration
         i = np.int32((model.nt_out - 1) * t / duration)
-        fig, ax = model.plot(model.time_out[i], field)
+        fig, ax = plot(model, model.time_out[i])
         frame = mplfig_to_npimage(fig)
         plt.close('all')
         return frame
@@ -207,7 +163,7 @@ def animate(model, field, tag):
     return
 
 
-def plot_radial(model, time, lon, field='v', save=False, tag=''):
+def plot_radial(model, time, lon, save=False, tag=''):
     """
     Plot the radial solar wind profile at model time closest to specified time.
     :param time: Time (in seconds) to find the closest model time step to.
@@ -218,10 +174,6 @@ def plot_radial(model, time, lon, field='v', save=False, tag=''):
     :return: fig: Figure handle
     :return: ax: Axes handle
     """
-
-    if field not in ['v', 'br','rho','cme']:
-        print("Error, field must be either v', 'br','rho','cme'. Default to v")
-        field = 'v'
 
     if (time < model.time_out.min()) | (time > (model.time_out.max())):
         print("Error, input time outside span of model times. Defaulting to closest time")
@@ -246,43 +198,19 @@ def plot_radial(model, time, lon, field='v', save=False, tag=''):
         id_lon = np.argmin(np.abs(model.lon - lon))
         lon_out = model.lon[id_lon].to(u.deg).value
 
-    if field == 'v':
-        ylab='Solar Wind Speed (km/s)'
-        ax.plot(model.r, model.v_grid[id_t, :, id_lon], 'k-')
-        ymin=200; ymax=1000
-    elif field == 'br':
-        if np.all(np.isnan(model.br_grid)):
-            return -1
-        ylab='Magnetic field polarity (code units)'
-        ax.plot(model.r, model.br_grid[id_t, :, id_lon], '--', color='slategrey')
-        ymax=np.absolute(model.br_grid[id_t, :, id_lon]).max()
-        ymin=-ymax
-    elif field == 'rho':
-        if model.rho_post_processed == False:
-            print('Warning: Rho post-processing not completed. Run model.rho_post_process()')
-        if np.all(np.isnan(model.rho_grid)):
-            return -1
-        ylab='Density (code units)'
-        ax.plot(model.r, model.rho_grid[id_t, :, id_lon], '--', color='slategrey')
-        ymax=np.absolute(model.rho_grid[id_t, :, id_lon]).max()
-        ymin=0
-    elif field == 'cme':
-        if np.all(np.isnan(model.CMEtracer_grid)):
-            return -1
-        ylab='CME tracer (code units)'
-        ax.plot(model.r, model.CMEtracer_grid[id_t, :, id_lon], '--', color='slategrey')
-        ymax=np.absolute(model.CMEtracer_grid[id_t, :, id_lon]).max()
-        ymin=0
-
-
+    
+    ylab='Solar Wind Speed (km/s)'
+    ax.plot(model.r, model.v_grid[id_t, :, id_lon], 'k-')
+    ymin=200
+    ymax=1000
+    
     # Plot the CME points on if needed
-    if field in ['v']:
-        cme_colors = ['r', 'c', 'm', 'y', 'deeppink', 'darkorange']
-        for c, cme in enumerate(model.cmes):
-            cc = np.mod(c, len(cme_colors))
-            id_r = np.int32(cme.coords[id_t]['r_pix'].value)
-            label = "CME {:02d}".format(c)
-            ax.plot(model.r[id_r], model.v_grid[id_t, id_r, id_lon], '.', color=cme_colors[cc], label=label)
+    cme_colors = ['r', 'c', 'm', 'y', 'deeppink', 'darkorange']
+    for c, cme in enumerate(model.cmes):
+        cc = np.mod(c, len(cme_colors))
+        id_r = np.int32(cme.coords[id_t]['r_pix'].value)
+        label = "CME {:02d}".format(c)
+        ax.plot(model.r[id_r], model.v_grid[id_t, id_r, id_lon], '.', color=cme_colors[cc], label=label)
 
     ax.set_ylim(ymin, ymax)
     ax.set_ylabel(ylab)
@@ -296,19 +224,18 @@ def plot_radial(model, time, lon, field='v', save=False, tag=''):
     lon_label = " Lon: {:3.2f}$^\circ$".format(lon_out)
     label = "HUXt" + time_label + lon_label
     ax.set_title(label, fontsize=20)
-    #ax.legend(loc=1)
+    
     if save:
         cr_num = np.int32(model.cr_num.value)
         lon_tag = "{}deg".format(lon.to(u.deg).value)
-        filename = "HUXt_CR{:03d}_{}_{}_radial_profile_lon_{}_frame_{:03d}.png".format(cr_num, tag, field, lon_tag,
-                                                                                       id_t)
+        filename = "HUXt_CR{:03d}_{}_radial_profile_lon_{}_frame_{:03d}.png".format(cr_num, tag, lon_tag, id_t)
         filepath = os.path.join(model._figure_dir_, filename)
         fig.savefig(filepath)
 
     return fig, ax
 
 
-def plot_timeseries(model, radius, lon, field='v', save=False, tag=''):
+def plot_timeseries(model, radius, lon, save=False, tag=''):
     """
     Plot the solar wind model timeseries at model radius and longitude closest to those specified.
     :param radius: Radius to find the closest model radius to.
@@ -345,34 +272,10 @@ def plot_timeseries(model, radius, lon, field='v', save=False, tag=''):
         lon_out = model.lon[id_lon].value
 
     t_day = model.time_out.to(u.day)
-    if field == 'v':
-        ax.plot(t_day, model.v_grid[:, id_r, id_lon], 'k-')
-        ylab='Solar Wind Speed (km/s)'
-        ymin=200; ymax=1000
-    elif field == 'br':
-        if np.all(np.isnan(model.br_grid)):
-            return -1
-        ylab='Magnetic field polarity (code units)'
-        ax.plot(t_day, model.br_grid[:, id_r, id_lon], 'k-')
-        ymax=np.absolute(model.br_grid[:, id_r, id_lon]).max()
-        ymin=-ymax
-    elif field == 'rho':
-        if np.all(np.isnan(model.rho_grid)):
-            return -1
-        if model.rho_post_processed == False:
-            print('Warning: Rho post-processing not completed. Run model.rho_post_process()')
-        ylab='Density (code units)'
-        ax.plot(t_day, model.rho_grid[:, id_r, id_lon], '--', color='slategrey')
-        ymax=np.absolute(model.rho_grid[:, id_r, id_lon]).max()
-        ymin=0
-    elif field == 'cme':
-        if np.all(np.isnan(model.CMEtracer_grid)):
-            return -1
-        ylab='CME tracer (code units)'
-        ax.plot(t_day, model.CMEtracer_grid[:, id_r, id_lon], '--', color='slategrey')
-        ymax=np.absolute(model.CMEtracer_grid[:, id_r, id_lon]).max()
-        ymin=0
-
+    
+    ax.plot(t_day, model.v_grid[:, id_r, id_lon], 'k-')
+    ylab='Solar Wind Speed (km/s)'
+    ymin=200; ymax=1000
 
     ax.set_ylim(ymin, ymax)
     ax.set_ylabel(ylab)
@@ -391,8 +294,8 @@ def plot_timeseries(model, radius, lon, field='v', save=False, tag=''):
         cr_num = np.int32(model.cr_num.value)
         r_tag = np.int32(r_out)
         lon_tag = np.int32(lon_out)
-        template_string = "HUXt1D_CR{:03d}_{}_{}_time_series_radius_{:03d}_lon_{:03d}.png"
-        filename = template_string.format(cr_num, tag, field, r_tag, lon_tag)
+        template_string = "HUXt1D_CR{:03d}_{}_time_series_radius_{:03d}_lon_{:03d}.png"
+        filename = template_string.format(cr_num, tag, r_tag, lon_tag)
         filepath = os.path.join(model._figure_dir_, filename)
         fig.savefig(filepath)
 
