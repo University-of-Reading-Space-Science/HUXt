@@ -15,7 +15,6 @@ from numba import jit
 import copy
 
 import HUXtinput as Hin
-import HUXtlat as Hlat
 
 from packaging import version
 #check the numpy version, as this can cause all manner of difficult-to-diagnose problems
@@ -665,7 +664,99 @@ class HUXt:
         times = self.time_init + self.time_out
         obs = Observer(body, times)
         return obs
+    
+    
+class HUXt3d:
+    """
+    A class containing a list of HUXt classes, to enable mutliple latitudes to
+    be simulated, plotted, animated, etc, together
+    
+    Attributes inherited from HUXt. Additional:
+        lat: The list of latitudes of individual HUXt runs, in radians from equator
+        nlat: The number of latitudes simulated
+        HUXtlat: List of individual HUXt model classes at each latitude
+        v_in: a list of Carrington longitude solar wind profiles at each simulated latitude
+        br_in: a list of Carrington longitude Br profiles at each simulated latitude
+        
+    
+    """
 
+    # Decorators to check units on input arguments
+    @u.quantity_input(v_map=(u.km / u.s))
+    @u.quantity_input(v_map_lat=(u.rad))
+    @u.quantity_input(v_map_long=(u.rad))
+    @u.quantity_input(latitude_max=(u.deg))
+    @u.quantity_input(latitude_min=(u.deg))
+    @u.quantity_input(simtime=u.day)
+    @u.quantity_input(cr_lon_init=u.deg)
+    def __init__(self, v_map=np.NaN * (u.km / u.s), v_map_lat=np.NaN * u.rad, v_map_long=np.NaN * u.rad, 
+                 cr_num=np.NaN, cr_lon_init=360.0 * u.deg, 
+                 latitude_max = 30*u.deg, latitude_min=-30*u.deg,
+                 r_min=30 * u.solRad, r_max=240 * u.solRad,
+                 lon_out=np.NaN * u.rad, lon_start=np.NaN * u.rad, lon_stop=np.NaN * u.rad,
+                 simtime=5.0 * u.day, dt_scale=1.0):
+        """
+        Initialise the HUXt3D instance.
+
+        :param v_map: Inner solar wind speed boundary Carrington map. Must have units of km/s.
+        :param v_map_lat: List of latitude positions for v_map, in radians
+        :param v_map_long: List of Carrington longitudes for v_map, in radians
+        :param br_map: Inner Br boundary Carrington map. Must have no units.
+        :param br_map_lat: List of latitude positions for br_map, in radians
+        :param br_map_long: List of Carrington longitudes for br_map, in radians
+        :param latitude_max: Maximum helio latitude (from equator) of HUXt plane, in degrees
+        :param latitude_min: Maximum helio latitude (from equator) of HUXt plane, in degrees
+        :param cr_num: Integer Carrington rotation number. Used to determine the planetary and spacecraft positions
+        :param cr_lon_init: Carrington longitude of Earth at model initialisation, in degrees.
+        :param lon_out: A specific single longitude (relative to Earth_ to compute HUXt solution along, in degrees
+        :param lon_start: The first longitude (in a clockwise sense) of the longitude range to solve HUXt over.
+        :param lon_stop: The last longitude (in a clockwise sense) of the longitude range to solve HUXt over.
+        :param r_min: The radial inner boundary distance of HUXt.
+        :param r_max: The radial outer boundary distance of HUXt.
+        :param simtime: Duration of the simulation window, in days.
+        :param dt_scale: Integer scaling number to set the model output time step relative to the models CFL time.
+        """
+                 
+        #latitude grid
+        self.latitude_min = latitude_min.to(u.rad)
+        self.latitude_max = latitude_max.to(u.rad)
+        self.lat, self.nlat = latitude_grid(self.latitude_min, self.latitude_max)
+        
+        #check the dimensions 
+        assert( len(v_map_lat) == len(v_map[1,:]) )
+        assert( len(v_map_long) == len(v_map[:,1]) )
+        
+        #get the HUXt longitunidal grid
+        longs, dlon, nlon = H.longitude_grid(lon_start=0.0*u.rad, lon_stop=2*np.pi*u.rad)
+        
+        #extract the vr value at the given latitudes
+        self.v_in = []
+        vlong=np.ones(len(v_map_long)) 
+        for thislat in self.lat:
+            for ilong in range(0,len(v_map_long)):
+                vlong[ilong] = np.interp(thislat.value, v_map_lat.value, v_map[ilong,:].value)
+            #interpolate this longitudinal profile to the HUXt resolution
+            self.v_in.append(np.interp(longs.value, v_map_long.value, vlong)*u.km/u.s)
+
+ 
+        #set up the model at each latitude
+        self.HUXtlat = []
+        for i in range(0,self.nlat):
+            self.HUXtlat.append(H.HUXt(v_boundary=self.v_in[i],
+                                     latitude=self.lat[i],
+                                     cr_num=cr_num, cr_lon_init=cr_lon_init, 
+                                     r_min=r_min, r_max=r_max,
+                                     lon_out=lon_out, lon_start=lon_start, lon_stop=lon_stop,
+                                     simtime=simtime, dt_scale=dt_scale))
+        return
+    
+    def solve(self, cme_list):
+        for model in self.HUXtlat:
+            model.solve(cme_list)
+        
+        return
+    
+    
 def huxt_constants():
     """
     Return some constants used in all HUXt model classes
@@ -786,6 +877,41 @@ def longitude_grid(lon_out=np.NaN * u.rad, lon_start=np.NaN * u.rad, lon_stop=np
         nlon = lon.size
 
     return lon, dlon, nlon
+
+
+@u.quantity_input(latitude_min=u.rad)
+@u.quantity_input(latitude_max=u.rad)
+def latitude_grid(latitude_min = np.nan, latitude_max = np.nan):
+    """
+    Define the latitude grid of the HUXt model. This is constant in sine latitude
+    
+
+    :param latitude_min: The maximum latitude above the equator, in radians
+    :param latitude_max: The minimum latitude below the equator, in radians
+    
+    return lat: List of latitude positions between given limits, in radians
+    return lat: number of latitude positions between given limits
+    """
+    # Check the inputs.
+    assert(latitude_max > latitude_min)
+    assert(np.absolute(latitude_max) <= (np.pi/2)*u.rad)
+    assert(np.absolute(latitude_min) <= (np.pi/2)*u.rad)
+
+    # Form the full longitude grid.
+    nlat = huxt_constants()['nlat'] 
+    
+    dsinlat = 2 / nlat
+    sinlat_min_full = - 1 + dsinlat / 2.0
+    sinlat_max_full =  1 - dsinlat / 2.0
+    sinlat, dsinlat = np.linspace(sinlat_min_full, sinlat_max_full, nlat, retstep=True)
+    lat = np.arcsin(sinlat) * u.rad
+    
+    # Now get only the selected range of latitudes
+    id_match = (lat >= latitude_min) & (lat <= latitude_max)
+    lat = lat[id_match]
+    nlat = lat.size
+
+    return lat, nlat
 
 
 def time_grid(simtime, dt_scale):
