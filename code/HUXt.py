@@ -162,6 +162,7 @@ class ConeCME:
         self.radius = self.initial_height * np.tan(self.width / 2.0)  # Initial radius of CME
         self.thickness = thickness  # Extra CME thickness
         self.coords = {}
+        self.frame = 'NA'
         return
 
     def parameter_array(self):
@@ -282,7 +283,8 @@ class ConeCME:
             if r_front[-1] > arrive_rad[i]:
                 hit = True
                 hit_id = i
-                hit_lon = arrive_lon[i]
+                hit_lon = arrive_lon[i] + self.longitude
+                hit_lon = _zerototwopi_(hit_lon)
                 #  Interpolate the arrival time and transit time
                 #  from radial coords before and after body radius
                 t_arrive = np.interp(arrive_rad[i], r_front, t_front)
@@ -614,10 +616,15 @@ class HUXt:
             cme_name = "ConeCME_{:02d}".format(i)
             cmegrp = allcmes.create_group(cme_name)
             for k, v in cme.__dict__.items():
-                if k != "coords":
+                
+                if k == "frame":
+                    dset = cmegrp.create_dataset(k, data=v)
+                    
+                if k not in ["coords", "frame"]:
                     dset = cmegrp.create_dataset(k, data=v.value)
                     dset.attrs['unit'] = v.unit.to_string()
-                    out_file.flush()
+                        
+                out_file.flush()
                 # Now handle the dictionary of CME boundary coordinates coords > time_out > position
                 if k == "coords":
                     coordgrp = cmegrp.create_group(k)
@@ -625,8 +632,12 @@ class HUXt:
                         time_label = "t_out_{:03d}".format(time)
                         timegrp = coordgrp.create_group(time_label)
                         for pos_label, pos_data in position.items():
-                            dset = timegrp.create_dataset(pos_label, data=pos_data.value)
-                            dset.attrs['unit'] = pos_data.unit.to_string()
+                            if pos_label == 'time':
+                                dset = timegrp.create_dataset(pos_label, data=pos_data.isot)
+                            else:
+                                dset = timegrp.create_dataset(pos_label, data=pos_data.value)
+                                dset.attrs['unit'] = pos_data.unit.to_string()
+                                
                             out_file.flush()                           
 
         # Loop over the attributes of model instance and save select keys/attributes.
@@ -1229,39 +1240,27 @@ def load_HUXt_run(filepath):
         lat = data['latitude'][()] * u.Unit(data['latitude'].attrs['unit'])
         nlon = lon.size
         frame = data['frame'][()]
-        
-         #check if br data was saved
-        if '_br_boundary_init_' in data.keys():
-            br_boundary = data['_br_boundary_init_'][()] * u.Unit(data['_br_boundary_init_'].attrs['unit'])
-        if '_rho_boundary_init_' in data.keys():
-            rho_boundary = data['_rho_boundary_init_'][()] * u.Unit(data['_rho_boundary_init_'].attrs['unit'])
-
-
+    
         #create the model class
         if nlon == 1:
-            args='v_boundary=v_boundary,  cr_num=cr_num, cr_lon_init=cr_lon_init, r_min=r.min(), r_max=r.max(),lon_out=lon, simtime=simtime, dt_scale=dt_scale, latitude=lat, frame=frame' 
+            model = HUXt(v_boundary=v_boundary,  cr_num=cr_num, cr_lon_init=cr_lon_init,
+                         r_min=r.min(), r_max=r.max(), 
+                         lon_out=lon, simtime=simtime,
+                         dt_scale=dt_scale, latitude=lat, frame=frame) 
         elif nlon > 1:
-            args = 'v_boundary=v_boundary, cr_num=cr_num, cr_lon_init=cr_lon_init, r_min=r.min(), r_max=r.max(), lon_start=lon.min(), lon_stop=lon.max(), simtime=simtime, dt_scale=dt_scale, latitude=lat, frame=frame'
-        if '_br_boundary_init_' in data.keys():
-            args = args +', br_boundary=br_boundary'
-        if '_rho_boundary_init_' in data.keys():
-            args = args +', rho_boundary=rho_boundary'  
+            model = HUXt(v_boundary=v_boundary, cr_num=cr_num, cr_lon_init=cr_lon_init,
+                         r_min=r.min(), r_max=r.max(),
+                         lon_start=lon.min(), lon_stop=lon.max(), 
+                         simtime=simtime, dt_scale=dt_scale,
+                         latitude=lat, frame=frame)
         
-        model = eval('HUXt(' + args +')')
         #reset the longitudes, as when onlyt a wedge is simulated, it gets confused.
         model.lon=lon
         model.nlon = nlon
 
         model.v_grid = data['v_grid'][()] * u.Unit(data['v_boundary'].attrs['unit'])
-        model.CMEtracer_grid = data['CMEtracer_grid'][()] * u.dimensionless_unscaled
         model.cme_particles = data['cme_particles'][()] 
-        #check if br data was saved
-        if 'br_grid' in data.keys():
-            model.br_grid = data['br_grid'][()] * u.Unit(data['br_boundary'].attrs['unit'])
-        #check if rho data was saved
-        if 'rho_grid' in data.keys():
-            model.rho_grid = data['rho_grid'][()] * u.Unit(data['rho_boundary'].attrs['unit'])
-
+        
         # Create list of the ConeCMEs
         cme_list = []
         all_cmes = data['ConeCMEs']
@@ -1275,20 +1274,26 @@ def load_HUXt_run(filepath):
             thickness = thickness.to('solRad')
             v = cme_data['v'][()] * u.Unit(cme_data['v'].attrs['unit'])
             cme = ConeCME(t_launch=t_launch, longitude=lon, latitude=lat, v=v, width=width, thickness=thickness)
+            cme.frame = cme_data['frame'][()]
 
             # Now sort out coordinates.
-            # Use the same dictionary structure as defined in ConeCME._track_2d_
+            # Use the same dictionary structure as defined in ConeCME._track_
             coords_group = cme_data['coords']
-            coords_data = {j: {'lon_pix': np.array([]) * u.pix, 'r_pix': np.array([]) * u.pix,
-                               'lon': np.array([]) * model.lon.unit, 'r': np.array([]) * model.r.unit}
+            coords_data = {j: {'time':np.array([]), 'model_time': np.array([]) * u.s,
+                               'lon': np.array([]) * model.lon.unit, 'r': np.array([]) * u.km,
+                               'lat': np.array([]) * u.rad}
                            for j in range(len(coords_group))}
 
             for time_key, pos in coords_group.items():
                 t = np.int(time_key.split("_")[2])
-                coords_data[t]['lon_pix'] = pos['lon_pix'][()] * u.Unit(pos['lon_pix'].attrs['unit'])
-                coords_data[t]['r_pix'] = pos['r_pix'][()] * u.Unit(pos['r_pix'].attrs['unit'])
+                time_out = Time(pos['time'][()], format="isot")
+                time_out.format = 'jd'
+                coords_data[t]['time'] = time_out
+                coords_data[t]['model_time'] = pos['model_time'][()] * u.Unit(pos['model_time'].attrs['unit'])
                 coords_data[t]['lon'] = pos['lon'][()] * u.Unit(pos['lon'].attrs['unit'])
                 coords_data[t]['r'] = pos['r'][()] * u.Unit(pos['r'].attrs['unit'])
+                coords_data[t]['lat'] = pos['lat'][()] * u.Unit(pos['lat'].attrs['unit'])
+                coords_data[t]['front_id'] = pos['front_id'][()] * u.Unit(pos['front_id'].attrs['unit'])
 
             cme.coords = coords_data
             cme_list.append(cme)
