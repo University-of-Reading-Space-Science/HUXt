@@ -91,8 +91,8 @@ def plot(model, time, save=False, tag=''):
         deltalon = 0.0*u.rad
         if model.frame == 'sidereal':
             Earthpos = model.get_observer('EARTH')
-            #deltalon = (2*np.pi * time.to(u.day).value/365)*u.rad    
             deltalon = Earthpos.lon_hae[id_t] -  Earthpos.lon_hae[0]
+            
         obslon = H._zerototwopi_(obs.lon[id_t] + deltalon)
         ax.plot(obslon, obs.r[id_t], style, markersize=16, label=body)
 

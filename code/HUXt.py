@@ -6,11 +6,6 @@ import os
 import glob
 import h5py
 import matplotlib.pyplot as plt
-import matplotlib as mpl
-import moviepy.editor as mpy
-from moviepy.video.io.bindings import mplfig_to_npimage
-from skimage import measure
-import scipy.ndimage as ndi
 from numba import jit
 import copy
 
@@ -63,7 +58,7 @@ class Observer:
         epoch_time = all_time[id_epoch]
         
         self.time = times
-        if len(epoch_time.jd) ==0:
+        if len(epoch_time.jd) == 0:
             self.r = np.ones(len(self.time)) * np.nan 
             self.lon = np.ones(len(self.time)) * np.nan 
             self.lat = np.ones(len(self.time)) * np.nan 
@@ -92,7 +87,6 @@ class Observer:
             self.lat = np.interp(times.jd, epoch_time.jd, lat)
             self.lat = self.lat * u.rad
       
-        
             r = ephem[self.body]['HAE']['radius'][id_epoch]
             self.r_hae = np.interp(times.jd, epoch_time.jd, r)
             self.r_hae = (self.r_hae * u.km).to(u.solRad)
@@ -107,7 +101,6 @@ class Observer:
             self.lat_hae = np.interp(times.jd, epoch_time.jd, lat)
             self.lat_hae = self.lat_hae * u.rad
             
-    
             r = ephem[self.body]['CARR']['radius'][id_epoch]
             self.r_c = np.interp(times.jd, epoch_time.jd, r)
             self.r_c = (self.r_c * u.km).to(u.solRad)
@@ -188,6 +181,8 @@ class ConeCME:
         :param model: An HUXt instance, solving for multiple longitudes, with solutions for the CME and ambient fields.
         :return: updates the ConeCME.coords dictionary of CME coordinates.
         """
+        #  Keep track of synodic or sidereal
+        self.frame = copy.copy(model.frame)
         
         #  Pull out the particle field for this CME
         cme_field = model.cme_particles[cme_id, :, :, :]
@@ -229,71 +224,80 @@ class ConeCME:
         return
     
     
-    def compute_earth_arrival(self):
+    def compute_arrival_at_body(self, body_name):
         """
-        Function to compute arrival time at a set longitude and radius of the CME front.
-
-        Tracks radial distance of front along a given longitude out past specified longitude.
-        Then interpolates the r-t profile to find t_arr at arr_rad. 
+        Compute the arrival of the CME at a solar system body. Available bodies are those accepted by the 
+        observer class, Mercury, Venus, Earth, STA, and STB. Takes account of differences between synodic 
+        and sidereal frames
         """
-
+    
+        #  Get body ephemeris
         times = Time([coord['time'] for i, coord in self.coords.items()])
-        ert = Observer('EARTH', times)
+        body = Observer(body_name, times)
+
+        arrive_rad = body.r.to(u.km)
+
+        #  Correct longitudes if in sidereal frame
+        if self.frame == 'synodic':
+            arrive_lon = body.lon
+        elif self.frame == 'sidereal':
+            delta_lon = body.lon_hae -  body.lon_hae[0]
+            arrive_lon = _zerototwopi_(body.lon + delta_lon)
+            arrive_lon = arrive_lon * body.lon.unit
+
+        #  Center longitudes on CME nose, between -180:180
+        arrive_lon = arrive_lon - self.longitude
+        id_low = arrive_lon < -180*u.deg
+        id_high = arrive_lon > 180*u.deg
+        if np.any(id_low):
+            arrive_lon[id_low] += 360*u.deg
+        elif np.any(id_high):
+            arrive_lon[id_high] -= 360*u.deg
+
+        hit = False
+        t_front = []
+        r_front = []
+        #  Loop through coords at each timestep
+        for i, coord in self.coords.items():
+
+            if len(coord['r'])==0:
+                continue
+
+            #  Get lon and radial coords of the CME front only.
+            r_cme = coord['r']
+            lon_cme = coord['lon']
+            front_id = coord['front_id'] == 1.0
+            r_cme = r_cme[front_id]
+            lon_cme = lon_cme[front_id]
+
+            #  Lookup cme front radial coord along body longitude        
+            r_interp = np.interp(arrive_lon[i], lon_cme, r_cme, left=np.NaN, right=np.NaN)
+            if np.isfinite(r_interp):
+                t_front.append(coord['time'].value)
+                r_front.append(r_interp)
+            else:
+                continue
+
+            #  Has CME front crossed body radius
+            if r_front[-1] > arrive_rad[i]:
+                hit = True
+                hit_id = i
+                hit_lon = arrive_lon[i]
+                #  Interpolate the arrival time and transit time
+                #  from radial coords before and after body radius
+                t_arrive = np.interp(arrive_rad[i], r_front, t_front)
+                t_transit = t_arrive - t_front[0]
+                t_arrive = Time(t_arrive, format='jd')
+                break
+
+        if hit == False:
+            t_arrive = Time("0000-01-01T00:00:00")
+            t_transit = np.NaN*u.d
+            hit_lon = np.NaN
+            hit_id = False
+
+        return hit, t_arrive, t_transit, hit_lon, hit_id       
         
-        # Need to force units to be the same to make interpolations work 
-        arr_lon = 0*u.rad
-        arr_rad = np.mean(ert.r)
-        
-        # Check if hit or miss.
-        # Put longitude between -180 - 180, centered on CME lon.
-        lon_diff = arr_lon - self.longitude
-        if lon_diff < -180*u.deg:
-            lon_diff += 360*u.deg
-        elif lon_diff > 180*u.deg:
-            lon_diff -= 360*u.deg
-            
-        cme_hw = self.width/2.0
-        if (lon_diff >= -cme_hw) & (lon_diff <= cme_hw):
-            # HIT, so get t-r profile along lon of interest.
-            t_front = []
-            r_front = []
-
-            for i, coord in self.coords.items():
-
-                if len(coord['r'])==0:
-                    continue
-
-                t_front.append(coord['model_time'].to('d').value)
-
-                # Lookup radial coord at earth lon
-                r = coord['r'].value
-                lon = coord['lon'].value
-
-                # Only keep front of cme
-                id_front = r > np.mean(r)
-                r = r[id_front]
-                lon = lon[id_front]
-
-                r_ans = np.interp(arr_lon.value, lon, r, period=2*np.pi)
-                r_front.append(r_ans)
-                # Stop when max r 
-                if r_ans > arr_rad.value:
-                    break
-
-            t_front = np.array(t_front)
-            r_front = np.array(r_front)
-            try:
-                t_transit = np.interp(arr_rad.value, r_front, t_front)
-                self.earth_transit_time = t_transit * u.d
-                self.earth_arrival_time = times[0] + self.earth_transit_time
-            except:
-                self.earth_transit_time = np.NaN*u.d
-                self.earth_arrival_time = Time('0000-01-01T00:00:00')
-        else:
-            self.earth_transit_time = np.NaN*u.d
-            self.earth_arrival_time = Time('0000-01-01T00:00:00')
-
-        return        
         
 class HUXt:
     """
