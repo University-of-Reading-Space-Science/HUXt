@@ -14,7 +14,7 @@ import scipy.ndimage as ndi
 from numba import jit
 import copy
 
-import HUXt as H
+import huxt as H
 
 mpl.rc("axes", labelsize=16)
 mpl.rc("ytick", labelsize=16)
@@ -44,7 +44,9 @@ def plot(model, time, save=False, tag=''):
     lon, rad = np.meshgrid(lon_arr.value, model.r.value)
     mymap = mpl.cm.viridis
     v_sub = model.v_grid.value[id_t, :, :].copy()
-    plotvmin=200; plotvmax=810; dv=10
+    plotvmin=200
+    plotvmax=810
+    dv=10
     ylab="Solar Wind Speed (km/s)"
     
     # Insert into full array
@@ -208,9 +210,26 @@ def plot_radial(model, time, lon, save=False, tag=''):
     cme_colors = ['r', 'c', 'm', 'y', 'deeppink', 'darkorange']
     for c, cme in enumerate(model.cmes):
         cc = np.mod(c, len(cme_colors))
-        id_r = np.int32(cme.coords[id_t]['r_pix'].value)
+        
+        lon_cme = cme.coords[id_t]['lon']
+        r_cme = cme.coords[id_t]['r'].to(u.solRad)
+        
+        id_front = cme.coords[id_t]['front_id'] == 1.0
+        id_back = cme.coords[id_t]['front_id'] == 0.0 
+        r_front = r_cme[id_front]
+        lon_front = lon_cme[id_front]
+        r_back = r_cme[id_back]
+        lon_back = lon_cme[id_back]
+        
+        id_cme_lon = np.argmin(np.abs(lon_front - lon))
+        r_front = r_front[id_cme_lon]
+        id_cme_lon = np.argmin(np.abs(lon_back - lon))
+        r_back = r_back[id_cme_lon]
+        
+        id_cme = (model.r >= r_back) & (model.r <= r_front)
         label = "CME {:02d}".format(c)
-        ax.plot(model.r[id_r], model.v_grid[id_t, id_r, id_lon], '.', color=cme_colors[cc], label=label)
+        ax.plot(model.r[id_cme], model.v_grid[id_t, id_cme, id_lon], '.', color=cme_colors[cc], label=label)
+
 
     ax.set_ylim(ymin, ymax)
     ax.set_ylabel(ylab)
@@ -246,10 +265,6 @@ def plot_timeseries(model, radius, lon, save=False, tag=''):
     :return: fig: Figure handle
     :return: ax: Axes handle
     """
-
-    if field not in ['v', 'br','rho','cme']:
-        print("Error, field must be either v', 'br','rho','cme'. Default to v")
-        field = 'v'
 
     if (radius < model.r.min()) | (radius > (model.r.max())):
         print("Error, specified radius outside of model radial grid")

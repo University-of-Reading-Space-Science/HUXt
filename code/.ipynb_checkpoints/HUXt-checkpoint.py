@@ -9,7 +9,7 @@ import matplotlib.pyplot as plt
 from numba import jit
 import copy
 
-import HUXtinput as Hin
+import huxt_inputs as Hin
 
 from packaging import version
 #check the numpy version, as this can cause all manner of difficult-to-diagnose problems
@@ -25,10 +25,13 @@ class Observer:
         body: String name of the planet or spacecraft.
         lat: HEEQ latitude of body at all values of time.
         lat_c: Carrington latitude of body at all values of time.
+        lat_hae: HAE latitude of body at all values of time
         lon: HEEQ longitude of body at all values of time.
         lon_c: Carrington longitude of body at all values of time.
+        lon_hae: HAE longitude of body at all values of time
         r: HEEQ radius of body at all values of time.
         r_c: Carrington radius of body at all values of time.
+        r_hae: HAE radius of body at all values of time
         time: Array of Astropy Times
     """
 
@@ -206,15 +209,25 @@ class ConeCME:
             if np.any(np.isfinite(cme_r_front)) | np.any(np.isfinite(cme_r_back)):       
                 #  Get longitudes and center on CME
                 lon = model.lon - self.longitude
-                lon[lon>np.pi*u.rad] -= 2*np.pi*u.rad
-                #  Find indices that sort the longitudes, to make a wraparound of lons
-                id_sort_inc = np.argsort(lon)
-                id_sort_dec = np.flipud(id_sort_inc)
                 
-                #  Get one array of longitudes and radii from the front and back particles
-                lons = np.hstack([lon[id_sort_inc], lon[id_sort_dec]])
-                cme_r = np.hstack([cme_r_front[id_sort_inc], cme_r_back[id_sort_dec]])
-                front_id = np.hstack([np.ones(cme_r_front.shape), np.zeros(cme_r_back.shape)])
+                # single longitude runs need different treatment to multi lon runs.
+                if lon.size==1:
+                    if lon > np.pi*u.rad:
+                        lon -= 2*np.pi*u.rad
+                        
+                    lons = np.hstack([lon, lon])
+                    cme_r = np.hstack([cme_r_front, cme_r_back])
+                    front_id = np.hstack([1.0, 0.0])
+                else:
+                    lon[lon>np.pi*u.rad] -= 2*np.pi*u.rad
+                    #  Find indices that sort the longitudes, to make a wraparound of lons
+                    id_sort_inc = np.argsort(lon)
+                    id_sort_dec = np.flipud(id_sort_inc)
+                
+                    #  Get one array of longitudes and radii from the front and back particles
+                    lons = np.hstack([lon[id_sort_inc], lon[id_sort_dec]])
+                    cme_r = np.hstack([cme_r_front[id_sort_inc], cme_r_back[id_sort_dec]])
+                    front_id = np.hstack([np.ones(cme_r_front.shape), np.zeros(cme_r_back.shape)])
                 
                 # Find valid points and save to dict
                 id_good = np.isfinite(cme_r)
@@ -284,7 +297,7 @@ class ConeCME:
                 hit = True
                 hit_id = i
                 hit_lon = arrive_lon[i] + self.longitude
-                hit_lon = _zerototwopi_(hit_lon)
+                hit_lon = _zerototwopi_(hit_lon)*u.rad
                 #  Interpolate the arrival time and transit time
                 #  from radial coords before and after body radius
                 t_arrive = np.interp(arrive_rad[i], r_front, t_front)
@@ -295,7 +308,7 @@ class ConeCME:
         if hit == False:
             t_arrive = Time("0000-01-01T00:00:00")
             t_transit = np.NaN*u.d
-            hit_lon = np.NaN
+            hit_lon = np.NaN*u.deg
             hit_id = False
 
         return hit, t_arrive, t_transit, hit_lon, hit_id       
@@ -742,7 +755,7 @@ class HUXt3d:
         assert( len(v_map_long) == len(v_map[:,1]) )
         
         #get the HUXt longitunidal grid
-        longs, dlon, nlon = H.longitude_grid(lon_start=0.0*u.rad, lon_stop=2*np.pi*u.rad)
+        longs, dlon, nlon = longitude_grid(lon_start=0.0*u.rad, lon_stop=2*np.pi*u.rad)
         
         #extract the vr value at the given latitudes
         self.v_in = []
@@ -757,7 +770,7 @@ class HUXt3d:
         #set up the model at each latitude
         self.HUXtlat = []
         for i in range(0,self.nlat):
-            self.HUXtlat.append(H.HUXt(v_boundary=self.v_in[i],
+            self.HUXtlat.append(HUXt(v_boundary=self.v_in[i],
                                      latitude=self.lat[i],
                                      cr_num=cr_num, cr_lon_init=cr_lon_init, 
                                      r_min=r_min, r_max=r_max,

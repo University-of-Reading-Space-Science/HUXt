@@ -1,12 +1,6 @@
-# -*- coding: utf-8 -*-
-"""
-Created on Thu Jun 11 12:50:49 2020
-
-@author: mathewjowens
-"""
 import httplib2
 import urllib
-import HUXt as H
+import huxt as H
 import os
 from pyhdf.SD import SD, SDC  
 import numpy as np
@@ -14,11 +8,7 @@ import astropy.units as u
 from scipy.io import netcdf
 
 
-# <codecell> Get MAS data from MHDweb
-
-
-
-def getMASboundaryconditions(cr=np.NaN, observatory='', runtype='', runnumber=''):
+def get_MAS_boundary_conditions(cr=np.NaN, observatory='', runtype='', runnumber=''):
     """
     A function to grab the  Vr and Br boundary conditions from MHDweb. An order
     of preference for observatories is given in the function. Checks first if
@@ -96,8 +86,7 @@ def getMASboundaryconditions(cr=np.NaN, observatory='', runtype='', runnumber=''
                     resp = h.request(url, 'HEAD')
                     if int(resp[0]['status']) < 400:
                         foundfile=True
-                        #print(url)
-                    
+                                            
                     #exit all the loops - clumsy, but works
                     if foundfile: 
                         break
@@ -119,12 +108,11 @@ def getMASboundaryconditions(cr=np.NaN, observatory='', runtype='', runnumber=''
         
         return 1
     else:
-         print('Files already exist for CR' + str(int(cr)))   
-         return 0
+        print('Files already exist for CR' + str(int(cr)))
+        return 0
 
-
-   
-def readMASvrbr(cr):
+    
+def read_MAS_vr_br(cr):
     """
     A function to read in the MAS coundary conditions for a given CR
 
@@ -159,13 +147,8 @@ def readMASvrbr(cr):
 
     filepath=os.path.join(_boundary_dir_, vrfilename)
     assert os.path.exists(filepath)
-    #print(os.path.exists(filepath))
-
+    
     file = SD(filepath, SDC.READ)
-    # print(file.info())
-    # datasets_dic = file.datasets()
-    # for idx,sds in enumerate(datasets_dic.keys()):
-    #     print(idx,sds)
         
     sds_obj = file.select('fakeDim0') # select sds
     MAS_vr_Xa = sds_obj.get() # get sds data
@@ -178,7 +161,6 @@ def readMASvrbr(cr):
     MAS_vr = MAS_vr*481.0 * u.km/u.s
     MAS_vr_Xa=MAS_vr_Xa * u.rad
     MAS_vr_Xm=MAS_vr_Xm * u.rad
-    
     
     filepath=os.path.join(_boundary_dir_, brfilename)
     assert os.path.exists(filepath)
@@ -228,11 +210,11 @@ def get_MAS_long_profile(cr, lat=0.0*u.deg):
     ang_from_N_pole=np.pi/2 - (lat.to(u.rad)).value
     
     #check the data exist, if not, download them
-    flag=getMASboundaryconditions(cr)    #getMASboundaryconditions(cr,observatory='mdi')
+    flag=get_MAS_boundary_conditions(cr)
     assert(flag > -1)
     
     #read the HelioMAS data
-    MAS_vr, MAS_vr_Xa, MAS_vr_Xm, MAS_br, MAS_br_Xa, MAS_br_Xm = readMASvrbr(cr)
+    MAS_vr, MAS_vr_Xa, MAS_vr_Xm, MAS_br, MAS_br_Xa, MAS_br_Xm = read_MAS_vr_br(cr)
     
     #extract the value at the given latitude
     vr=np.ones(len(MAS_vr_Xa))
@@ -244,18 +226,11 @@ def get_MAS_long_profile(cr, lat=0.0*u.deg):
         br[i]=np.interp(ang_from_N_pole,MAS_br_Xm.value,MAS_br[i][:])
         
     #now interpolate on to the HUXt longitudinal grid
-    # nlong=H.huxt_constants()['nlong']
-    # dphi=2*np.pi/nlong
-    # longs=np.linspace(dphi/2 , 2*np.pi -dphi/2,nlong)  
     longs, dlon, nlon = H.longitude_grid(lon_start=0.0 * u.rad, lon_stop=2*np.pi * u.rad)
     vr_in=np.interp(longs.value,MAS_vr_Xa.value,vr)*u.km/u.s
     br_in=np.interp(longs.value,MAS_br_Xa.value,br)
     
-    #convert br into +/- 1
-    #br_in[br_in>=0.0]=1.0*u.dimensionless_unscaled
-    #br_in[br_in<0.0]=-1.0*u.dimensionless_unscaled
-    
-    return vr_in, br_in
+    return vr_in
 
 
 def get_MAS_maps(cr):
@@ -290,11 +265,11 @@ def get_MAS_maps(cr):
     
     
     #check the data exist, if not, download them
-    flag=getMASboundaryconditions(cr)    #getMASboundaryconditions(cr,observatory='mdi')
+    flag=get_MAS_boundary_conditions(cr)
     assert(flag > -1)
     
     #read the HelioMAS data
-    MAS_vr, MAS_vr_Xa, MAS_vr_Xm, MAS_br, MAS_br_Xa, MAS_br_Xm = readMASvrbr(cr)
+    MAS_vr, MAS_vr_Xa, MAS_vr_Xm, MAS_br, MAS_br_Xa, MAS_br_Xm = read_MAS_vr_br(cr)
     
     vr_map=MAS_vr
     br_map=MAS_br
@@ -312,13 +287,8 @@ def get_MAS_maps(cr):
     vr_longs=MAS_vr_Xa
     br_longs=MAS_br_Xa
 
-    #convert br into +/- 1
-    #br_in[br_in>=0.0]=1.0*u.dimensionless_unscaled
-    #br_in[br_in<0.0]=-1.0*u.dimensionless_unscaled
-    
-    return vr_map, vr_lats, vr_longs, br_map, br_lats, br_longs
+    return vr_map, vr_lats, vr_longs
 
-# <codecell> Map MAS inputs to smaller radial distances, for starting HUXt below 30 rS
 
 @u.quantity_input(v_outer=u.km / u.s)
 @u.quantity_input(r_outer=u.solRad)
@@ -337,9 +307,6 @@ def map_v_inwards(v_outer, r_outer, lon_outer, r_inner):
     :return lon_inner: Carrington longitude at r_inner. Units of rad.
     """
 
-    #if r_outer < r_inner:
-    #    raise ValueError("Warning: r_outer < r_inner. Mapping will not work.")
-
     # get the acceleration parameters
     constants = H.huxt_constants()
     alpha = constants['alpha']  # Scale parameter for residual SW acceleration
@@ -355,7 +322,6 @@ def map_v_inwards(v_outer, r_outer, lon_outer, r_inner):
     v30= v_outer.value * (1 + alpha * (1 - np.exp((r_30 - r_outer) / rH)))
     
     # compute the speed at the new inner boundary height (using Vacc term, equation 5 in the paper)
-    #v0 = v_outer.value / (1 + alpha * (1 - np.exp((r_inner - r_outer) / rH)))
     v0 = v30 * (1 + alpha * (1 - np.exp((r_30 - r_inner) / rH)))
 
     # compute the transit time from the new to old inner boundary heights (i.e., integrate equations 3 and 4 wrt to r)
@@ -391,7 +357,8 @@ def map_v_boundary_inwards(v_outer, r_outer, r_inner):
         raise ValueError("Warning: r_outer < r_inner. Mapping will not work.")
 
     # compute the longitude grid from the length of the vouter input variable
-    lon, dlon, nlon = H.longitude_grid()   
+    lon, dlon, nlon = H.longitude_grid()  
+    
     #map each point in to a new speed and longitude
     v0, phis_new = map_v_inwards(v_outer, r_outer, lon, r_inner)
 
@@ -401,35 +368,6 @@ def map_v_boundary_inwards(v_outer, r_outer, r_inner):
 
     return v_inner
 
-@u.quantity_input(v_outer=u.km / u.s)
-@u.quantity_input(r_outer=u.solRad)
-@u.quantity_input(r_inner=u.solRad)
-def map_ptracer_boundary_inwards(v_outer, r_outer, r_inner, ptracer_outer):
-    """
-    Function to map a longitudinal V series from r_outer (in rs) to r_inner (in rs)
-    accounting for residual acceleration, but neglecting stream interactions.
-    Series return on HUXt longitudinal grid, not input grid
-    
-    :param v_outer: Solar wind speed at outer radial boundary. Units of km/s.
-    :param r_outer: Radial distance at outer radial boundary. Units of km.
-    :param r_inner: Radial distance at inner radial boundary. Units of km.
-    :param p_tracer_outer:  Passive tracer at outer radial boundary. 
-    :return ptracer_inner: Passive tracer mapped from r_outer to r_inner. 
-    """
-
-    if r_outer < r_inner:
-        raise ValueError("Warning: r_outer < r_inner. Mapping will not work.")
-
-    # compute the longitude grid from the length of the vouter input variable
-    lon, dlon, nlon = H.longitude_grid()   
-    #map each point in to a new speed and longitude
-    v0, phis_new = map_v_inwards(v_outer, r_outer, lon, r_inner)
-
-    #interpolate the mapped speeds back onto the regular Carr long grid,
-    #making boundaries periodic 
-    ptracer_inner = np.interp(lon, phis_new, ptracer_outer, period=2*np.pi) 
-
-    return ptracer_inner
 
 @u.quantity_input(v_map=u.km / u.s)
 @u.quantity_input(v_map_lat=u.rad)
@@ -470,65 +408,6 @@ def map_vmap_inwards(v_map, v_map_lat, v_map_long, r_outer, r_inner):
     
     return v_map_inner *u.km /u.s
 
-@u.quantity_input(v_map=u.km / u.s)
-@u.quantity_input(v_map_lat=u.rad)
-@u.quantity_input(v_map_long=u.rad)
-@u.quantity_input(ptracer_map_lat=u.rad)
-@u.quantity_input(ptracer_map_long=u.rad)
-@u.quantity_input(r_outer=u.solRad)
-@u.quantity_input(r_inner=u.solRad)
-def map_ptracer_map_inwards(v_map, v_map_lat, v_map_long, 
-                            ptracer_map, ptracer_map_lat, ptracer_map_long,
-                            r_outer, r_inner):
-    """
-    Function to map a a passive tracer (e.g., Br) Carrington map from r_outer (in rs) to r_inner (in rs),
-    accounting for acceleration, but ignoring stream interaction.
-    Speed and tracer maps do not need ot be on same grid (e.g., MAS)
-    Map returned on input coord system, not HUXT resolution
-    
-    :param vmap: Solar wind speed Carrington map at outer radial boundary. Units of km/s.
-    :param v_map_lat: Latitude (from equator) of vmap positions. Units of radians
-    :param v_map_long: Carrington longitude of vmap positions. Units of radians
-    :param ptracer_map: Tracer (e.g., Br)  Carrington map at outer radial boundary. No units
-    :param ptracer_map_lat: Latitude (from equator) of tracer positions. Units of radians
-    :param ptracer_map_long: Carrington longitude of tracer positions. Units of radians
-    :param r_outer: Radial distance at outer radial boundary. Units of km.
-    :param r_inner: Radial distance at inner radial boundary. Units of km.
-    :param p_tracer_outer:  Passive tracer at outer radial boundary. 
-    :return ptracer_map_inner: Passive tracer mapped from r_outer to r_inner. 
-    """
-    if r_outer < r_inner:
-        raise ValueError("Warning: r_outer < r_inner. Mapping will not work.")
-    #check the dimensions 
-    assert( len(v_map_lat) == len(v_map[1,:]) )
-    assert( len(v_map_long) == len(v_map[:,1]) )
-    assert( len(ptracer_map_lat) == len(ptracer_map[1,:]) )
-    assert( len(ptracer_map_long) == len(ptracer_map[:,1]) )
-    
-    ptracer_map_inner=np.ones((len(ptracer_map_long),len(ptracer_map_lat)))
-    for ilat in range(0,len(ptracer_map_lat)):
-        
-        #extract the vr values at the ptracer latitude
-        vlong=np.ones(len(v_map_long)) 
-        for ilong in range(0,len(v_map_long)):
-            vlong[ilong]=np.interp(ptracer_map_lat[ilat].value, v_map_lat.value, v_map[ilong,:].value)
-        
-        #now interpolate the longitudinal velocity to the same longs as ptracer
-        v_plongs=np.interp(ptracer_map_long.value, v_map_long.value, vlong) * u.km/u.s
-
-        #map each point in to a new speed and longitude
-        v0, v_phis_new = map_v_inwards(v_plongs, r_outer, ptracer_map_long, r_inner)
-
-        #interpolate the mapped tracer back onto the regular Carr long grid,
-        #making boundaries periodic * u.km/u.s
-        ptracer_map_inner[:,ilat] = np.interp(ptracer_map_long.value, v_phis_new.value, 
-                                              ptracer_map[:,ilat], period=2*np.pi) 
-    
-    
-    return ptracer_map_inner *u.dimensionless_unscaled
-
-
-# <codecell> PFSSpy inputs
 
 def get_PFSS_maps(filepath):
     """
@@ -561,9 +440,6 @@ def get_PFSS_maps(filepath):
     assert os.path.exists(filepath)
     nc = netcdf.netcdf_file(filepath,'r')
     
-    #for i in nc.variables:
-    #    print(i, nc.variables[i])
-    
     cotheta=nc.variables['cos(th)'].data  
     vr_lats=np.arcsin(cotheta[:,0])*u.rad
     br_lats=vr_lats
@@ -575,12 +451,5 @@ def get_PFSS_maps(filepath):
     br_map= np.rot90(nc.variables['br'].data) 
     vr_map= np.rot90(nc.variables['vr'].data) * u.km /u.s
     
-    #convert br into +/- 1
-    #br_in[br_in>=0.0]=1.0*u.dimensionless_unscaled
-    #br_in[br_in<0.0]=-1.0*u.dimensionless_unscaled
     
     return vr_map, vr_lats, vr_longs, br_map, br_lats, br_longs
-
-#filepath=os.environ['DBOX'] + 'Papers_WIP\\_coauthor\\AnthonyYeates\\windbound_b_pfss20181105.12.nc'
-#vr_map, vr_lats, vr_longs, br_map, br_lats, br_longs =  get_PFSS_maps(filepath)
-
