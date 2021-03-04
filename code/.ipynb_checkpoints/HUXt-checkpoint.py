@@ -5,16 +5,14 @@ from sunpy.coordinates import sun
 import os
 import glob
 import h5py
-import matplotlib.pyplot as plt
 from numba import jit
 import copy
-
-import huxt_inputs as Hin
-
 from packaging import version
-#check the numpy version, as this can cause all manner of difficult-to-diagnose problems
+# check the numpy version, as this can cause all manner of difficult-to-diagnose problems
 assert(version.parse(np.version.version) >= version.parse("1.18"))
 
+# Also import huxt_imports, so all is accesible through huxt.py
+import huxt_inputs as Hin
 
 class Observer:
     """
@@ -73,8 +71,7 @@ class Observer:
             self.r_c = np.ones(len(self.time)) * np.nan 
             self.lon_c = np.ones(len(self.time)) * np.nan 
             self.lat_c = np.ones(len(self.time)) * np.nan 
-            
-            
+
         else:
             r = ephem[self.body]['HEEQ']['radius'][id_epoch]
             self.r = np.interp(times.jd, epoch_time.jd, r)
@@ -178,40 +175,39 @@ class ConeCME:
                           self.radius.to('km').value, self.thickness.to('km').value]
         return cme_parameters
 
-        
     def _track_(self, model, cme_id):
         """
         Tracks the perimeter of each ConeCME through the HUXt solution in model.
         :param model: An HUXt instance, solving for multiple longitudes, with solutions for the CME and ambient fields.
         :return: updates the ConeCME.coords dictionary of CME coordinates.
         """
-        #  Keep track of synodic or sidereal
+        # Keep track of synodic or sidereal
         self.frame = copy.copy(model.frame)
         
-        #  Pull out the particle field for this CME
+        # Pull out the particle field for this CME
         cme_field = model.cme_particles[cme_id, :, :, :]
         
-        #  Setup dictionary to track this CME
-        self.coords = {j: {'time':np.array([]), 'model_time':np.array([]) * u.s,
-              'front_id': np.array([]) * u.dimensionless_unscaled,
-              'lon': np.array([]) * model.lon.unit, 'r': np.array([]) * model.r.unit,
-              'lat': np.array([]) * model.latitude.unit} for j in range(model.nt_out)}
+        # Setup dictionary to track this CME
+        self.coords = {j: {'time': np.array([]), 'model_time': np.array([]) * u.s,
+                           'front_id': np.array([]) * u.dimensionless_unscaled,
+                           'lon': np.array([]) * model.lon.unit, 'r': np.array([]) * model.r.unit,
+                           'lat': np.array([]) * model.latitude.unit} for j in range(model.nt_out)}
         
-        #  Loop through timesteps, save out coords to coords dict
+        # Loop through timesteps, save out coords to coords dict
         for j, t in enumerate(model.time_out):
 
-            self.coords[j]['model_time'] =  t
+            self.coords[j]['model_time'] = t
             self.coords[j]['time'] = model.time_init + t
 
             cme_r_front = cme_field[j, 0, :]
             cme_r_back = cme_field[j, 1, :]
 
             if np.any(np.isfinite(cme_r_front)) | np.any(np.isfinite(cme_r_back)):       
-                #  Get longitudes and center on CME
+                # Get longitudes and center on CME
                 lon = model.lon - self.longitude
                 
                 # single longitude runs need different treatment to multi lon runs.
-                if lon.size==1:
+                if lon.size == 1:
                     if lon > np.pi*u.rad:
                         lon -= 2*np.pi*u.rad
                         
@@ -219,12 +215,12 @@ class ConeCME:
                     cme_r = np.hstack([cme_r_front, cme_r_back])
                     front_id = np.hstack([1.0, 0.0])
                 else:
-                    lon[lon>np.pi*u.rad] -= 2*np.pi*u.rad
-                    #  Find indices that sort the longitudes, to make a wraparound of lons
+                    lon[lon > np.pi*u.rad] -= 2*np.pi*u.rad
+                    # Find indices that sort the longitudes, to make a wraparound of lons
                     id_sort_inc = np.argsort(lon)
                     id_sort_dec = np.flipud(id_sort_inc)
                 
-                    #  Get one array of longitudes and radii from the front and back particles
+                    # Get one array of longitudes and radii from the front and back particles
                     lons = np.hstack([lon[id_sort_inc], lon[id_sort_dec]])
                     cme_r = np.hstack([cme_r_front[id_sort_inc], cme_r_back[id_sort_dec]])
                     front_id = np.hstack([np.ones(cme_r_front.shape), np.zeros(cme_r_back.shape)])
@@ -236,8 +232,7 @@ class ConeCME:
                 self.coords[j]['front_id'] = front_id[id_good]*u.dimensionless_unscaled
                 self.coords[j]['lat'] = model.latitude.copy()
         return
-    
-    
+
     def compute_arrival_at_body(self, body_name):
         """
         Compute the arrival of the CME at a solar system body. Available bodies are those accepted by the 
@@ -245,21 +240,21 @@ class ConeCME:
         and sidereal frames
         """
     
-        #  Get body ephemeris
+        # Get body ephemeris
         times = Time([coord['time'] for i, coord in self.coords.items()])
         body = Observer(body_name, times)
 
         arrive_rad = body.r.to(u.km)
 
-        #  Correct longitudes if in sidereal frame
+        # Correct longitudes if in sidereal frame
         if self.frame == 'synodic':
             arrive_lon = body.lon
         elif self.frame == 'sidereal':
-            delta_lon = body.lon_hae -  body.lon_hae[0]
+            delta_lon = body.lon_hae - body.lon_hae[0]
             arrive_lon = _zerototwopi_(body.lon + delta_lon)
             arrive_lon = arrive_lon * body.lon.unit
 
-        #  Center longitudes on CME nose, between -180:180
+        # Center longitudes on CME nose, between -180:180
         arrive_lon = arrive_lon - self.longitude
         id_low = arrive_lon < -180*u.deg
         id_high = arrive_lon > 180*u.deg
@@ -271,20 +266,20 @@ class ConeCME:
         hit = False
         t_front = []
         r_front = []
-        #  Loop through coords at each timestep
+        # Loop through coords at each timestep
         for i, coord in self.coords.items():
 
-            if len(coord['r'])==0:
+            if len(coord['r']) == 0:
                 continue
 
-            #  Get lon and radial coords of the CME front only.
+            # Get lon and radial coords of the CME front only.
             r_cme = coord['r']
             lon_cme = coord['lon']
             front_id = coord['front_id'] == 1.0
             r_cme = r_cme[front_id]
             lon_cme = lon_cme[front_id]
 
-            #  Lookup cme front radial coord along body longitude        
+            # Lookup cme front radial coord along body longitude
             r_interp = np.interp(arrive_lon[i], lon_cme, r_cme, left=np.NaN, right=np.NaN)
             if np.isfinite(r_interp):
                 t_front.append(coord['time'].value)
@@ -292,20 +287,20 @@ class ConeCME:
             else:
                 continue
 
-            #  Has CME front crossed body radius
+            # Has CME front crossed body radius
             if r_front[-1] > arrive_rad[i]:
                 hit = True
                 hit_id = i
                 hit_lon = arrive_lon[i] + self.longitude
                 hit_lon = _zerototwopi_(hit_lon)*u.rad
-                #  Interpolate the arrival time and transit time
-                #  from radial coords before and after body radius
+                # Interpolate the arrival time and transit time
+                # from radial coords before and after body radius
                 t_arrive = np.interp(arrive_rad[i], r_front, t_front)
                 t_transit = t_arrive - t_front[0]
                 t_arrive = Time(t_arrive, format='jd')
                 break
 
-        if hit == False:
+        if not hit:
             t_arrive = Time("0000-01-01T00:00:00")
             t_transit = np.NaN*u.d
             hit_lon = np.NaN*u.deg
@@ -350,15 +345,12 @@ class HUXt:
         rotation_period:  rotation period (in seconds), either synodic or sidereal
         simtime: Simulation time (in seconds).
         time: Array of model time steps, including spin up (in seconds).
-        time_init: The UTC time corresonding to the initial Carrington rotation number and longitude. Else, NaN. 
+        time_init: The UTC time corresponding to the initial Carrington rotation number and longitude. Else, NaN.
         time_out: Array of output model time steps (in seconds).
         twopi: two pi radians
         v_boundary: Inner boundary solar wind speed profile (in km/s).
-        v_max: Maximum model speed (in km/s), used with the CFL condition to set the model time step. 
-        
-        v_grid: Array of model speed inlcuding ConeCMEs for each time, radius, and longitude (in km/s).
-        br_grid: Array of model Br inlcuding ConeCMEs for each time, radius, and longitude (dimensionless).
-        
+        v_max: Maximum model speed (in km/s), used with the CFL condition to set the model time step.
+        v_grid: Array of model speed including ConeCMEs for each time, radius, and longitude (in km/s).
     """
 
     # Decorators to check units on input arguments
@@ -366,10 +358,8 @@ class HUXt:
     @u.quantity_input(simtime=u.day)
     @u.quantity_input(cr_lon_init=u.deg)
     def __init__(self, 
-                 v_boundary = np.NaN * (u.km / u.s),  
-                 br_boundary = np.NaN * u.dimensionless_unscaled,
-                 rho_boundary = np.NAN *u.dimensionless_unscaled,
-                 cr_num=np.NaN, cr_lon_init=360.0 * u.deg, latitude = 0*u.deg,
+                 v_boundary=np.NaN * (u.km / u.s),
+                 cr_num=np.NaN, cr_lon_init=360.0 * u.deg, latitude=0*u.deg,
                  r_min=30 * u.solRad, r_max=240 * u.solRad,
                  lon_out=np.NaN * u.rad, lon_start=np.NaN * u.rad, lon_stop=np.NaN * u.rad,
                  simtime=5.0 * u.day, dt_scale=1.0, frame='synodic'):
@@ -377,8 +367,6 @@ class HUXt:
         Initialise the HUXt model instance.
 
         :param v_boundary: Inner solar wind speed boundary condition. Must be an array of size 128 with units of km/s.
-        :param br_boundary: Inner passive tracer boundary condition used for Br. Must be an array of size 128 with no units
-        :param rho_boundary: Inner passive tracer boundary condition used for density. Must be an array of size 128 with no units
         :param cr_num: Integer Carrington rotation number. Used to determine the planetary and spacecraft positions
         :param cr_lon_init: Carrington longitude of Earth at model initialisation, in degrees.
         :param latitude: Helio latitude (from equator) of HUXt plane, in degrees
@@ -400,16 +388,15 @@ class HUXt:
         self.alpha = constants['alpha']  # Scale parameter for residual SW acceleration
         self.r_accel = constants['r_accel']  # Spatial scale parameter for residual SW acceleration
         
-        #set the frame fo reference. Synodic keeps ES line at 0 longitude. 
-        #sidereal means Earth moves to increasing longitude with time
+        # set the frame fo reference. Synodic keeps ES line at 0 longitude.
+        # sidereal means Earth moves to increasing longitude with time
         assert(frame == 'synodic' or frame == 'sidereal')
         self.frame = frame
-        if (frame == 'synodic'):
+        if frame == 'synodic':
             self.rotation_period = constants['synodic_period']  # Solar Synodic rotation period from Earth.
-        elif (frame == 'sidereal'):
+        elif frame == 'sidereal':
             self.rotation_period = constants['sidereal_period'] 
 
-            
         self.v_max = constants['v_max']
         self.nlong = constants['nlong']
         del constants
@@ -428,8 +415,8 @@ class HUXt:
         # Setup longitude coordinates - in radians.
         self.lon, self.dlon, self.nlon = longitude_grid(lon_out=lon_out, lon_start=lon_start, lon_stop=lon_stop)
         
-        #set up the latitude
-        self.latitude=latitude.to(u.rad)
+        # Set up the latitude
+        self.latitude = latitude.to(u.rad)
 
         # Setup time coords - in seconds
         self.simtime = simtime.to('s')  # number of days to simulate (in seconds)
@@ -489,13 +476,15 @@ class HUXt:
         # Empty dictionary for storing the coordinates of CME boundaries.
         self.cmes = []
 
+        # Initialise an array for tracking a CME
+        self.cme_particles = np.zeros((1, self.time.size, 2, self.lon.size)) * np.NaN * u.dimensionless_unscaled
+
         # Numpy array of model parameters for parsing to external functions that use numba
         self.model_params = np.array([self.dtdr.value, self.alpha.value, self.r_accel.value,
                                       self.dt_scale.value, self.nt_out, self.nr, self.nlon,
                                       self.r[0].to('km').value])
         return
 
-    
     def solve(self, cme_list, save=False, tag=''):
         """
         Solve HUXt for the provided boundary conditions and cme list
@@ -507,7 +496,7 @@ class HUXt:
         Returns:
 
         """
-        #make a copy of the CME list objects so that the originals are not modified
+        # Make a copy of the CME list objects so that the originals are not modified
         mycme_list = copy.deepcopy(cme_list)
 
         # Check only cone cmes in cme list, adjust for sidereal frame if necessary
@@ -515,17 +504,17 @@ class HUXt:
         for cme in mycme_list:
             if isinstance(cme, ConeCME):
                 if self.frame == 'sidereal':
-                    #if the solution is in the sideral frame, adjust CME longitudes
+                    # if the solution is in the sideral frame, adjust CME longitudes
                     print('Adjusting CME HEEQ longitude for sidereal frame')
-                    Earthpos = self.get_observer('EARTH')
-                    #time and longitude from start of run
-                    dt_t0 = (Earthpos.time - self.time_init).to(u.s)
-                    dlon_t0 = Earthpos.lon_hae -  Earthpos.lon_hae[0]
-                    #find the CME hae longitude relative to the run start
+                    earthpos = self.get_observer('EARTH')
+                    # time and longitude from start of run
+                    dt_t0 = (earthpos.time - self.time_init).to(u.s)
+                    dlon_t0 = earthpos.lon_hae - earthpos.lon_hae[0]
+                    # find the CME hae longitude relative to the run start
                     cme_hae = np.interp(cme.t_launch.value, dt_t0.value, dlon_t0)
-                    #adjust the CME HEEQ longitude accordingly
-                    cme.longitude = _zerototwopi_(cme.longitude  + cme_hae) * u.rad
-                #add the CME to the list  
+                    # adjust the CME HEEQ longitude accordingly
+                    cme.longitude = _zerototwopi_(cme.longitude + cme_hae) * u.rad
+                # add the CME to the list
                 cme_list_checked.append(cme)
 
             else:
@@ -547,7 +536,7 @@ class HUXt:
             do_cme = False
             cme_params = np.NaN * np.zeros((1, 9))
             
-        #set up the test particle position field
+        # Set up the test particle position field
         self.cme_particles = np.zeros((len(self.cmes), self.nt_out, 2, self.nlon)) * u.dimensionless_unscaled
 
         buffersteps = np.fix(self.buffertime.to(u.s) / self.dt)
@@ -581,16 +570,16 @@ class HUXt:
             # convert from cr longitude to timesolve
             vinput = np.flipud(vinit)
             
-            #solve for these inputs, adding in CMEs where necessary
-            v, CMErbounds  = solve_radial(vinput, model_time, self.rrel.value, lon_out,
-                                          self.model_params, do_cme, cme_params,
-                                          self.latitude.value)
-            #save the outputs
+            # Solve for these inputs, adding in CMEs where necessary
+            v, cme_r_bounds = solve_radial(vinput, model_time, self.rrel.value, lon_out,
+                                           self.model_params, do_cme, cme_params,
+                                           self.latitude.value)
+            # Save the outputs
             self.v_grid[:, :, i] = v * self.kms
             
-            self.cme_particles[:, :, :, i] = CMErbounds * u.dimensionless_unscaled
+            self.cme_particles[:, :, :, i] = cme_r_bounds * u.dimensionless_unscaled
             
-        #  Update CMEs positions by tracking through the solution.
+        # Update CMEs positions by tracking through the solution.
         updated_cmes = []
         for cme_num, cme in enumerate(self.cmes):
             cme._track_(self, cme_num)
@@ -604,7 +593,6 @@ class HUXt:
             self.save(tag=tag)
         return
 
-   
     def save(self, tag=''):
         """
         Save all model fields output to a HDF5 file.
@@ -631,7 +619,7 @@ class HUXt:
             for k, v in cme.__dict__.items():
                 
                 if k == "frame":
-                    dset = cmegrp.create_dataset(k, data=v)
+                    cmegrp.create_dataset(k, data=v)
                     
                 if k not in ["coords", "frame"]:
                     dset = cmegrp.create_dataset(k, data=v.value)
@@ -646,7 +634,7 @@ class HUXt:
                         timegrp = coordgrp.create_group(time_label)
                         for pos_label, pos_data in position.items():
                             if pos_label == 'time':
-                                dset = timegrp.create_dataset(pos_label, data=pos_data.isot)
+                                timegrp.create_dataset(pos_label, data=pos_data.isot)
                             else:
                                 dset = timegrp.create_dataset(pos_label, data=pos_data.value)
                                 dset.attrs['unit'] = pos_data.unit.to_string()
@@ -661,7 +649,7 @@ class HUXt:
         for k, v in self.__dict__.items():
 
             if k in keys:
-                if isinstance(v,str):
+                if isinstance(v, str):
                     dset = out_file.create_dataset(k, data=v)
                 else:
                     dset = out_file.create_dataset(k, data=v.value)
@@ -711,15 +699,15 @@ class HUXt3d:
 
     # Decorators to check units on input arguments
     @u.quantity_input(v_map=(u.km / u.s))
-    @u.quantity_input(v_map_lat=(u.rad))
-    @u.quantity_input(v_map_long=(u.rad))
-    @u.quantity_input(latitude_max=(u.deg))
-    @u.quantity_input(latitude_min=(u.deg))
+    @u.quantity_input(v_map_lat=u.rad)
+    @u.quantity_input(v_map_long=u.rad)
+    @u.quantity_input(latitude_max=u.deg)
+    @u.quantity_input(latitude_min=u.deg)
     @u.quantity_input(simtime=u.day)
     @u.quantity_input(cr_lon_init=u.deg)
     def __init__(self, v_map=np.NaN * (u.km / u.s), v_map_lat=np.NaN * u.rad, v_map_long=np.NaN * u.rad, 
                  cr_num=np.NaN, cr_lon_init=360.0 * u.deg, 
-                 latitude_max = 30*u.deg, latitude_min=-30*u.deg,
+                 latitude_max=30*u.deg, latitude_min=-30*u.deg,
                  r_min=30 * u.solRad, r_max=240 * u.solRad,
                  lon_out=np.NaN * u.rad, lon_start=np.NaN * u.rad, lon_stop=np.NaN * u.rad,
                  simtime=5.0 * u.day, dt_scale=1.0):
@@ -745,31 +733,31 @@ class HUXt3d:
         :param dt_scale: Integer scaling number to set the model output time step relative to the models CFL time.
         """
                  
-        #latitude grid
+        # Define latitude grid
         self.latitude_min = latitude_min.to(u.rad)
         self.latitude_max = latitude_max.to(u.rad)
         self.lat, self.nlat = latitude_grid(self.latitude_min, self.latitude_max)
         
-        #check the dimensions 
-        assert( len(v_map_lat) == len(v_map[1,:]) )
-        assert( len(v_map_long) == len(v_map[:,1]) )
+        # Check the dimensions
+        assert(len(v_map_lat) == len(v_map[1, :]))
+        assert(len(v_map_long) == len(v_map[:, 1]))
         
-        #get the HUXt longitunidal grid
+        # Get the HUXt longitunidal grid
         longs, dlon, nlon = longitude_grid(lon_start=0.0*u.rad, lon_stop=2*np.pi*u.rad)
         
-        #extract the vr value at the given latitudes
+        # Extract the vr value at the given latitudes
         self.v_in = []
-        vlong=np.ones(len(v_map_long)) 
+        vlong = np.ones(len(v_map_long))
         for thislat in self.lat:
-            for ilong in range(0,len(v_map_long)):
-                vlong[ilong] = np.interp(thislat.value, v_map_lat.value, v_map[ilong,:].value)
-            #interpolate this longitudinal profile to the HUXt resolution
+            for ilong in range(0, len(v_map_long)):
+                vlong[ilong] = np.interp(thislat.value, v_map_lat.value, v_map[ilong, :].value)
+
+            # Interpolate this longitudinal profile to the HUXt resolution
             self.v_in.append(np.interp(longs.value, v_map_long.value, vlong)*u.km/u.s)
 
- 
-        #set up the model at each latitude
+        # Set up the model at each latitude
         self.HUXtlat = []
-        for i in range(0,self.nlat):
+        for i in range(0, self.nlat):
             self.HUXtlat.append(HUXt(v_boundary=self.v_in[i],
                                      latitude=self.lat[i],
                                      cr_num=cr_num, cr_lon_init=cr_lon_init, 
@@ -789,25 +777,24 @@ def huxt_constants():
     """
     Return some constants used in all HUXt model classes
     """
-    nlong=128  #number of longitude bins for a full longitude grid [128]
+    nlong = 128  # Number of longitude bins for a full longitude grid [128]
     dr = 1.5 * u.solRad  # Radial grid step. With v_max, this sets the model time step [1.5*u.solRad]
-    nlat=45    #number of ltitude bins for a full ltitude grid [45]
-    v_max = 2000 * u.km/u.s  #maximum expected solar wind speed. Sets timestep [2000*u.km / u.s]
+    nlat = 45    # Number of latitude bins for a full latitude grid [45]
+    v_max = 2000 * u.km/u.s  # Maximum expected solar wind speed. Sets timestep [2000*u.km / u.s]
     
-    #CONSTANTS - DON'T CHANGE
+    # CONSTANTS - DON'T CHANGE
     twopi = 2.0 * np.pi
     daysec = 24 * 60 * 60 * u.s
     kms = u.km / u.s
     alpha = 0.15 * u.dimensionless_unscaled  # Scale parameter for residual SW acceleration
     r_accel = 50 * u.solRad  # Spatial scale parameter for residual SW acceleration
     synodic_period = 27.2753 * daysec  # Solar Synodic rotation period from Earth.
-    sidereal_period = 25.38 *daysec # Solar sidereal rotation period 
-    
-    
+    sidereal_period = 25.38 * daysec  # Solar sidereal rotation period
+
     constants = {'twopi': twopi, 'daysec': daysec, 'kms': kms, 'alpha': alpha,
                  'r_accel': r_accel, 'synodic_period': synodic_period, 
                  'sidereal_period': sidereal_period, 'v_max': v_max,
-                 'dr': dr, 'nlong' : nlong, 'nlat' : nlat}
+                 'dr': dr, 'nlong': nlong, 'nlat': nlat}
             
     return constants
 
@@ -909,7 +896,7 @@ def longitude_grid(lon_out=np.NaN * u.rad, lon_start=np.NaN * u.rad, lon_stop=np
 
 @u.quantity_input(latitude_min=u.rad)
 @u.quantity_input(latitude_max=u.rad)
-def latitude_grid(latitude_min = np.nan, latitude_max = np.nan):
+def latitude_grid(latitude_min=np.nan, latitude_max=np.nan):
     """
     Define the latitude grid of the HUXt model. This is constant in sine latitude
     
@@ -930,7 +917,7 @@ def latitude_grid(latitude_min = np.nan, latitude_max = np.nan):
     
     dsinlat = 2 / nlat
     sinlat_min_full = - 1 + dsinlat / 2.0
-    sinlat_max_full =  1 - dsinlat / 2.0
+    sinlat_max_full = 1 - dsinlat / 2.0
     sinlat, dsinlat = np.linspace(sinlat_min_full, sinlat_max_full, nlat, retstep=True)
     lat = np.arcsin(sinlat) * u.rad
     
@@ -1046,8 +1033,8 @@ def solve_radial(vinput, model_time, rrel, lon, params,
     r_boundary = params[7]
     n_cme = cme_params.shape[0]
     
-    #compute the radial grid for the test particles
-    rgrid = rrel*695700.0 + r_boundary #  can't use astropy.untis because numba
+    # Compute the radial grid for the test particles
+    rgrid = rrel*695700.0 + r_boundary  # Can't use astropy.untis because numba
     dr = rgrid[1]-rgrid[0]
     dt = dtdr*dr
    
@@ -1074,54 +1061,50 @@ def solve_radial(vinput, model_time, rrel, lon, params,
             if do_cme == 1:
                 
                 v_update_cme = np.zeros(n_cme)*np.nan
-                #CMEtracer_update = np.zeros(n_cme)
                 for n in range(n_cme):
                     cme = cme_params[n, :]
-                    #check if this point is within the cone CME
+                    # Check if this point is within the cone CME
                     if _is_in_cme_boundary_(r_boundary, lon, latitude, time, cme):                
                         v_update_cme[n] = cme[4]
-                        #CMEtracer_update[n] = 1.0 #the CME number
-                        
-                        #  If the leading edge test particle doesn't exist, add it
-                        if np.isnan(r_cmeparticles[n,0]):
+
+                        # If the leading edge test particle doesn't exist, add it
+                        if np.isnan(r_cmeparticles[n, 0]):
                             r_cmeparticles[n, 0] = r_boundary
                             
-                        #  Hold the CME trailing edge test particle at the inner boundary
-                        #  Until if condition breaks
+                        # Hold the CME trailing edge test particle at the inner boundary
+                        # Until if condition breaks
                         r_cmeparticles[n, 1] = r_boundary
                         
-                #see if there are any CMEs
+                # See if there are any CMEs
                 if not np.all(np.isnan(v_update_cme)):
                     v[0] = np.nanmax(v_update_cme)
-                    
-        
-        #  update all fields for the given longitude
-        #  =====================================
+
+        # Update all fields for the given longitude
         u_up = v[1:].copy()
         u_dn = v[:-1].copy()
         
-        #  do a single model time step
+        # Do a single model time step
         u_up_next = _upwind_step_(u_up, u_dn, dtdr, alpha, r_accel, rrel)
-        #  Save the updated time step
+        # Save the updated time step
         v[1:] = u_up_next.copy()
         
-        #  move the test particles forward
+        # Move the test particles forward
         if t > 0:        
-            for n in range(0,n_cme):  #  loop over each CME
-                for bound in range(0,2): #  loop over front and rear boundaries
-                     if (np.isnan(r_cmeparticles[n,bound]) == False):
-                         #  linearly interpolate the speed
-                         v_test = np.interp(r_cmeparticles[n, bound] - dr/2, rgrid, v)
-                         #  advance the test particle
-                         r_cmeparticles[n ,bound] = (r_cmeparticles[n, bound] + v_test * dt)
+            for n in range(0, n_cme):  # loop over each CME
+                for bound in range(0, 2):  # loop over front and rear boundaries
+                    if np.isnan(r_cmeparticles[n, bound]) == False:
+                        # Linearly interpolate the speed
+                        v_test = np.interp(r_cmeparticles[n, bound] - dr/2, rgrid, v)
+                        # Advance the test particle
+                        r_cmeparticles[n, bound] = (r_cmeparticles[n, bound] + v_test * dt)
                             
                 if r_cmeparticles[n, 0] > rgrid[-1]:
-                    #  if the leading edge is past the outer boundary, put it at the outer boundary
+                    # If the leading edge is past the outer boundary, put it at the outer boundary
                     r_cmeparticles[n, 0] = rgrid[-1]
                     
                 if r_cmeparticles[n, 1] > rgrid[-1]:
-                    #  if the trailing edge is past the outer boundary,delete
-                    r_cmeparticles[n,:] = np.nan
+                    # If the trailing edge is past the outer boundary,delete
+                    r_cmeparticles[n, :] = np.nan
 
         # Save this frame to output if it is an output timestep
         if time >= 0:
@@ -1142,8 +1125,6 @@ def _upwind_step_(v_up, v_dn, dtdr, alpha, r_accel, rrel):
     Compute the next step in the upwind scheme of Burgers equation with added acceleration of the solar wind.
     :param v_up: A numpy array of the upwind radial values. Units of km/s.
     :param v_dn: A numpy array of the downwind radial values. Units of km/s.
-    :param br_up: A numpy array of the upwind passive tracer  values. 
-    :param br_dn: A numpy array of the downwind passive tracer values. 
     :param dtdr: Ratio of HUXts time step and radial grid step. Units of s/km.
     :param alpha: Scale parameter for residual Solar wind acceleration.
     :param r_accel: Spatial scale parameter of residual solar wind acceleration. Units of km.
@@ -1178,7 +1159,7 @@ def _is_in_cme_boundary_(r_boundary, lon, lat, time, cme_params):
     :param cme_params: An array containing the cme parameters
     :return: True/False
     """
-    isincme=False
+    isincme = False
 
     cme_t_launch = cme_params[0]
     cme_lon = cme_params[1]
@@ -1203,12 +1184,12 @@ def _is_in_cme_boundary_(r_boundary, lon, lat, time, cme_params):
         lat_cent = lat_cent + 2.0 * np.pi
 
     # Compute great circle distance from nose to input latitude
-    sigma = np.arccos( np.cos(lat_cent) * np.cos(lon_cent))  # simplified version for the frame centered on the CME
+    sigma = np.arccos(np.cos(lat_cent) * np.cos(lon_cent))  # simplified version for the frame centered on the CME
    
     x = np.NaN
     if (lon_cent >= -cme_width / 2) & (lon_cent <= cme_width / 2):
         # Longitude inside CME span.
-        #  Compute y, the height of CME nose above the 30rS surface
+        # Compute y, the height of CME nose above the 30rS surface
         y = cme_v * (time - cme_t_launch)
 
         if (y >= 0) & (y < cme_radius):
@@ -1224,7 +1205,7 @@ def _is_in_cme_boundary_(r_boundary, lon, lat, time, cme_params):
 
         theta = np.arctan(x / r_boundary)
         if sigma <= theta:
-            isincme=True
+            isincme = True
 
     return isincme
 
@@ -1254,7 +1235,7 @@ def load_HUXt_run(filepath):
         nlon = lon.size
         frame = data['frame'][()]
     
-        #create the model class
+        # Create the model class
         if nlon == 1:
             model = HUXt(v_boundary=v_boundary,  cr_num=cr_num, cr_lon_init=cr_lon_init,
                          r_min=r.min(), r_max=r.max(), 
@@ -1267,8 +1248,8 @@ def load_HUXt_run(filepath):
                          simtime=simtime, dt_scale=dt_scale,
                          latitude=lat, frame=frame)
         
-        #reset the longitudes, as when onlyt a wedge is simulated, it gets confused.
-        model.lon=lon
+        # Reset the longitudes, as when onlyt a wedge is simulated, it gets confused.
+        model.lon = lon
         model.nlon = nlon
 
         model.v_grid = data['v_grid'][()] * u.Unit(data['v_boundary'].attrs['unit'])
@@ -1292,7 +1273,7 @@ def load_HUXt_run(filepath):
             # Now sort out coordinates.
             # Use the same dictionary structure as defined in ConeCME._track_
             coords_group = cme_data['coords']
-            coords_data = {j: {'time':np.array([]), 'model_time': np.array([]) * u.s,
+            coords_data = {j: {'time': np.array([]), 'model_time': np.array([]) * u.s,
                                'lon': np.array([]) * model.lon.unit, 'r': np.array([]) * u.km,
                                'lat': np.array([]) * u.rad}
                            for j in range(len(coords_group))}

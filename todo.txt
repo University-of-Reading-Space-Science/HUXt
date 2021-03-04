@@ -1,6 +1,0 @@
-HUXt todo:
-
-- Add CME boundary tracing to Lat slice
-- Add HCS identification
-
-
