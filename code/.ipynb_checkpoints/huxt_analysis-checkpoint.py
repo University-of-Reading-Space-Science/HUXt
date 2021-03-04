@@ -330,7 +330,6 @@ def get_earth_timeseries(model):
 
     #adjust the HEEQ coordinates if the sidereal frame has been used
     if model.frame == 'sidereal':
-        #deltalon = (2*np.pi * model.time_out.to(u.day).value/365)*u.rad
         deltalon = Earthpos.lon_hae -  Earthpos.lon_hae[0]
         lonheeq = _zerototwopi_(Earthpos.lon.value + deltalon.value)
     elif model.frame == 'synodic':
@@ -340,7 +339,7 @@ def get_earth_timeseries(model):
         print('Single longitude simulated. Extracting time series at Earth r')
 
 
-    earth_time_series = np.ones((model.nt_out,5))*np.nan
+    earth_time_series = np.ones((model.nt_out, 2))*np.nan
     for t in range(0,model.nt_out):
         earth_time_series[t,0] = (model.time_init + model.time_out[t]).mjd
 
@@ -349,29 +348,10 @@ def get_earth_timeseries(model):
 
         #then interpolate the values in longitude
         if model.nlon == 1:
-            earth_time_series[t,1] = model.v_grid[t,id_r,0].value
-            earth_time_series[t,2] = model.CMEtracer_grid[t,id_r,0].value
-            if model.do_br:
-                earth_time_series[t,3] = model.br_grid[t,id_r,0].value
-            if model.do_rho:
-                earth_time_series[t,4] = model.rho_grid[t,id_r,0].value
+            earth_time_series[t,1] = model.v_grid[t, id_r, 0].value
         else:
             earth_time_series[t,1] = np.interp(lonheeq[t],
                                      model.lon.value,
                                      model.v_grid[t,id_r,:].value,
-                                     period = 2*np.pi)
-            earth_time_series[t,2] = np.interp(lonheeq[t],
-                                     model.lon.value,
-                                     model.CMEtracer_grid[t,id_r,:].value,
-                                     period = 2*np.pi)
-            if model.do_br:
-                earth_time_series[t,3] = np.interp(lonheeq[t],
-                                     model.lon.value,
-                                     model.br_grid[t,id_r,:].value,
-                                     period = 2*np.pi)
-            if model.do_rho:
-                earth_time_series[t,4] = np.interp(lonheeq[t],
-                                     model.lon.value,
-                                     model.rho_grid[t,id_r,:].value,
                                      period = 2*np.pi)
     return earth_time_series
