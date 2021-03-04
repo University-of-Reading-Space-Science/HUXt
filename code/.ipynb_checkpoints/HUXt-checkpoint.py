@@ -243,14 +243,15 @@ class ConeCME:
         # Get body ephemeris
         times = Time([coord['time'] for i, coord in self.coords.items()])
         body = Observer(body_name, times)
-
+        
         arrive_rad = body.r.to(u.km)
 
         # Correct longitudes if in sidereal frame
         if self.frame == 'synodic':
             arrive_lon = body.lon
         elif self.frame == 'sidereal':
-            delta_lon = body.lon_hae - body.lon_hae[0]
+            earth = Observer('EARTH', times)
+            delta_lon = earth.lon_hae - earth.lon_hae[0]
             arrive_lon = _zerototwopi_(body.lon + delta_lon)
             arrive_lon = arrive_lon * body.lon.unit
 
