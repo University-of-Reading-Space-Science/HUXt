@@ -244,7 +244,7 @@ class ConeCME:
         times = Time([coord['time'] for i, coord in self.coords.items()])
         body = Observer(body_name, times)
         
-        arrive_rad = body.r.to(u.km)
+        arrive_rad = body.r
 
         # Correct longitudes if in sidereal frame
         if self.frame == 'synodic':
