@@ -227,7 +227,7 @@ class ConeCME:
                 
                 # Find valid points and save to dict
                 id_good = np.isfinite(cme_r)
-                self.coords[j]['r'] = cme_r[id_good] * u.km
+                self.coords[j]['r'] = (cme_r[id_good] * u.km).to(u.solRad)
                 self.coords[j]['lon'] = lons[id_good] + self.longitude
                 self.coords[j]['front_id'] = front_id[id_good]*u.dimensionless_unscaled
                 self.coords[j]['lat'] = model.latitude.copy()

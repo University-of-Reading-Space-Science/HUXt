@@ -1,18 +1,10 @@
 import numpy as np
 import astropy.units as u
-from astropy.time import Time, TimeDelta
-from sunpy.coordinates import sun
 import os
-import glob
-import h5py
 import matplotlib.pyplot as plt
 import matplotlib as mpl
 import moviepy.editor as mpy
 from moviepy.video.io.bindings import mplfig_to_npimage
-from skimage import measure
-import scipy.ndimage as ndi
-from numba import jit
-import copy
 
 import huxt as H
 
@@ -26,8 +18,8 @@ mpl.rc("legend", fontsize=16)
 def plot(model, time, save=False, tag=''):
     """
     Make a contour plot on polar axis of the solar wind solution at a specific time.
-    :param time: Time to look up closet model time to (with an astropy.unit of time). 
-    :param field: String, either 'cme', or 'ambient', specifying which solution to plot.
+    :param model: An instance of the HUXt class with a completed solution.
+    :param time: Time to look up closet model time to (with an astropy.unit of time).
     :param save: Boolean to determine if the figure is saved.
     :param tag: String to append to the filename if saving the figure.
     :return fig: Figure handle.
@@ -44,10 +36,10 @@ def plot(model, time, save=False, tag=''):
     lon, rad = np.meshgrid(lon_arr.value, model.r.value)
     mymap = mpl.cm.viridis
     v_sub = model.v_grid.value[id_t, :, :].copy()
-    plotvmin=200
-    plotvmax=810
-    dv=10
-    ylab="Solar Wind Speed (km/s)"
+    plotvmin = 200
+    plotvmax = 810
+    dv = 10
+    ylab = "Solar Wind Speed (km/s)"
     
     # Insert into full array
     if lon_arr.size != model.lon.size:
@@ -88,12 +80,12 @@ def plot(model, time, save=False, tag=''):
             ax.plot(cme_lons, cme_r, '-', color=cme_colors[cid], linewidth=3)
 
     # Add on observers 
-    for body, style in zip(['EARTH', 'VENUS', 'MERCURY','STA', 'STB'], ['co', 'mo', 'ko','rs', 'y^']):
+    for body, style in zip(['EARTH', 'VENUS', 'MERCURY', 'STA', 'STB'], ['co', 'mo', 'ko', 'rs', 'y^']):
         obs = model.get_observer(body)
         deltalon = 0.0*u.rad
         if model.frame == 'sidereal':
-            Earthpos = model.get_observer('EARTH')
-            deltalon = Earthpos.lon_hae[id_t] -  Earthpos.lon_hae[0]
+            earth_pos = model.get_observer('EARTH')
+            deltalon = earth_pos.lon_hae[id_t] - earth_pos.lon_hae[0]
             
         obslon = H._zerototwopi_(obs.lon[id_t] + deltalon)
         ax.plot(obslon, obs.r[id_t], style, markersize=16, label=body)
@@ -137,7 +129,7 @@ def plot(model, time, save=False, tag=''):
 def animate(model, tag):
     """
     Animate the model solution, and save as an MP4.
-    :param field: String, either 'cme', or 'ambient', specifying which solution to animate.
+    :param model: An instance of the HUXt class with a completed solution.
     :param tag: String to append to the filename of the animation.
     """
 
@@ -168,9 +160,9 @@ def animate(model, tag):
 def plot_radial(model, time, lon, save=False, tag=''):
     """
     Plot the radial solar wind profile at model time closest to specified time.
+    :param model: An instance of the HUXt class with a completed solution.
     :param time: Time (in seconds) to find the closest model time step to.
     :param lon: The model longitude of the selected radial to plot.
-    :param field: String, either 'cme', 'ambient', or 'both' specifying which solution to plot.
     :param save: Boolean to determine if the figure is saved.
     :param tag: String to append to the filename if saving the figure.
     :return: fig: Figure handle
@@ -200,11 +192,10 @@ def plot_radial(model, time, lon, save=False, tag=''):
         id_lon = np.argmin(np.abs(model.lon - lon))
         lon_out = model.lon[id_lon].to(u.deg).value
 
-    
-    ylab='Solar Wind Speed (km/s)'
+    ylab = 'Solar Wind Speed (km/s)'
     ax.plot(model.r, model.v_grid[id_t, :, id_lon], 'k-')
-    ymin=200
-    ymax=1000
+    ymin = 200
+    ymax = 1000
     
     # Plot the CME points on if needed
     cme_colors = ['r', 'c', 'm', 'y', 'deeppink', 'darkorange']
@@ -229,7 +220,6 @@ def plot_radial(model, time, lon, save=False, tag=''):
         id_cme = (model.r >= r_back) & (model.r <= r_front)
         label = "CME {:02d}".format(c)
         ax.plot(model.r[id_cme], model.v_grid[id_t, id_cme, id_lon], '.', color=cme_colors[cc], label=label)
-
 
     ax.set_ylim(ymin, ymax)
     ax.set_ylabel(ylab)
@@ -257,9 +247,9 @@ def plot_radial(model, time, lon, save=False, tag=''):
 def plot_timeseries(model, radius, lon, save=False, tag=''):
     """
     Plot the solar wind model timeseries at model radius and longitude closest to those specified.
+    :param model: An instance of the HUXt class with a completed solution.
     :param radius: Radius to find the closest model radius to.
     :param lon: Longitude to find the closest model longitude to.
-    :param field: String, either 'cme', 'ambient', or 'both' specifying which solution to plot.
     :param save: Boolean to determine if the figure is saved.
     :param tag: String to append to the filename if saving the figure.
     :return: fig: Figure handle
@@ -289,8 +279,9 @@ def plot_timeseries(model, radius, lon, save=False, tag=''):
     t_day = model.time_out.to(u.day)
     
     ax.plot(t_day, model.v_grid[:, id_r, id_lon], 'k-')
-    ylab='Solar Wind Speed (km/s)'
-    ymin=200; ymax=1000
+    ylab = 'Solar Wind Speed (km/s)'
+    ymin = 200
+    ymax = 1000
 
     ax.set_ylim(ymin, ymax)
     ax.set_ylabel(ylab)
@@ -319,7 +310,7 @@ def plot_timeseries(model, radius, lon, save=False, tag=''):
 
 def get_earth_timeseries(model):
     """
-    Returns Earth time series. COlumns are:
+    Returns Earth time series. Columns are:
         0 - time (MJD)
         1 - speed (km/s)
         2 - CME tracer density 
@@ -348,10 +339,8 @@ def get_earth_timeseries(model):
 
         #then interpolate the values in longitude
         if model.nlon == 1:
-            earth_time_series[t,1] = model.v_grid[t, id_r, 0].value
+            earth_time_series[t, 1] = model.v_grid[t, id_r, 0].value
         else:
-            earth_time_series[t,1] = np.interp(lonheeq[t],
-                                     model.lon.value,
-                                     model.v_grid[t,id_r,:].value,
-                                     period = 2*np.pi)
+            earth_time_series[t, 1] = np.interp(lonheeq[t], model.lon.value,
+                                                model.v_grid[t, id_r, :].value, period=2*np.pi)
     return earth_time_series
