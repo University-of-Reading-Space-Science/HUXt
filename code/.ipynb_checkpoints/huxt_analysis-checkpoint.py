@@ -6,7 +6,7 @@ import matplotlib as mpl
 import moviepy.editor as mpy
 from moviepy.video.io.bindings import mplfig_to_npimage
 
-import huxt as H
+import HUXt as H
 
 mpl.rc("axes", labelsize=16)
 mpl.rc("ytick", labelsize=16)
@@ -308,6 +308,8 @@ def plot_timeseries(model, radius, lon, save=False, tag=''):
     return fig, ax
 
 
+
+
 def get_earth_timeseries(model):
     """
     Returns Earth time series. Columns are:
@@ -322,7 +324,7 @@ def get_earth_timeseries(model):
     #adjust the HEEQ coordinates if the sidereal frame has been used
     if model.frame == 'sidereal':
         deltalon = Earthpos.lon_hae -  Earthpos.lon_hae[0]
-        lonheeq = _zerototwopi_(Earthpos.lon.value + deltalon.value)
+        lonheeq = H._zerototwopi_(Earthpos.lon.value + deltalon.value)
     elif model.frame == 'synodic':
         lonheeq = Earthpos.lon.value 
 
@@ -344,3 +346,116 @@ def get_earth_timeseries(model):
             earth_time_series[t, 1] = np.interp(lonheeq[t], model.lon.value,
                                                 model.v_grid[t, id_r, :].value, period=2*np.pi)
     return earth_time_series
+
+
+
+@u.quantity_input(time=u.day)
+def plot_3d_meridional(model3d, time, lon=np.NaN*u.deg, save=False, tag=''):
+    """
+    Make a contour plot on polar axis of the solar wind solution at a specific time.
+    :param model: An instance of the HUXt class with a completed solution.
+    :param time: Time to look up closet model time to (with an astropy.unit of time).
+    :param save: Boolean to determine if the figure is saved.
+    :param tag: String to append to the filename if saving the figure.
+    :return fig: Figure handle.
+    :return ax: Axes handle.
+    """
+    #get the metadata from one of the individual HUXt elements
+    model=model3d.HUXtlat[0]
+    
+    if (time < model.time_out.min()) | (time > (model.time_out.max())):
+        print("Error, input time outside span of model times. Defaulting to closest time")
+
+    id_t = np.argmin(np.abs(model.time_out - time))
+    time_out = model.time_out[id_t].to(u.day).value
+    
+    #get the requested longitude
+    if model.lon.size == 1:
+        id_lon = 0
+        lon_out = model.lon.value
+    else:
+        id_lon = np.argmin(np.abs(model.lon - lon))
+        lon_out = model.lon[id_lon].to(u.deg).value
+        
+    #loop over latitudes and extract the radial profiles
+    mercut=np.ones((len(model.r),model3d.nlat))
+    ymax=0.0
+    for n in range(0,model3d.nlat):
+        model=model3d.HUXtlat[n]
+        ymin=200; ymax=810; dv=19;
+        ylab='Solar Wind Speed (km/s)'
+        mercut[:,n]=model.v_grid[id_t, :, id_lon]
+        mymap = mpl.cm.viridis
+        
+    mymap.set_over('lightgrey')
+    mymap.set_under([0, 0, 0])
+    levels = np.arange(ymin, ymax + dv, dv)
+
+    fig, ax = plt.subplots(figsize=(10, 10), subplot_kw={"projection": "polar"})
+    cnt = ax.contourf(model3d.lat.to(u.rad), model.r, mercut, levels=levels, cmap=mymap, extend='both')
+
+    ax.set_ylim(0, model.r.value.max())
+    ax.set_yticklabels([])
+    ax.set_xticklabels([])
+    ax.patch.set_facecolor('slategrey')
+    fig.subplots_adjust(left=0.05, bottom=0.16, right=0.95, top=0.99)
+
+    # Add color bar
+    pos = ax.get_position()
+    dw = 0.005
+    dh = 0.045
+    left = pos.x0 + dw
+    bottom = pos.y0 - dh
+    wid = pos.width - 2 * dw
+    cbaxes = fig.add_axes([left, bottom, wid, 0.03])
+    cbar1 = fig.colorbar(cnt, cax=cbaxes, orientation='horizontal')
+    cbar1.set_label(ylab)
+    cbar1.set_ticks(np.arange(ymin, ymax, dv*20))
+
+    # Add label
+    label = "Time: {:3.2f} days".format(time_out)
+    fig.text(0.675, pos.y0, label, fontsize=16)
+    label = "HUXt2D"
+    fig.text(0.175, pos.y0, label, fontsize=16)       
+
+
+    if save:
+        cr_num = np.int32(model.cr_num.value)
+        filename = "HUXt_CR{:03d}_{}_frame_{:03d}.png".format(cr_num, tag, id_t)
+        filepath = os.path.join(model._figure_dir_, filename)
+        fig.savefig(filepath)
+
+    return fig, ax
+
+
+def animate_3d(model3d, lon=np.NaN*u.deg, tag=''):
+    """
+    Animate the model solution, and save as an MP4.
+    :param field: String, either 'cme', or 'ambient', specifying which solution to animate.
+    :param tag: String to append to the filename of the animation.
+    """
+
+
+    # Set the duration of the movie
+    # Scaled so a 5 day simulation with dt_scale=4 is a 10 second movie.
+    model=model3d.HUXtlat[0]
+    duration = model.simtime.value * (10 / 432000)
+
+    def make_frame_3d(t):
+        """
+        Produce the frame required by MoviePy.VideoClip.
+        :param t: time through the movie
+        """
+        # Get the time index closest to this fraction of movie duration
+        i = np.int32((model.nt_out - 1) * t / duration)
+        fig, ax =  plot_3d_meridional(model3d, model.time_out[i], lon)
+        frame = mplfig_to_npimage(fig)
+        plt.close('all')
+        return frame
+
+    cr_num = np.int32(model.cr_num.value)
+    filename = "HUXt_CR{:03d}_{}_movie.mp4".format(cr_num, tag)
+    filepath = os.path.join(model._figure_dir_, filename)
+    animation = mpy.VideoClip(make_frame_3d, duration=duration)
+    animation.write_videofile(filepath, fps=24, codec='libx264')
+    return
