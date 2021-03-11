@@ -6,7 +6,7 @@ import matplotlib as mpl
 import moviepy.editor as mpy
 from moviepy.video.io.bindings import mplfig_to_npimage
 
-import huxt as H
+import HUXt as H
 
 mpl.rc("axes", labelsize=16)
 mpl.rc("ytick", labelsize=16)
@@ -308,6 +308,8 @@ def plot_timeseries(model, radius, lon, save=False, tag=''):
     return fig, ax
 
 
+
+
 def get_earth_timeseries(model):
     """
     Returns Earth time series. Columns are:
@@ -322,7 +324,7 @@ def get_earth_timeseries(model):
     #adjust the HEEQ coordinates if the sidereal frame has been used
     if model.frame == 'sidereal':
         deltalon = Earthpos.lon_hae -  Earthpos.lon_hae[0]
-        lonheeq = _zerototwopi_(Earthpos.lon.value + deltalon.value)
+        lonheeq = H._zerototwopi_(Earthpos.lon.value + deltalon.value)
     elif model.frame == 'synodic':
         lonheeq = Earthpos.lon.value 
 

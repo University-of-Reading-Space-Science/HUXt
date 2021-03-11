@@ -11,8 +11,6 @@ from packaging import version
 # check the numpy version, as this can cause all manner of difficult-to-diagnose problems
 assert(version.parse(np.version.version) >= version.parse("1.18"))
 
-# Also import huxt_imports, so all is accesible through huxt.py
-import huxt_inputs as Hin
 
 class Observer:
     """
