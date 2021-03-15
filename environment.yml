@@ -6,20 +6,19 @@ channels:
 
 dependencies:
   - python=3.7
-  - astropy=4.0
-  - h5py==2.10.0
-  - imageio=2.8.0
-  - imageio-ffmpeg=0.3.0
-  - jupyterlab=2.0.1
-  - matplotlib=3.2.1
-  - numpy=1.18.1
-  - numba=0.48.0
-  - pip=20.0.2
-  - scikit-image=0.16.2
-  - scikit-learn=0.22.2.post1
-  - scipy=1.4.1
-  - sunpy=1.1.1
+  - astropy=4.2
+  - h5py==3.1.0
+  - imageio=2.9.0
+  - imageio-ffmpeg=0.4.3
+  - jupyterlab=3.0.10
+  - matplotlib=3.3.4
+  - numpy=1.20.1
+  - numba=0.53.0
+  - pip=21.0.1
+  - scikit-image=0.18.1
+  - scikit-learn=0.24.1
+  - scipy=1.6.0
+  - sunpy=2.1.2
   - moviepy==1.0.1
-  - httplib2
-  - pyhdf
-
+  - httplib2==0.19.0
+  - pyhdf==0.10.2

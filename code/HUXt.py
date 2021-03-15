@@ -304,7 +304,7 @@ class ConeCME:
                 # Lookup cme front radial coord along body longitude
                 r_interp = np.interp(arrive_lon[i], lon_cme, r_cme, left=np.NaN, right=np.NaN)
                 if np.isfinite(r_interp):
-                    t_front.append(coord['time'].value)
+                    t_front.append(coord['time'].jd)
                     r_front.append(r_interp)
                 else:
                     continue
@@ -1256,8 +1256,8 @@ def load_HUXt_run(filepath):
         lon = data['lon'][()] * u.Unit(data['lon'].attrs['unit'])
         lat = data['latitude'][()] * u.Unit(data['latitude'].attrs['unit'])
         nlon = lon.size
-        frame = data['frame'][()]
-    
+        frame = data['frame'][()].decode("utf-8")
+        
         # Create the model class
         if nlon == 1:
             model = HUXt(v_boundary=v_boundary,  cr_num=cr_num, cr_lon_init=cr_lon_init,
@@ -1291,7 +1291,7 @@ def load_HUXt_run(filepath):
             thickness = thickness.to('solRad')
             v = cme_data['v'][()] * u.Unit(cme_data['v'].attrs['unit'])
             cme = ConeCME(t_launch=t_launch, longitude=lon, latitude=lat, v=v, width=width, thickness=thickness)
-            cme.frame = cme_data['frame'][()]
+            cme.frame = cme_data['frame'][()].decode("utf-8")
 
             # Now sort out coordinates.
             # Use the same dictionary structure as defined in ConeCME._track_
