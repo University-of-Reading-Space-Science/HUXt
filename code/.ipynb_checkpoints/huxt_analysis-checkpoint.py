@@ -1,9 +1,11 @@
 import numpy as np
 import astropy.units as u
+from astropy.time import Time
 import os
 import matplotlib.pyplot as plt
 import matplotlib as mpl
 import moviepy.editor as mpy
+import pandas as pd
 from moviepy.video.io.bindings import mplfig_to_npimage
 
 import HUXt as H
@@ -308,45 +310,46 @@ def plot_timeseries(model, radius, lon, save=False, tag=''):
     return fig, ax
 
 
-
-
 def get_earth_timeseries(model):
     """
-    Returns Earth time series. Columns are:
-        0 - time (MJD)
-        1 - speed (km/s)
-        2 - CME tracer density 
-        3 - Br (is available)
-        4 - rho (if available)
+    Compute the solar wind time series at Earth. Returns a pandas dataframe with the 
+    solar wind speed time series at Earth interpolated from the model solution using the
+    Earth ephemeris. Nearest neighbour interpolation in r, linear interpolation in longitude.
     """
-    Earthpos = model.get_observer('Earth')
+    earth_pos = model.get_observer('Earth')
 
     #adjust the HEEQ coordinates if the sidereal frame has been used
     if model.frame == 'sidereal':
-        deltalon = Earthpos.lon_hae -  Earthpos.lon_hae[0]
-        lonheeq = H._zerototwopi_(Earthpos.lon.value + deltalon.value)
+        deltalon = earth_pos.lon_hae -  earth_pos.lon_hae[0]
+        lonheeq = H._zerototwopi_(earth_pos.lon.value + deltalon.value)
     elif model.frame == 'synodic':
-        lonheeq = Earthpos.lon.value 
+        lonheeq = earth_pos.lon.value 
 
     if model.nlon == 1:
         print('Single longitude simulated. Extracting time series at Earth r')
 
+    time = np.ones((model.nt_out))*np.nan
+    lon = np.ones((model.nt_out))*np.nan
+    rad = np.ones((model.nt_out))*np.nan
+    speed = np.ones((model.nt_out))*np.nan
 
-    earth_time_series = np.ones((model.nt_out, 2))*np.nan
-    for t in range(0,model.nt_out):
-        earth_time_series[t,0] = (model.time_init + model.time_out[t]).mjd
+    for t in range(model.nt_out):
+        time[t] = (model.time_init + model.time_out[t]).jd
 
         #find the nearest R coord
-        id_r = np.argmin(np.abs(model.r.value - Earthpos.r[t].value))
-
+        id_r = np.argmin(np.abs(model.r.value - earth_pos.r[t].value))
+        rad[t] = model.r[id_r].value
+        lon[t] = lonheeq[t]
         #then interpolate the values in longitude
         if model.nlon == 1:
-            earth_time_series[t, 1] = model.v_grid[t, id_r, 0].value
+            speed[t] = model.v_grid[t, id_r, 0].value
         else:
-            earth_time_series[t, 1] = np.interp(lonheeq[t], model.lon.value,
-                                                model.v_grid[t, id_r, :].value, period=2*np.pi)
-    return earth_time_series
+            speed[t] = np.interp(lonheeq[t], model.lon.value, model.v_grid[t, id_r, :].value, period=2*np.pi)
 
+    time = Time(time, format='jd')
+    #print(time, rad, lon, speed)
+    earth_time_series = pd.DataFrame(data={'time':time.datetime, 'r':rad, 'lon':lon, 'vsw':speed})
+    return earth_time_series
 
 
 @u.quantity_input(time=u.day)
@@ -418,7 +421,6 @@ def plot_3d_meridional(model3d, time, lon=np.NaN*u.deg, save=False, tag=''):
     label = "HUXt2D"
     fig.text(0.175, pos.y0, label, fontsize=16)       
 
-
     if save:
         cr_num = np.int32(model.cr_num.value)
         filename = "HUXt_CR{:03d}_{}_frame_{:03d}.png".format(cr_num, tag, id_t)
@@ -434,7 +436,6 @@ def animate_3d(model3d, lon=np.NaN*u.deg, tag=''):
     :param field: String, either 'cme', or 'ambient', specifying which solution to animate.
     :param tag: String to append to the filename of the animation.
     """
-
 
     # Set the duration of the movie
     # Scaled so a 5 day simulation with dt_scale=4 is a 10 second movie.
