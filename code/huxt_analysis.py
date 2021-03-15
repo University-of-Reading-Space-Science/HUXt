@@ -308,8 +308,6 @@ def plot_timeseries(model, radius, lon, save=False, tag=''):
     return fig, ax
 
 
-
-
 def get_earth_timeseries(model):
     """
     Returns Earth time series. Columns are:
@@ -330,7 +328,6 @@ def get_earth_timeseries(model):
 
     if model.nlon == 1:
         print('Single longitude simulated. Extracting time series at Earth r')
-
 
     earth_time_series = np.ones((model.nt_out, 2))*np.nan
     for t in range(0,model.nt_out):

@@ -8,11 +8,12 @@ import h5py
 from numba import jit
 import copy
 from packaging import version
+from scipy.ndimage import gaussian_filter1d
 # check the numpy version, as this can cause all manner of difficult-to-diagnose problems
 assert(version.parse(np.version.version) >= version.parse("1.18"))
 
-# Also import huxt_imports, so all is accesible through huxt.py
-import huxt_inputs as Hin
+
+
 
 class Observer:
     """
@@ -201,7 +202,7 @@ class ConeCME:
 
             cme_r_front = cme_field[j, 0, :]
             cme_r_back = cme_field[j, 1, :]
-
+            
             if np.any(np.isfinite(cme_r_front)) | np.any(np.isfinite(cme_r_back)):       
                 # Get longitudes and center on CME
                 lon = model.lon - self.longitude
@@ -219,17 +220,35 @@ class ConeCME:
                     # Find indices that sort the longitudes, to make a wraparound of lons
                     id_sort_inc = np.argsort(lon)
                     id_sort_dec = np.flipud(id_sort_inc)
-                
+                    
+                    cme_r_front = cme_r_front[id_sort_inc]
+                    cme_r_back = cme_r_back[id_sort_dec]
+                    
+                    lon_front = lon[id_sort_inc]
+                    lon_back = lon[id_sort_dec]
+                    
+                    # Only keep good values
+                    id_good = np.isfinite(cme_r_front)
+                    cme_r_front = cme_r_front[id_good]
+                    lon_front = lon_front[id_good]
+                    
+                    id_good = np.isfinite(cme_r_back)
+                    cme_r_back = cme_r_back[id_good]
+                    lon_back = lon_back[id_good]
+                    
+                    # Apply smoothing to the front and back.
+                    cme_r_front = gaussian_filter1d(cme_r_front, 2.0, mode='nearest')
+                    cme_r_back = gaussian_filter1d(cme_r_back, 2.0, mode='nearest')
+                                        
                     # Get one array of longitudes and radii from the front and back particles
-                    lons = np.hstack([lon[id_sort_inc], lon[id_sort_dec]])
-                    cme_r = np.hstack([cme_r_front[id_sort_inc], cme_r_back[id_sort_dec]])
+                    lons = np.hstack([lon_front, lon_back])
+                    cme_r = np.hstack([cme_r_front, cme_r_back])
                     front_id = np.hstack([np.ones(cme_r_front.shape), np.zeros(cme_r_back.shape)])
                 
-                # Find valid points and save to dict
-                id_good = np.isfinite(cme_r)
-                self.coords[j]['r'] = (cme_r[id_good] * u.km).to(u.solRad)
-                self.coords[j]['lon'] = lons[id_good] + self.longitude
-                self.coords[j]['front_id'] = front_id[id_good]*u.dimensionless_unscaled
+                #Save to dict
+                self.coords[j]['r'] = (cme_r * u.km).to(u.solRad)
+                self.coords[j]['lon'] = lons + self.longitude
+                self.coords[j]['front_id'] = front_id*u.dimensionless_unscaled
                 self.coords[j]['lat'] = model.latitude.copy()
         return
 
@@ -280,26 +299,29 @@ class ConeCME:
             r_cme = r_cme[front_id]
             lon_cme = lon_cme[front_id]
 
-            # Lookup cme front radial coord along body longitude
-            r_interp = np.interp(arrive_lon[i], lon_cme, r_cme, left=np.NaN, right=np.NaN)
-            if np.isfinite(r_interp):
-                t_front.append(coord['time'].value)
-                r_front.append(r_interp)
-            else:
-                continue
+            # If there are any CME front coords, then work out pos.
+            if np.any(front_id):
+                # Lookup cme front radial coord along body longitude
+                r_interp = np.interp(arrive_lon[i], lon_cme, r_cme, left=np.NaN, right=np.NaN)
+                if np.isfinite(r_interp):
+                    t_front.append(coord['time'].value)
+                    r_front.append(r_interp)
+                else:
+                    continue
 
-            # Has CME front crossed body radius
-            if r_front[-1] > arrive_rad[i]:
-                hit = True
-                hit_id = i
-                hit_lon = arrive_lon[i] + self.longitude
-                hit_lon = _zerototwopi_(hit_lon)*u.rad
-                # Interpolate the arrival time and transit time
-                # from radial coords before and after body radius
-                t_arrive = np.interp(arrive_rad[i], r_front, t_front)
-                t_transit = t_arrive - t_front[0]
-                t_arrive = Time(t_arrive, format='jd')
-                break
+                # Has CME front crossed body radius
+                if r_front[-1] > arrive_rad[i]:
+                    hit = True
+                    hit_id = i
+                    hit_lon = arrive_lon[i] + self.longitude
+                    hit_lon = _zerototwopi_(hit_lon)*u.rad
+                    hit_rad = arrive_rad[i]
+                    # Interpolate the arrival time and transit time
+                    # from radial coords before and after body radius
+                    t_arrive = np.interp(arrive_rad[i], r_front, t_front)
+                    t_transit = (t_arrive - t_front[0])*u.d
+                    t_arrive = Time(t_arrive, format='jd')
+                    break
 
         if not hit:
             t_arrive = Time("0000-01-01T00:00:00")
@@ -1105,7 +1127,7 @@ def solve_radial(vinput, model_time, rrel, lon, params,
                     
                 if r_cmeparticles[n, 1] > rgrid[-1]:
                     # If the trailing edge is past the outer boundary,delete
-                    r_cmeparticles[n, :] = np.nan
+                    r_cmeparticles[n, :] = rgrid[-1]
 
         # Save this frame to output if it is an output timestep
         if time >= 0:
