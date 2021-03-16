@@ -13,8 +13,6 @@ from scipy.ndimage import gaussian_filter1d
 assert(version.parse(np.version.version) >= version.parse("1.18"))
 
 
-
-
 class Observer:
     """
     A class returning the HEEQ and Carrington coordinates of a specified Planet or spacecraft, for a given set of times.
