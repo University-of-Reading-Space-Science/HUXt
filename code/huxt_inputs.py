@@ -1,6 +1,6 @@
 import httplib2
 import urllib
-import HUXt as H
+import huxt as H
 import os
 from pyhdf.SD import SD, SDC  
 import numpy as np
