@@ -8,7 +8,7 @@ import moviepy.editor as mpy
 import pandas as pd
 from moviepy.video.io.bindings import mplfig_to_npimage
 
-import HUXt as H
+import huxt as H
 
 mpl.rc("axes", labelsize=16)
 mpl.rc("ytick", labelsize=16)
