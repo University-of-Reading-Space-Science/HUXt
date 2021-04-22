@@ -15,12 +15,12 @@ Then the examples can be accessed through
 ```
 >>jupyter lab code/HUXt_example.ipynb
 ```
-Please note that after cloning or downloading ``HUXt``, users should update [``code/config.dat``](code/config.dat) so that ``root`` points to the local directory where HUXt is installed. Otherwise HUXt won't know where to save and load things from.
+Please note that after cloning or downloading ``HUXt``, users should update [``code/config.dat``](code/config.dat) so that ``root`` points to the local directory where HUXt is installed. Otherwise HUXt won't know the file locations for saving and loading figures and data.
 
 ## Usage
 Some examples of how to use HUXt can be found in [``HUXt_example.ipynb``](code/HUXt_example.ipynb).
 
-``HUXt`` requires an inner boundary condition for longitudinal solar wind speed profile. This can either be prescribed by the user or derived from other sources. For convenience,  [``HUXt_inputs.py``](code/HUXt_inputs.py) provides some functions for downloading solar wind speed profiles from the [HelioMAS](https://doi.org/10.1029/2000JA000121) solutions (an example is provided in the examples workbook).
+``HUXt`` requires an inner boundary condition for longitudinal solar wind speed profile. This can either be prescribed by the user or derived from other sources. For convenience,  [``huxt_inputs.py``](code/huxt_inputs.py) provides some functions for downloading and generating longitudinal solar wind speed profiles from the [HelioMAS](https://doi.org/10.1029/2000JA000121) solutions (an example is provided in the examples workbook). Routines for plotting and animating HUXt solutions can be found in  [``huxt_analysis.py``](code/huxt_analysis.py). Again, examples are provided in the workbook.
 
 ## Contact
 Please contact either [Mathew Owens](https://github.com/mathewjowens) or [Luke Barnard](https://github.com/lukebarnard). 
