@@ -430,17 +430,34 @@ def get_PFSS_maps(filepath):
     """
     
     assert os.path.exists(filepath)
-    nc = netcdf.netcdf_file(filepath, 'r')
+    #nc = netcdf.netcdf_file(filepath, 'r')
     
-    cotheta = nc.variables['cos(th)'].data
-    vr_lats = np.arcsin(cotheta[:, 0])*u.rad
+    nc = netcdf.netcdf_file(filepath,'r',mmap=False)
+    br_map=nc.variables['br'][:]
+    vr_map=nc.variables['vr'][:]* u.km / u.s
+    phi=nc.variables['ph'][:]
+    cotheta=nc.variables['cos(th)'][:]
+    
+    nc.close()
+    
+    phi = phi *u.rad
+    theta = (np.pi/2 - np.arccos(cotheta) ) *u.rad
+    vr_lats = theta[:, 0]
     br_lats = vr_lats
-    
-    phi = nc.variables['ph'].data
-    vr_longs = phi[0, :] * u.rad
+    vr_longs = phi[0, :] 
     br_longs = vr_longs
     
-    br_map = np.rot90(nc.variables['br'].data)
-    vr_map = np.rot90(nc.variables['vr'].data) * u.km / u.s
+    
+#    #theta is angle from north pole. convert to angle from equator
+#    cotheta = nc.variables['cos(th)'].data
+#    vr_lats = (np.pi/2 - np.arccos(cotheta[:, 0]) )*u.rad
+#    br_lats = vr_lats
+#    
+#    phi = nc.variables['ph'].data
+#    vr_longs = phi[0, :] * u.rad
+#    br_longs = vr_longs
+#    
+#    br_map = np.rot90(nc.variables['br'].data)
+#    vr_map = np.rot90(nc.variables['vr'].data) * u.km / u.s
 
-    return vr_map, vr_lats, vr_longs, br_map, br_lats, br_longs
+    return vr_map, vr_lats, vr_longs, br_map, br_lats, br_longs, phi, theta
