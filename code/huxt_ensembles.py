@@ -183,11 +183,10 @@ def generate_input_ensemble(phi, theta, vr_map,
     return vr_ensemble
 
 
-# <codecell> Demo script
+# <codecell> Demo script - load data, generate ensemble, run HUXt
 import sys
 import os
 import h5py
-import scipy.signal
 sys.path.append(os.path.abspath(os.environ['DBOX'] + 'python_repos\\HUXt\\code'))
 import huxt_inputs as Hin
 import huxt as H
@@ -197,8 +196,6 @@ reflat = 5*(np.pi/180)*u.rad # Earth lat
 N=100 #number of ensemble members
 #filepath = os.environ['DBOX'] + 'Papers_WIP\\_coauthor\\AnthonyYeates\\windbound_b_pf720_20130816.12.nc'; cr = 999
 filepath = os.environ['DBOX'] + 'Papers_WIP\\_coauthor\\AnthonyYeates\\windbound_b20181105.12.nc'; cr=2210.3
-savedir =  os.path.abspath(os.environ['DBOX'] + 'Papers_WIP\\_coauthor\\MattLang\\HelioMASEnsembles_python')
-
 #==============================================================================
 #load the solar wind speed map
 #==============================================================================
@@ -214,28 +211,17 @@ plt.ylabel('Latitude')
 #==============================================================================
 #generate the input ensemble
 #==============================================================================
-vr_ensemble = generate_input_ensemble(phi, theta, vr_map, reflat = reflat, Nens = N)
+vr_ensemble = generate_input_ensemble(phi, theta, vr_map, 
+                                      reflat = reflat, Nens = N)
     
 #resample the ensemble to 128 longitude bins
-vr128_ensemble = np.ones((N,128))    
+vr128_ensemble = np.ones((N,128))  
+dphi = 2*np.pi/128
+phi128 = np.linspace(dphi/2, 2*np.pi - dphi/2, 128)
 for i in range(0, N):
-    vr128_ensemble[i,:] = scipy.signal.resample(vr_ensemble[i,:],128)
+    vr128_ensemble[i,:] = np.interp(phi128,
+                  vr_longs.value,vr_ensemble[i,:])
     
-#box plot of the input Vr ensemble
-plt.figure()
-plt.boxplot(vr128_ensemble)
-plt.plot(vr128_ensemble[0,:])
-plt.xlabel('Carrington Longitude')
-plt.ylabel('V_{SW} [km/s]')
-
-#==============================================================================
-#save the ensemble, e,g for use with DA
-#==============================================================================
-h5f = h5py.File(savedir + '\\CR' + str(cr) +'_vin_ensemble.h5', 'w')
-h5f.create_dataset('Vin_ensemble', data=vr128_ensemble)
-h5f.close()
-
-
 #==============================================================================
 #run huxt with the input ensemble
 #==============================================================================
@@ -255,9 +241,85 @@ for i in range(0,N):
     
     print('HUXt run ' + str(i+1) + ' of ' + str(N))
 
-#box plot of the HUXt output
+model_time = model.time_out
+
+
+# <codecell> Additional stuff - plots and ensemble saving
+
+#==============================================================================
+#plots
+#==============================================================================    
+
+
+#compute the percentiles
+def getconfidintervals(endata,condif_intervals):
+    L = len(endata[0,:])
+    n = len(confid_intervals)*2 + 1
+    confid_ts = np.ones((L,n))*np.nan
+    for t in range(0,L):
+        dist = endata[:,t]
+        #median
+        confid_ts[t,0] = np.percentile(dist,50)
+        for nconfid in range(0,len(confid_intervals)):
+            confid_ts[t,2*nconfid+1] = np.percentile(dist,confid_intervals[nconfid])
+            confid_ts[t,2*nconfid+2] = np.percentile(dist,100-confid_intervals[nconfid])
+    return confid_ts
+
+#plot the percentiles
+def plotconfidbands(tdata,endata,confid_intervals):
+    n = len(confid_intervals)*2 + 1
+    #get confid intervals
+    confid_ts = getconfidintervals(endata,confid_intervals)
+    
+    #change the line colours to use the inferno colormap
+    import cycler
+    import matplotlib as mpl
+    nc = len(confid_intervals) + 1
+    color = plt.cm.cool(np.linspace(0, 1,nc))
+    mpl.rcParams['axes.prop_cycle'] = cycler.cycler('color', color)
+    nplot = 1 
+    nconfid = 0
+    while (nplot < n):
+        labeltxt = (str(confid_intervals[nconfid]) + '-' 
+                    + str(100-confid_intervals[nconfid]) + 'th %tiles')
+        plt.fill_between(tdata, confid_ts[:,nplot+1], confid_ts[:,nplot],
+                         label= labeltxt ) 
+        nconfid = nconfid + 1
+        nplot = nplot + 2
+    #plot the median
+    plt.plot(tdata, confid_ts[:,0],'w', label = '50th %tile')    
+ 
+    plt.legend(facecolor='grey')    
+    
+#solar wind speed as a function of longitude         
+endata = vr128_ensemble
+tdata = phi128
+confid_intervals = [5, 10, 33]
+
 plt.figure()
-plt.boxplot(huxtoutput)
-plt.plot(huxtoutput[0,:])
+plotconfidbands(tdata,endata,confid_intervals)
+plt.plot(tdata,vr128_ensemble[0,:],'k',label='Unperturbed')
+plt.legend(facecolor='grey')
+plt.xlabel('Carrington Longitude')
+plt.ylabel('V_{SW} [km/s]')
+
+    
+#HUXt output
+endata = huxtoutput
+tdata = model_time
+
+plt.figure()
+plotconfidbands(tdata,endata,confid_intervals)
+plt.plot(tdata,huxtoutput[0,:],'k',label='Unperturbed')
+plt.legend(facecolor='grey')
 plt.xlabel('Time')
 plt.ylabel('V_{SW} [km/s]')
+
+#==============================================================================
+#save the ensemble, e,g for use with DA
+#==============================================================================
+savedir =  os.path.abspath(os.environ['DBOX'] + 'Papers_WIP\\_coauthor\\MattLang\\HelioMASEnsembles_python')
+
+h5f = h5py.File(savedir + '\\CR' + str(cr) +'_vin_ensemble.h5', 'w')
+h5f.create_dataset('Vin_ensemble', data=vr128_ensemble)
+h5f.close()
