@@ -8,6 +8,8 @@ import astropy.units as u
 import matplotlib.pyplot as plt
 import numpy as np
 from scipy.spatial import cKDTree
+import cycler
+import matplotlib as mpl
 
 # <codecell> Helper functions
 def interp2d(xi, yi, V, x, y, n_neighbour = 4):
@@ -106,7 +108,7 @@ def _zerototwopi_(angles):
 
 # <codecell> generate ensembles
 def generate_input_ensemble(phi, theta, vr_map, 
-                            reflat = 0.0*u.rad, Nens = 100, 
+                            reflats, Nens = 100, 
                             lat_rot_sigma = 5*np.pi/180, lat_dev_sigma = 2*np.pi/180,
                             long_dev_sigma = 2*np.pi/180):
     """
@@ -122,7 +124,7 @@ def generate_input_ensemble(phi, theta, vr_map,
         The Carrington longitude in radians
     theta : Float array, dimensions (nlong, nlat)
         The heliographic longitude in radians (from equator)
-    reflat : float
+    reflat : float array, dimesnions (nlong)
         The Earth's latitude in radians (from equator)
     Nens : Integer
         The number of ensemble members to generate
@@ -143,12 +145,13 @@ def generate_input_ensemble(phi, theta, vr_map,
     
 
     """
-    assert((reflat.value > -np.pi/2)  & (reflat.value < np.pi/2))
+    assert((reflats.value.any() > -np.pi/2)  & (reflats.value.any() < np.pi/2))
+    assert(len(reflats) == len(phi[0,:]))
     assert(Nens > 0)
     
     vr_longs = phi[0, :] 
     
-    lats_E = reflat *np.ones((len(vr_longs)))
+    lats_E = reflats
     
     vr_E = interp2d(vr_longs, lats_E, vr_map, phi, theta)
     #br_E = interp2d(br_longs, lats_E, br_map, phi, theta)
@@ -182,77 +185,10 @@ def generate_input_ensemble(phi, theta, vr_map,
        # br_ensemble[i,:] = b
     return vr_ensemble
 
-
-# <codecell> Demo script - load data, generate ensemble, run HUXt
-import sys
-import os
-import h5py
-sys.path.append(os.path.abspath(os.environ['DBOX'] + 'python_repos\\HUXt\\code'))
-import huxt_inputs as Hin
-import huxt as H
-
-#==============================================================================
-reflat = 5*(np.pi/180)*u.rad # Earth lat
-N=100 #number of ensemble members
-#filepath = os.environ['DBOX'] + 'Papers_WIP\\_coauthor\\AnthonyYeates\\windbound_b_pf720_20130816.12.nc'; cr = 999
-filepath = os.environ['DBOX'] + 'Papers_WIP\\_coauthor\\AnthonyYeates\\windbound_b20181105.12.nc'; cr=2210.3
-#==============================================================================
-#load the solar wind speed map
-#==============================================================================
-vr_map, vr_lats, vr_longs, br_map, br_lats, br_longs, phi, theta = Hin.get_PFSS_maps(filepath)
-
-#plot the speed map
-plt.figure()
-plt.pcolor(vr_longs.value*180/np.pi, vr_lats.value*180/np.pi, vr_map.value)
-plt.plot([0, 360],[1,1]*reflat*180/np.pi,'r')
-plt.xlabel('Carrington Longitude')
-plt.ylabel('Latitude')
-
-#==============================================================================
-#generate the input ensemble
-#==============================================================================
-vr_ensemble = generate_input_ensemble(phi, theta, vr_map, 
-                                      reflat = reflat, Nens = N)
-    
-#resample the ensemble to 128 longitude bins
-vr128_ensemble = np.ones((N,128))  
-dphi = 2*np.pi/128
-phi128 = np.linspace(dphi/2, 2*np.pi - dphi/2, 128)
-for i in range(0, N):
-    vr128_ensemble[i,:] = np.interp(phi128,
-                  vr_longs.value,vr_ensemble[i,:])
-    
-#==============================================================================
-#run huxt with the input ensemble
-#==============================================================================
-huxtoutput = np.ones((N,1117))
-
-os.chdir(os.environ['DBOX'] + 'python_repos\\HUXt\\code')
-for i in range(0,N):
-    model = H.HUXt(v_boundary=vr128_ensemble[i]* (u.km/u.s), simtime=27*u.day, 
-                   dt_scale=4, cr_num= cr, lon_out=0.0*u.deg, r_max=215*u.solRad)
-    model.solve([]) 
-    
-    #find Earth location and extract the time series
-    #huxtoutput.append(HA.get_earth_timeseries(model))
-    
-    #it's quicker to just run to 215 rS and take the outer grid cell
-    huxtoutput[i,:] = model.v_grid[:,-1,0]
-    
-    print('HUXt run ' + str(i+1) + ' of ' + str(N))
-
-model_time = model.time_out
-
-
-# <codecell> Additional stuff - plots and ensemble saving
-
-#==============================================================================
-#plots
-#==============================================================================    
-
+# <codecell> post-processing
 
 #compute the percentiles
-def getconfidintervals(endata,condif_intervals):
+def getconfidintervals(endata,confid_intervals):
     L = len(endata[0,:])
     n = len(confid_intervals)*2 + 1
     confid_ts = np.ones((L,n))*np.nan
@@ -267,13 +203,12 @@ def getconfidintervals(endata,condif_intervals):
 
 #plot the percentiles
 def plotconfidbands(tdata,endata,confid_intervals):
+    
     n = len(confid_intervals)*2 + 1
     #get confid intervals
     confid_ts = getconfidintervals(endata,confid_intervals)
     
     #change the line colours to use the inferno colormap
-    import cycler
-    import matplotlib as mpl
     nc = len(confid_intervals) + 1
     color = plt.cm.cool(np.linspace(0, 1,nc))
     mpl.rcParams['axes.prop_cycle'] = cycler.cycler('color', color)
@@ -290,36 +225,4 @@ def plotconfidbands(tdata,endata,confid_intervals):
     plt.plot(tdata, confid_ts[:,0],'w', label = '50th %tile')    
  
     plt.legend(facecolor='grey')    
-    
-#solar wind speed as a function of longitude         
-endata = vr128_ensemble
-tdata = phi128
-confid_intervals = [5, 10, 33]
 
-plt.figure()
-plotconfidbands(tdata,endata,confid_intervals)
-plt.plot(tdata,vr128_ensemble[0,:],'k',label='Unperturbed')
-plt.legend(facecolor='grey')
-plt.xlabel('Carrington Longitude')
-plt.ylabel('V_{SW} [km/s]')
-
-    
-#HUXt output
-endata = huxtoutput
-tdata = model_time
-
-plt.figure()
-plotconfidbands(tdata,endata,confid_intervals)
-plt.plot(tdata,huxtoutput[0,:],'k',label='Unperturbed')
-plt.legend(facecolor='grey')
-plt.xlabel('Time')
-plt.ylabel('V_{SW} [km/s]')
-
-#==============================================================================
-#save the ensemble, e,g for use with DA
-#==============================================================================
-savedir =  os.path.abspath(os.environ['DBOX'] + 'Papers_WIP\\_coauthor\\MattLang\\HelioMASEnsembles_python')
-
-h5f = h5py.File(savedir + '\\CR' + str(cr) +'_vin_ensemble.h5', 'w')
-h5f.create_dataset('Vin_ensemble', data=vr128_ensemble)
-h5f.close()
