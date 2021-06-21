@@ -18,7 +18,7 @@ import huxt_ensembles as Hens
 
 #==============================================================================
 N=100 #number of ensemble members
-lat_rot_sigma = 2*np.pi/180 #The standard deviation of the Gaussain from which the rotational perturbation is drawn
+lat_rot_sigma = 5*np.pi/180 #The standard deviation of the Gaussain from which the rotational perturbation is drawn
 lat_dev_sigma = 2*np.pi/180 #The standard deviation of the Gaussain from which the linear latitudinal perturbation is drawn                          
 long_dev_sigma = 2*np.pi/180 #The standard deviation of the Gaussain from which the linear longitudinal perturbation is drawn
 #filepath = os.environ['DBOX'] + 'Papers_WIP\\_coauthor\\AnthonyYeates\\windbound_b_pf720_20130816.12.nc'; cr = 999
@@ -41,7 +41,8 @@ earth = model.get_observer('earth')
 #get Earth lat as a function of longitude (not time)
 E_lat = np.interp(vr_longs,np.flipud(earth.lon_c),np.flipud(earth.lat_c))
 
-#plot the speed map       
+#plot the speed map as a sanity check
+#====================================      
 plt.figure()
 plt.pcolor(vr_longs.value*180/np.pi, vr_lats.value*180/np.pi, vr_map.value, 
            shading='auto',vmin=250, vmax=700)
@@ -131,13 +132,17 @@ plt.title('HUXt output at Earth')
 #==============================================================================
 #save the ensemble, e,g for use with DA
 #==============================================================================
-import h5py
-savedir =  os.path.abspath(os.environ['DBOX'] + 'Papers_WIP\\_coauthor\\MattLang\\HelioMASEnsembles_python')
-
-h5f = h5py.File(savedir + '\\CR' + str(cr) +'_vin_ensemble.h5', 'w')
-h5f.create_dataset('Vin_ensemble', data=vr128_ensemble)
-h5f.attrs['lat_rot_sigma'] = lat_rot_sigma
-h5f.attrs['lat_dev_sigma'] = lat_dev_sigma
-h5f.attrs['long_dev_sigma'] = long_dev_sigma
-h5f.attrs['source_file'] = filepath
-h5f.close()
+savenow = 0
+if savenow:
+    import h5py
+    savedir =  os.path.abspath(os.environ['DBOX'] + 'Papers_WIP\\_coauthor\\MattLang\\HelioMASEnsembles_python')
+    
+    h5f = h5py.File(savedir + '\\CR' + str(cr) +'_vin_ensemble.h5', 'w')
+    h5f.create_dataset('Vin_ensemble', data=vr128_ensemble)
+    h5f.attrs['lat_rot_sigma'] = lat_rot_sigma
+    h5f.attrs['lat_dev_sigma'] = lat_dev_sigma
+    h5f.attrs['long_dev_sigma'] = long_dev_sigma
+    h5f.attrs['source_file'] = filepath
+    h5f.attrs['r_in_rS'] = r_in
+    h5f.attrs['Carrington_rotation'] = cr
+    h5f.close()

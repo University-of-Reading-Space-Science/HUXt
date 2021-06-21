@@ -4,7 +4,6 @@ Created on Tue Jun 15 17:18:32 2021
 
 @author: mathewjowens
 """
-import astropy.units as u
 import matplotlib.pyplot as plt
 import numpy as np
 from scipy.spatial import cKDTree

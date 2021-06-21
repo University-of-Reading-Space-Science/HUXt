@@ -287,6 +287,55 @@ def get_MAS_maps(cr):
 
     return vr_map, vr_lats, vr_longs
 
+def get_MAS_vrmap(cr):
+    """
+    a function to download, read and process MAS output to provide HUXt boundary
+    conditions as lat-long maps, along with angle from equator for the maps
+    maps returned in native resolution, not HUXt resolution
+    
+    THIS VERSION RETURNS A CORRECTlY TRANSPOSED MAP. IN FUTURE, 
+    get_MAS_maps AND read_MAS_vr_br SHOULD BE UPDATED TO BEHAVE THE
+    SAME
+
+    Parameters
+    ----------
+    cr : INT
+        Carrington rotation number
+
+
+    Returns
+    -------
+    vr_map : NP ARRAY 
+        Solar wind speed as a Carrington longitude-latitude map. In km/s   
+    vr_lats :
+        The latitudes for the Vr map, in radians from trhe equator   
+    vr_longs :
+        The Carrington longitudes for the Vr map, in radians
+
+    """
+    
+    assert(np.isnan(cr) == False and cr > 0)
+    
+    # Check the data exist, if not, download them
+    flag = get_MAS_boundary_conditions(cr)
+    if flag < 0:
+         return -1, -1, -1
+    
+    # Read the HelioMAS data
+    MAS_vr, MAS_vr_Xa, MAS_vr_Xm, MAS_br, MAS_br_Xa, MAS_br_Xm = read_MAS_vr_br(cr)
+    
+    vr_map = MAS_vr
+    
+    # Convert the lat angles from N-pole to equator centred
+    vr_lats = (np.pi/2)*u.rad - MAS_vr_Xm
+
+    
+    # Flip lats, so they're increasing in value
+    vr_lats = np.flipud(vr_lats)
+    vr_map = np.fliplr(vr_map)
+    vr_longs = MAS_vr_Xa
+
+    return vr_map.T, vr_lats, vr_longs
 
 @u.quantity_input(v_outer=u.km / u.s)
 @u.quantity_input(r_outer=u.solRad)
