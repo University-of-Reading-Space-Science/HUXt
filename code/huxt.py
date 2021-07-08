@@ -609,7 +609,7 @@ class HUXt:
         if hasattr(self, 'input_v_ts'):
             print('Using prescribed input V time series')
         else:
-            print('Generating input time series from prescribed v(long)')
+            print('Generating V time series from prescribed v(long)')
             self.ts_from_vlong()           
         
         #======================================================================
@@ -617,7 +617,7 @@ class HUXt:
         #======================================================================
         #see if the cmes input values have been prescibed
         if hasattr(self, 'input_iscme_ts'):
-            print('Using prescribed input CME time series')
+            print('Using prescribed input CME-flag time series')
             n_cme = np.nanmax(self.input_iscme_ts)
             #create dummy CME list to sort the boundaries
             self.cmes = []
@@ -626,7 +626,7 @@ class HUXt:
                               width=0*u.deg, v=0*self.kms, thickness=0*u.solRad)
                 self.cmes.append(cme)
         else:
-            print('Generating CME input time series ')  
+            print('Adding CMEs to input time series ')  
             self.input_iscme_ts = 0 * np.ones((self.model_time.size,
                                                self.nlon), dtype='int')
             
