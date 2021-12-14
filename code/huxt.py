@@ -354,7 +354,7 @@ class HUXt:
         frame : either synodic or sidereal
         kms: astropy.unit instance of km/s.       
         lon: Array of model longtidues (in radians).
-        r_grid: Array of longitudinal coordinates meshed with the radial coordinates (in radians).
+        model_time: time in seconds from the model start time. Includes spin up
         nlon: Number of longitudinal grid points.
         nr: Number of radial grid points.
         Nt: Total number of model time steps, including spin up.
@@ -615,7 +615,7 @@ class HUXt:
         #======================================================================
         #Add CMEs
         #======================================================================
-        #see if the cmes input values have been prescibed
+        #see if the cmes-flag input time series has been prescibed
         if hasattr(self, 'input_iscme_ts'):
             print('Using prescribed input CME-flag time series')
             n_cme = np.nanmax(self.input_iscme_ts)
@@ -823,6 +823,7 @@ class HUXt3d:
         :param simtime: Duration of the simulation window, in days.
         :param dt_scale: Integer scaling number to set the model output time step relative to the models CFL time.
         """
+        #now works with correctly transposed maps
                  
         # Define latitude grid
         self.latitude_min = latitude_min.to(u.rad)
@@ -830,8 +831,8 @@ class HUXt3d:
         self.lat, self.nlat = latitude_grid(self.latitude_min, self.latitude_max)
         
         # Check the dimensions
-        assert(len(v_map_lat) == len(v_map[1, :]))
-        assert(len(v_map_long) == len(v_map[:, 1]))
+        assert(len(v_map_lat) == len(v_map[:,1]))
+        assert(len(v_map_long) == len(v_map[1, :]))
         
         # Get the HUXt longitunidal grid
         longs, dlon, nlon = longitude_grid(lon_start=0.0*u.rad, lon_stop=2*np.pi*u.rad)
@@ -841,7 +842,7 @@ class HUXt3d:
         vlong = np.ones(len(v_map_long))
         for thislat in self.lat:
             for ilong in range(0, len(v_map_long)):
-                vlong[ilong] = np.interp(thislat.value, v_map_lat.value, v_map[ilong, :].value)
+                vlong[ilong] = np.interp(thislat.value, v_map_lat.value, v_map[:, ilong].value)
 
             # Interpolate this longitudinal profile to the HUXt resolution
             self.v_in.append(np.interp(longs.value, v_map_long.value, vlong)*u.km/u.s)

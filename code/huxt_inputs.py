@@ -8,7 +8,7 @@ import astropy.units as u
 from scipy.io import netcdf
 
 
-def get_MAS_boundary_conditions(cr=np.NaN, observatory='', runtype='', runnumber=''):
+def get_MAS_boundary_conditions(cr=np.NaN, observatory='', runtype='', runnumber='', masres=''):
     """
     A function to grab the  Vr and Br boundary conditions from MHDweb. An order
     of preference for observatories is given in the function. Checks first if
@@ -39,6 +39,12 @@ def get_MAS_boundary_conditions(cr=np.NaN, observatory='', runtype='', runnumber
     
     # The order of preference for different MAS run results
     overwrite = False
+    if not masres:
+        masres_order = ['high','medium']
+    else:
+        masres_order = [str(masres)]
+        overwrite = True  # If the user wants a specific observatory, overwrite what's already downloaded
+    
     if not observatory:
         observatories_order = ['hmi', 'mdi', 'solis', 'gong', 'mwo', 'wso', 'kpo']
     else:
@@ -75,20 +81,24 @@ def get_MAS_boundary_conditions(cr=np.NaN, observatory='', runtype='', runnumber
         # Search MHDweb for a HelioMAS run, in order of preference
         h = httplib2.Http()
         foundfile = False
-        for masob in observatories_order:
-            for masrun in runtype_order:
-                for masnum in runnumber_order:
-                    urlbase = (heliomas_url_front + str(int(cr)) + '-medium/' + masob + '_' +
-                               masrun + '_mas_std_' + masnum + '/helio/')
-                    url = urlbase + 'br' + heliomas_url_end
-
-                    # See if this br file exists
-                    resp = h.request(url, 'HEAD')
-                    if int(resp[0]['status']) < 400:
-                        foundfile = True
-                                            
-                    # Exit all the loops - clumsy, but works
-                    if foundfile: 
+        for res in masres_order:
+            for masob in observatories_order:
+                for masrun in runtype_order:
+                    for masnum in runnumber_order:
+                        urlbase = (heliomas_url_front + str(int(cr)) + '-' + 
+                                   res + '/' + masob + '_' +
+                                   masrun + '_mas_std_' + masnum + '/helio/')
+                        url = urlbase + 'br' + heliomas_url_end
+    
+                        # See if this br file exists
+                        resp = h.request(url, 'HEAD')
+                        if int(resp[0]['status']) < 400:
+                            foundfile = True
+                                                
+                        # Exit all the loops - clumsy, but works
+                        if foundfile: 
+                            break
+                    if foundfile:
                         break
                 if foundfile:
                     break
@@ -337,6 +347,56 @@ def get_MAS_vrmap(cr):
 
     return vr_map.T, vr_lats, vr_longs
 
+def get_MAS_brmap(cr):
+    """
+    a function to download, read and process MAS output to provide HUXt boundary
+    conditions as lat-long maps, along with angle from equator for the maps
+    maps returned in native resolution, not HUXt resolution
+    
+    THIS VERSION RETURNS A CORRECTlY TRANSPOSED MAP. IN FUTURE, 
+    get_MAS_maps AND read_MAS_vr_br SHOULD BE UPDATED TO BEHAVE THE
+    SAME
+
+    Parameters
+    ----------
+    cr : INT
+        Carrington rotation number
+
+
+    Returns
+    -------
+    br_map : NP ARRAY 
+        Solar wind speed as a Carrington longitude-latitude map. In km/s   
+    br_lats :
+        The latitudes for the Vr map, in radians from trhe equator   
+    br_longs :
+        The Carrington longitudes for the Vr map, in radians
+
+    """
+    
+    assert(np.isnan(cr) == False and cr > 0)
+    
+    # Check the data exist, if not, download them
+    flag = get_MAS_boundary_conditions(cr)
+    if flag < 0:
+         return -1, -1, -1
+    
+    # Read the HelioMAS data
+    MAS_vr, MAS_vr_Xa, MAS_vr_Xm, MAS_br, MAS_br_Xa, MAS_br_Xm = read_MAS_vr_br(cr)
+    
+    br_map = MAS_br
+    
+    # Convert the lat angles from N-pole to equator centred
+    br_lats = (np.pi/2)*u.rad - MAS_br_Xm
+
+    
+    # Flip lats, so they're increasing in value
+    br_lats = np.flipud(br_lats)
+    br_map = np.fliplr(br_map)
+    br_longs = MAS_br_Xa
+
+    return br_map.T, br_lats, br_longs
+
 @u.quantity_input(v_outer=u.km / u.s)
 @u.quantity_input(r_outer=u.solRad)
 @u.quantity_input(lon_outer=u.rad)
@@ -430,22 +490,23 @@ def map_vmap_inwards(v_map, v_map_lat, v_map_long, r_outer, r_inner):
     :param r_inner: Radial distance at inner radial boundary. Units of km.
     :return v_map_inner: Solar wind speed map at r_inner. Units of km/s.
     """
+    #updated to use correctly inverted maps
 
     if r_outer < r_inner:
         raise ValueError("Warning: r_outer < r_inner. Mapping will not work.")
 
     # Check the dimensions
-    assert(len(v_map_lat) == len(v_map[1, :]))
-    assert(len(v_map_long) == len(v_map[:, 1]))
+    assert(len(v_map_lat) == len(v_map[:, 1]))
+    assert(len(v_map_long) == len(v_map[1, :]))
 
-    v_map_inner = np.ones((len(v_map_long), len(v_map_lat)))
+    v_map_inner = np.ones((len(v_map_lat), len(v_map_long)))
     for ilat in range(0, len(v_map_lat)):
         # Map each point in to a new speed and longitude
-        v0, phis_new = map_v_inwards(v_map[:, ilat], r_outer, v_map_long, r_inner)
+        v0, phis_new = map_v_inwards(v_map[ilat, :], r_outer, v_map_long, r_inner)
 
         # Interpolate the mapped speeds back onto the regular Carr long grid,
         # making boundaries periodic * u.km/u.s
-        v_map_inner[:, ilat] = np.interp(v_map_long.value, phis_new.value, v0.value, period=2*np.pi)
+        v_map_inner[ilat, :] = np.interp(v_map_long.value, phis_new.value, v0.value, period=2*np.pi)
 
     return v_map_inner * u.km / u.s
 

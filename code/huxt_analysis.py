@@ -17,13 +17,16 @@ mpl.rc("legend", fontsize=16)
 
 
 @u.quantity_input(time=u.day)
-def plot(model, time, save=False, tag=''):
+def plot(model, time, save=False, tag='', fighandle = np.nan, axhandle = np.nan,
+         minimalplot = False):
     """
     Make a contour plot on polar axis of the solar wind solution at a specific time.
     :param model: An instance of the HUXt class with a completed solution.
     :param time: Time to look up closet model time to (with an astropy.unit of time).
     :param save: Boolean to determine if the figure is saved.
     :param tag: String to append to the filename if saving the figure.
+    :param fighandle, axhandle: existing figure and axis handles if a subplot is to be made
+    :param minimalplot: removes colorbar, planets/spacecraft and labels
     :return fig: Figure handle.
     :return ax: Axes handle.
     """
@@ -66,7 +69,14 @@ def plot(model, time, save=False, tag=''):
     mymap.set_over('lightgrey')
     mymap.set_under([0, 0, 0])
     levels = np.arange(plotvmin, plotvmax + dv, dv)
-    fig, ax = plt.subplots(figsize=(10, 10), subplot_kw={"projection": "polar"})
+    
+    #if no fig and axis handles are given, create a new figure
+    if isinstance(fighandle, float):
+        fig, ax = plt.subplots(figsize=(10, 10), subplot_kw={"projection": "polar"})
+    else:
+        fig = fighandle
+        ax = axhandle
+        
     cnt = ax.contourf(lon, rad, v, levels=levels, cmap=mymap, extend='both')
 
     # Add on CME boundaries
@@ -80,44 +90,47 @@ def plot(model, time, save=False, tag=''):
             cme_lons = np.append(cme_lons, cme_lons[0])
             cme_r = np.append(cme_r, cme_r[0])
             ax.plot(cme_lons, cme_r, '-', color=cme_colors[cid], linewidth=3)
-
-    # Add on observers 
-    for body, style in zip(['EARTH', 'VENUS', 'MERCURY', 'STA', 'STB'], ['co', 'mo', 'ko', 'rs', 'y^']):
-        obs = model.get_observer(body)
-        deltalon = 0.0*u.rad
-        if model.frame == 'sidereal':
-            earth_pos = model.get_observer('EARTH')
-            deltalon = earth_pos.lon_hae[id_t] - earth_pos.lon_hae[0]
-            
-        obslon = H._zerototwopi_(obs.lon[id_t] + deltalon)
-        ax.plot(obslon, obs.r[id_t], style, markersize=16, label=body)
-
-    # Add on a legend.
-    fig.legend(ncol=5, loc='lower center', frameon=False, handletextpad=0.2, columnspacing=1.0)
-    
+       
+        
     ax.set_ylim(0, model.r.value.max())
     ax.set_yticklabels([])
     ax.set_xticklabels([])
-    ax.patch.set_facecolor('slategrey')
-    fig.subplots_adjust(left=0.05, bottom=0.16, right=0.95, top=0.99)
-
-    # Add color bar
-    pos = ax.get_position()
-    dw = 0.005
-    dh = 0.045
-    left = pos.x0 + dw
-    bottom = pos.y0 - dh
-    wid = pos.width - 2 * dw
-    cbaxes = fig.add_axes([left, bottom, wid, 0.03])
-    cbar1 = fig.colorbar(cnt, cax=cbaxes, orientation='horizontal')
-    cbar1.set_label(ylab)
-    cbar1.set_ticks(np.arange(plotvmin, plotvmax, dv*10))
-
-    # Add label
-    label = "Time: {:3.2f} days".format(model.time_out[id_t].to(u.day).value)
-    fig.text(0.675, pos.y0, label, fontsize=16)
-    label = "HUXt2D"
-    fig.text(0.175, pos.y0, label, fontsize=16)
+    
+    if minimalplot == False:
+        # Add on observers 
+        for body, style in zip(['EARTH', 'VENUS', 'MERCURY', 'STA', 'STB'], ['co', 'mo', 'ko', 'rs', 'y^']):
+            obs = model.get_observer(body)
+            deltalon = 0.0*u.rad
+            if model.frame == 'sidereal':
+                earth_pos = model.get_observer('EARTH')
+                deltalon = earth_pos.lon_hae[id_t] - earth_pos.lon_hae[0]
+                
+            obslon = H._zerototwopi_(obs.lon[id_t] + deltalon)
+            ax.plot(obslon, obs.r[id_t], style, markersize=16, label=body)
+    
+        # Add on a legend.
+        fig.legend(ncol=5, loc='lower center', frameon=False, handletextpad=0.2, columnspacing=1.0)
+        
+        ax.patch.set_facecolor('slategrey')
+        fig.subplots_adjust(left=0.05, bottom=0.16, right=0.95, top=0.99)
+    
+        # Add color bar
+        pos = ax.get_position()
+        dw = 0.005
+        dh = 0.045
+        left = pos.x0 + dw
+        bottom = pos.y0 - dh
+        wid = pos.width - 2 * dw
+        cbaxes = fig.add_axes([left, bottom, wid, 0.03])
+        cbar1 = fig.colorbar(cnt, cax=cbaxes, orientation='horizontal')
+        cbar1.set_label(ylab)
+        cbar1.set_ticks(np.arange(plotvmin, plotvmax, dv*10))
+    
+        # Add label
+        label = "Time: {:3.2f} days".format(model.time_out[id_t].to(u.day).value)
+        fig.text(0.675, pos.y0, label, fontsize=16)
+        label = "HUXt2D"
+        fig.text(0.175, pos.y0, label, fontsize=16)
 
     if save:
         cr_num = np.int32(model.cr_num.value)
@@ -125,7 +138,7 @@ def plot(model, time, save=False, tag=''):
         filepath = os.path.join(model._figure_dir_, filename)
         fig.savefig(filepath)
 
-    return fig, ax
+    return fig, ax, cnt
 
 
 def animate(model, tag):
@@ -138,6 +151,36 @@ def animate(model, tag):
     # Set the duration of the movie
     # Scaled so a 5 day simulation with dt_scale=4 is a 10 second movie.
     duration = model.simtime.value * (10 / 432000)
+
+    def make_frame(t):
+        """
+        Produce the frame required by MoviePy.VideoClip.
+        :param t: time through the movie
+        """
+        # Get the time index closest to this fraction of movie duration
+        i = np.int32((model.nt_out - 1) * t / duration)
+        fig, ax = plot(model, model.time_out[i])
+        frame = mplfig_to_npimage(fig)
+        plt.close('all')
+        return frame
+
+    cr_num = np.int32(model.cr_num.value)
+    filename = "HUXt_CR{:03d}_{}_movie.mp4".format(cr_num, tag)
+    filepath = os.path.join(model._figure_dir_, filename)
+    animation = mpy.VideoClip(make_frame, duration=duration)
+    animation.write_videofile(filepath, fps=24, codec='libx264')
+    return
+
+def animate(model, tag):
+    """
+    Animate the model solution, and save as an MP4.
+    :param model: An instance of the HUXt class with a completed solution.
+    :param tag: String to append to the filename of the animation.
+    """
+
+    # Set the duration of the movie
+    # Scaled so a 5 day simulation with dt_scale=4 is a 10 second movie.
+    duration = model.simtime.value * (1 / 432000)
 
     def make_frame(t):
         """
@@ -417,8 +460,9 @@ def plot_3d_meridional(model3d, time, lon=np.NaN*u.deg, save=False, tag=''):
 
     # Add label
     label = "Time: {:3.2f} days".format(time_out)
+    label = label + "; Lon: {:3.2f} degrees".format(lon.to(u.deg).value)
     fig.text(0.675, pos.y0, label, fontsize=16)
-    label = "HUXt2D"
+    label = "HUXt3D"
     fig.text(0.175, pos.y0, label, fontsize=16)       
 
     if save:
