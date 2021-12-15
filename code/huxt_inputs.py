@@ -6,6 +6,8 @@ from pyhdf.SD import SD, SDC
 import numpy as np
 import astropy.units as u
 from scipy.io import netcdf
+import datetime
+from sunpy.coordinates import sun
 
 
 def get_MAS_boundary_conditions(cr=np.NaN, observatory='', runtype='', runnumber='', masres=''):
@@ -571,3 +573,28 @@ def get_PFSS_maps(filepath):
 #    vr_map = np.rot90(nc.variables['vr'].data) * u.km / u.s
 
     return vr_map, vr_lats, vr_longs, br_map, br_lats, br_longs, phi, theta
+
+
+def datetime2huxtinputs(dt):
+    """
+    a function convert a datetime into huxt input parameters
+
+    Parameters
+    ----------
+    dt : DATETIME
+        The inpuyt datetime
+
+    Returns
+    -------
+    cr : INT
+        Carrington rotation number 
+    cr_lon_init : FLOAT (in u.rad)
+        The Carrington longitude of Earth at the given datetime
+
+    """
+    
+    cr_frac = sun.carrington_rotation_number(dt)
+    cr = int(np.floor(cr_frac))
+    cr_lon_init = 2*np.pi*(1 - (cr_frac-cr)) *u.rad
+    
+    return cr, cr_lon_init
