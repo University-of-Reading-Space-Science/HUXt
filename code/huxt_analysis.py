@@ -127,8 +127,10 @@ def plot(model, time, save=False, tag='', fighandle = np.nan, axhandle = np.nan,
         cbar1.set_ticks(np.arange(plotvmin, plotvmax, dv*10))
     
         # Add label
-        label = "Time: {:3.2f} days".format(model.time_out[id_t].to(u.day).value)
-        fig.text(0.675, pos.y0, label, fontsize=16)
+        label = "   Time: {:3.2f} days".format(model.time_out[id_t].to(u.day).value)
+        label = label + '\n ' + (model.time_init + time).strftime('%Y-%m-%d %H:%M')
+        fig.text(0.70, pos.y0, label, fontsize=16)
+        
         label = "HUXt2D"
         fig.text(0.175, pos.y0, label, fontsize=16)
 
