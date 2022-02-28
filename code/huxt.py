@@ -136,6 +136,7 @@ class ConeCME:
     # Some decorators for checking the units of input arguments
     @u.quantity_input(t_launch=u.s)
     @u.quantity_input(longitude=u.deg)
+    @u.quantity_input(latitude=u.deg)
     @u.quantity_input(v=(u.km / u.s))
     @u.quantity_input(width=u.deg)
     @u.quantity_input(thickness=u.solRad)

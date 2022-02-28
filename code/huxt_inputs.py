@@ -70,7 +70,8 @@ def get_MAS_boundary_conditions(cr=np.NaN, observatory='', runtype='', runnumber
     _boundary_dir_ = dirs['boundary_conditions'] 
       
     # Example URL: http://www.predsci.com/data/runs/cr2010-medium/mdi_mas_mas_std_0101/helio/br_r0.hdf
-    heliomas_url_front = 'http://www.predsci.com/data/runs/cr'
+    heliomas_url_front = 'https://shadow.predsci.com/data/runs/cr'
+    #heliomas_url_front = 'http://www.predsci.com/data/runs/cr'
     heliomas_url_end = '_r0.hdf'
     
     vrfilename = 'HelioMAS_CR'+str(int(cr)) + '_vr'+heliomas_url_end
@@ -81,7 +82,7 @@ def get_MAS_boundary_conditions(cr=np.NaN, observatory='', runtype='', runnumber
         overwrite == True):  # Check if the files already exist
 
         # Search MHDweb for a HelioMAS run, in order of preference
-        h = httplib2.Http()
+        h = httplib2.Http(disable_ssl_certificate_validation=True)
         foundfile = False
         for res in masres_order:
             for masob in observatories_order:
@@ -111,7 +112,10 @@ def get_MAS_boundary_conditions(cr=np.NaN, observatory='', runtype='', runnumber
             print('No data available for given CR and observatory preferences')
             return -1
         
-        # Download teh vr and br files
+        # Download the vr and br files
+        import ssl
+        ssl._create_default_https_context = ssl._create_unverified_context
+        
         print('Downloading from: ', urlbase)
         urllib.request.urlretrieve(urlbase + 'br' + heliomas_url_end,
                                    os.path.join(_boundary_dir_, brfilename))

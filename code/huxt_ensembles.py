@@ -184,6 +184,7 @@ def generate_input_ensemble(phi, theta, vr_map,
        # br_ensemble[i,:] = b
     return vr_ensemble
 
+
 # <codecell> post-processing
 
 #compute the percentiles
