@@ -5,10 +5,24 @@ import os
 from pyhdf.SD import SD, SDC  
 import numpy as np
 import astropy.units as u
+from astropy.io import fits
 from scipy.io import netcdf
+from scipy import interpolate
 import datetime
 from sunpy.coordinates import sun
 
+def _zerototwopi_(angles):
+    """
+    Function to constrain angles to the 0 - 2pi domain.
+
+    :param angles: a numpy array of angles
+    :return: a numpy array of angles
+    """
+    twopi = 2.0 * np.pi
+    angles_out = angles
+    a = -np.floor_divide(angles_out, twopi)
+    angles_out = angles_out + (a * twopi)
+    return angles_out
 
 def get_MAS_boundary_conditions(cr=np.NaN, observatory='', runtype='', runnumber='', masres=''):
     """
@@ -578,6 +592,126 @@ def get_PFSS_maps(filepath):
 
     return vr_map, vr_lats, vr_longs, br_map, br_lats, br_longs, phi, theta
 
+
+def get_WSA_maps(filepath):
+    """
+    a function to load, read and process WSA FITS maps from the UK Met Office 
+    to provide HUXt boundary conditions as lat-long maps, along with angle from
+    equator for the maps
+    maps returned in native resolution, not HUXt resolution
+
+    Parameters
+    ----------
+    filepath : STR 
+        The filepath for the PFSSpy .nc file
+
+    Returns
+    -------
+    vr_map : NP ARRAY 
+        Solar wind speed as a Carrington longitude-latitude map. In km/s   
+    vr_lats :
+        The latitudes for the Vr map, in radians from trhe equator   
+    vr_longs :
+        The Carrington longitudes for the Vr map, in radians
+    br_map : NP ARRAY
+        Br as a Carrington longitude-latitude map. Dimensionless
+    br_lats :
+        The latitudes for the Br map, in radians from trhe equator
+    br_longs :
+        The Carrington longitudes for the Br map, in radians 
+    phi :
+        Mesh grid of vr_longs, in radians
+    theta :
+        Mesh grid of vr_lats, in radians 
+    cr:
+        Carrington rotation number
+
+    """
+    
+    assert os.path.exists(filepath)
+    #nc = netcdf.netcdf_file(filepath, 'r')
+    
+    hdul = fits.open(filepath)
+    #hdul.info()
+ 
+    cr_num = hdul[0].header['CARROT']
+    dgrid = hdul[0].header['GRID']*np.pi/180
+    carrlong = hdul[0].header['CARRLONG']*np.pi/180
+ 
+    #mjd = htime.datetime2mjd(datetime.datetime(2022,2,24))
+    #cr = htime.mjd2crnum(mjd)
+ 
+ 
+    data = hdul[0].data
+    br_map_fits = data[0,:,:]
+    vr_map_fits = data[1,:,:]
+ 
+    hdul.close()
+ 
+    #compute the Carrington map grids
+    vr_long_edges = np.arange(0,2*np.pi+0.00001,dgrid)
+    vr_long_centres = (vr_long_edges[1:] + vr_long_edges[:-1])/2
+ 
+    vr_lat_edges = np.arange(-np.pi/2,np.pi/2+0.00001,dgrid)
+    vr_lat_centres = (vr_lat_edges[1:] + vr_lat_edges[:-1])/2
+ 
+    br_long_edges = np.arange(0,2*np.pi+0.00001,dgrid)
+    br_long_centres = (br_long_edges[1:] + br_long_edges[:-1])/2
+ 
+    br_lat_edges = np.arange(-np.pi/2,np.pi/2+0.00001,dgrid)
+    br_lat_centres = (br_lat_edges[1:] + br_lat_edges[:-1])/2
+ 
+    vr_longs = vr_long_centres * u.rad
+    vr_lats = vr_lat_centres * u.rad
+    
+    br_longs = br_long_centres * u.rad
+    br_lats = br_lat_centres * u.rad
+ 
+    #rotate the maps so they are in the Carrington frame
+    vr_map = np.empty(vr_map_fits.shape)
+    br_map = np.empty(br_map_fits.shape)
+ 
+    for nlat in range(0, len(vr_lat_centres)):
+        interp = interpolate.interp1d(_zerototwopi_(vr_long_centres + carrlong), 
+                                      vr_map_fits[nlat,:], kind = "nearest",
+                                      fill_value="extrapolate")
+        vr_map[nlat,:] = interp(vr_long_centres)
+        
+        # vr_map[nlat,:] = np.interp(vr_long_centres, ,
+        #                            period = 2*np.pi)
+    for nlat in range(0, len(br_lat_centres)):
+        interp = interpolate.interp1d(_zerototwopi_(br_long_centres + carrlong), 
+                                      br_map_fits[nlat,:], kind = "nearest",
+                                      fill_value="extrapolate")
+        br_map[nlat,:] = interp(br_long_centres)
+        # br_map[nlat,:] = np.interp(br_long_centres, br_long_centres + carrlong, br_map_fits[nlat,:],
+        #                            period = 2*np.pi)
+    vr_map = vr_map * u.km / u.s
+    #vr_map, vr_lats, vr_longs, br_map, br_lats, br_longs, phi, theta = Hin.get_PFSS_maps(filepath)
+ 
+    #create the mesh grid
+    phi = np.empty(vr_map_fits.shape)
+    theta = np.empty(vr_map_fits.shape)
+    for nlat in range(0, len(vr_lat_centres)):
+        theta[nlat,:] = vr_lats[nlat] 
+        phi[nlat,:] = vr_longs 
+    phi = phi*u.rad
+    theta = theta*u.rad
+    
+    
+#    #theta is angle from north pole. convert to angle from equator
+#    cotheta = nc.variables['cos(th)'].data
+#    vr_lats = (np.pi/2 - np.arccos(cotheta[:, 0]) )*u.rad
+#    br_lats = vr_lats
+#    
+#    phi = nc.variables['ph'].data
+#    vr_longs = phi[0, :] * u.rad
+#    br_longs = vr_longs
+#    
+#    br_map = np.rot90(nc.variables['br'].data)
+#    vr_map = np.rot90(nc.variables['vr'].data) * u.km / u.s
+
+    return vr_map, vr_lats, vr_longs, br_map, br_lats, br_longs, phi, theta, cr_num
 
 def datetime2huxtinputs(dt):
     """
