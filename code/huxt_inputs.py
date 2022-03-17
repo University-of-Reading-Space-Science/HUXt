@@ -6,6 +6,7 @@ from pyhdf.SD import SD, SDC
 import numpy as np
 import astropy.units as u
 from astropy.io import fits
+from astropy.time import Time
 from scipy.io import netcdf
 from scipy import interpolate
 import datetime
@@ -736,3 +737,90 @@ def datetime2huxtinputs(dt):
     cr_lon_init = 2*np.pi*(1 - (cr_frac-cr)) *u.rad
     
     return cr, cr_lon_init
+
+
+def import_cone2bc_parameters(filename):
+    """
+    Convert a cone2bc.in file (for inserting cone cmes into ENLIL) into a dictionary of CME parameters.
+    Assumes all cone2bc files have the same structure, except for the number of cone cmes.
+    filename: path to the cone2bc.in file to convert
+    
+    returns cmes: a dictionary of the cone cme parameters
+    """
+    
+    with open(filename, 'r') as file:
+        data=file.readlines()
+    
+    # Get the number of cmes.
+    n_cme = int(data[13].split('=')[1].split(',')[0])
+    
+    # Pull out the rows corresponding to the CME parameters
+    cme_sub = data[14:-3].copy()
+
+    # Extract the unique keys describing the CME parameters, excluding CME number.
+    keys = []
+    for i,d in enumerate(cme_sub):
+        k = d.split('=')[0].split('(')[0].strip()
+
+        if k not in keys:
+            keys.append(k)
+
+    # Build an empty dictionary to store the parameters of each CME. Set the CME key to be the 
+    # number of the CME in the cone2bc file (counting from 1 to N).
+    cmes = {i+1:{k:{} for k in keys} for i in range(n_cme)}
+
+    # Loop the CME parameters and bin into the dictionary
+    for i, d in enumerate(cme_sub):
+
+        parts = d.strip().split('=')
+        param_name = parts[0].split('(')[0]
+        cme_id = int(parts[0].split('(')[1].split(')')[0])
+        param_val = parts[1].split(',')[0]
+
+        if param_name == 'ldates':
+            param_val = param_val.strip("'")
+        else:
+            param_val = float(param_val)
+
+        cmes[cme_id][param_name] = param_val
+        
+    return cmes
+
+
+def ConeFile_to_ConeCME_list(model, filepath):
+    """
+    A function to produce a list of ConeCMEs for input to HUXt derived from a cone2bc.in file of Cone CMEs entered in ENLIL
+    model: A HUXt instance
+    filepath: The path to the relevant cone2bc.in file
+    returns: cme_list, a list of ConeCME instances.
+    """
+    
+    cme_params = import_cone2bc_parameters("cone2bc.in")
+
+    cme_list = []
+    for cme_id, cme_val in cme_params.items():
+        # CME initialisation date
+        t_cme = Time(cme_val['ldates'])
+        # CME initialisation relative to model initialisation, in days
+        dt_cme = (t_cme - model.time_init).jd*u.day
+
+        # Get lon, lat and speed
+        lon = cme_val['lon']*u.deg
+        lat = cme_val['lat']*u.deg
+        speed  = cme_val['vcld'] * u.km/u.s
+
+        # Get full angular width, cone2bc specifies angular half width under rmajor
+        wid = 2*cme_val['rmajor']*u.deg
+
+        #Thickness must be computed from CME cone initial radius and the xcld parameter,
+        # which specifies the relative elongation of the cloud, 1=spherical,
+        # 2=middle twice as long as cone radius e.g.
+        # compute initial radius of the cone
+        radius = np.abs(model.r[0] * np.tan(wid / 2.0)) #eqn on line 162 in ConeCME class
+        # Thickness determined from xcld and radius
+        thick = (1.0 - cme_val['xcld']) * radius
+        
+        cme = H.ConeCME(t_launch=dt_cme, longitude=lon, latitude=lat, width=wid, v=speed, thickness=thick)
+        cme_list.append(cme)
+        
+    return cme_list

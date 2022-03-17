@@ -140,38 +140,8 @@ def plot(model, time, save=False, tag='', fighandle = np.nan, axhandle = np.nan,
         filepath = os.path.join(model._figure_dir_, filename)
         fig.savefig(filepath)
 
-    return fig, ax, cnt
+    return fig, ax
 
-
-def animate(model, tag):
-    """
-    Animate the model solution, and save as an MP4.
-    :param model: An instance of the HUXt class with a completed solution.
-    :param tag: String to append to the filename of the animation.
-    """
-
-    # Set the duration of the movie
-    # Scaled so a 5 day simulation with dt_scale=4 is a 10 second movie.
-    duration = model.simtime.value * (10 / 432000)
-
-    def make_frame(t):
-        """
-        Produce the frame required by MoviePy.VideoClip.
-        :param t: time through the movie
-        """
-        # Get the time index closest to this fraction of movie duration
-        i = np.int32((model.nt_out - 1) * t / duration)
-        fig, ax = plot(model, model.time_out[i])
-        frame = mplfig_to_npimage(fig)
-        plt.close('all')
-        return frame
-
-    cr_num = np.int32(model.cr_num.value)
-    filename = "HUXt_CR{:03d}_{}_movie.mp4".format(cr_num, tag)
-    filepath = os.path.join(model._figure_dir_, filename)
-    animation = mpy.VideoClip(make_frame, duration=duration)
-    animation.write_videofile(filepath, fps=24, codec='libx264')
-    return
 
 def animate(model, tag):
     """

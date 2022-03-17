@@ -1,14 +1,31 @@
 import httplib2
 import urllib
-import HUXt as H
+import huxt as H
 import os
 from pyhdf.SD import SD, SDC  
 import numpy as np
 import astropy.units as u
+from astropy.io import fits
+from astropy.time import Time
 from scipy.io import netcdf
+from scipy import interpolate
+import datetime
+from sunpy.coordinates import sun
 
+def _zerototwopi_(angles):
+    """
+    Function to constrain angles to the 0 - 2pi domain.
 
-def get_MAS_boundary_conditions(cr=np.NaN, observatory='', runtype='', runnumber=''):
+    :param angles: a numpy array of angles
+    :return: a numpy array of angles
+    """
+    twopi = 2.0 * np.pi
+    angles_out = angles
+    a = -np.floor_divide(angles_out, twopi)
+    angles_out = angles_out + (a * twopi)
+    return angles_out
+
+def get_MAS_boundary_conditions(cr=np.NaN, observatory='', runtype='', runnumber='', masres=''):
     """
     A function to grab the  Vr and Br boundary conditions from MHDweb. An order
     of preference for observatories is given in the function. Checks first if
@@ -39,6 +56,12 @@ def get_MAS_boundary_conditions(cr=np.NaN, observatory='', runtype='', runnumber
     
     # The order of preference for different MAS run results
     overwrite = False
+    if not masres:
+        masres_order = ['high','medium']
+    else:
+        masres_order = [str(masres)]
+        overwrite = True  # If the user wants a specific observatory, overwrite what's already downloaded
+    
     if not observatory:
         observatories_order = ['hmi', 'mdi', 'solis', 'gong', 'mwo', 'wso', 'kpo']
     else:
@@ -62,7 +85,8 @@ def get_MAS_boundary_conditions(cr=np.NaN, observatory='', runtype='', runnumber
     _boundary_dir_ = dirs['boundary_conditions'] 
       
     # Example URL: http://www.predsci.com/data/runs/cr2010-medium/mdi_mas_mas_std_0101/helio/br_r0.hdf
-    heliomas_url_front = 'http://www.predsci.com/data/runs/cr'
+    heliomas_url_front = 'https://shadow.predsci.com/data/runs/cr'
+    #heliomas_url_front = 'http://www.predsci.com/data/runs/cr'
     heliomas_url_end = '_r0.hdf'
     
     vrfilename = 'HelioMAS_CR'+str(int(cr)) + '_vr'+heliomas_url_end
@@ -73,22 +97,26 @@ def get_MAS_boundary_conditions(cr=np.NaN, observatory='', runtype='', runnumber
         overwrite == True):  # Check if the files already exist
 
         # Search MHDweb for a HelioMAS run, in order of preference
-        h = httplib2.Http()
+        h = httplib2.Http(disable_ssl_certificate_validation=True)
         foundfile = False
-        for masob in observatories_order:
-            for masrun in runtype_order:
-                for masnum in runnumber_order:
-                    urlbase = (heliomas_url_front + str(int(cr)) + '-medium/' + masob + '_' +
-                               masrun + '_mas_std_' + masnum + '/helio/')
-                    url = urlbase + 'br' + heliomas_url_end
-
-                    # See if this br file exists
-                    resp = h.request(url, 'HEAD')
-                    if int(resp[0]['status']) < 400:
-                        foundfile = True
-                                            
-                    # Exit all the loops - clumsy, but works
-                    if foundfile: 
+        for res in masres_order:
+            for masob in observatories_order:
+                for masrun in runtype_order:
+                    for masnum in runnumber_order:
+                        urlbase = (heliomas_url_front + str(int(cr)) + '-' + 
+                                   res + '/' + masob + '_' +
+                                   masrun + '_mas_std_' + masnum + '/helio/')
+                        url = urlbase + 'br' + heliomas_url_end
+    
+                        # See if this br file exists
+                        resp = h.request(url, 'HEAD')
+                        if int(resp[0]['status']) < 400:
+                            foundfile = True
+                                                
+                        # Exit all the loops - clumsy, but works
+                        if foundfile: 
+                            break
+                    if foundfile:
                         break
                 if foundfile:
                     break
@@ -99,7 +127,10 @@ def get_MAS_boundary_conditions(cr=np.NaN, observatory='', runtype='', runnumber
             print('No data available for given CR and observatory preferences')
             return -1
         
-        # Download teh vr and br files
+        # Download the vr and br files
+        import ssl
+        ssl._create_default_https_context = ssl._create_unverified_context
+        
         print('Downloading from: ', urlbase)
         urllib.request.urlretrieve(urlbase + 'br' + heliomas_url_end,
                                    os.path.join(_boundary_dir_, brfilename))
@@ -287,6 +318,105 @@ def get_MAS_maps(cr):
 
     return vr_map, vr_lats, vr_longs
 
+def get_MAS_vrmap(cr):
+    """
+    a function to download, read and process MAS output to provide HUXt boundary
+    conditions as lat-long maps, along with angle from equator for the maps
+    maps returned in native resolution, not HUXt resolution
+    
+    THIS VERSION RETURNS A CORRECTlY TRANSPOSED MAP. IN FUTURE, 
+    get_MAS_maps AND read_MAS_vr_br SHOULD BE UPDATED TO BEHAVE THE
+    SAME
+
+    Parameters
+    ----------
+    cr : INT
+        Carrington rotation number
+
+
+    Returns
+    -------
+    vr_map : NP ARRAY 
+        Solar wind speed as a Carrington longitude-latitude map. In km/s   
+    vr_lats :
+        The latitudes for the Vr map, in radians from trhe equator   
+    vr_longs :
+        The Carrington longitudes for the Vr map, in radians
+
+    """
+    
+    assert(np.isnan(cr) == False and cr > 0)
+    
+    # Check the data exist, if not, download them
+    flag = get_MAS_boundary_conditions(cr)
+    if flag < 0:
+         return -1, -1, -1
+    
+    # Read the HelioMAS data
+    MAS_vr, MAS_vr_Xa, MAS_vr_Xm, MAS_br, MAS_br_Xa, MAS_br_Xm = read_MAS_vr_br(cr)
+    
+    vr_map = MAS_vr
+    
+    # Convert the lat angles from N-pole to equator centred
+    vr_lats = (np.pi/2)*u.rad - MAS_vr_Xm
+
+    
+    # Flip lats, so they're increasing in value
+    vr_lats = np.flipud(vr_lats)
+    vr_map = np.fliplr(vr_map)
+    vr_longs = MAS_vr_Xa
+
+    return vr_map.T, vr_lats, vr_longs
+
+def get_MAS_brmap(cr):
+    """
+    a function to download, read and process MAS output to provide HUXt boundary
+    conditions as lat-long maps, along with angle from equator for the maps
+    maps returned in native resolution, not HUXt resolution
+    
+    THIS VERSION RETURNS A CORRECTlY TRANSPOSED MAP. IN FUTURE, 
+    get_MAS_maps AND read_MAS_vr_br SHOULD BE UPDATED TO BEHAVE THE
+    SAME
+
+    Parameters
+    ----------
+    cr : INT
+        Carrington rotation number
+
+
+    Returns
+    -------
+    br_map : NP ARRAY 
+        Solar wind speed as a Carrington longitude-latitude map. In km/s   
+    br_lats :
+        The latitudes for the Vr map, in radians from trhe equator   
+    br_longs :
+        The Carrington longitudes for the Vr map, in radians
+
+    """
+    
+    assert(np.isnan(cr) == False and cr > 0)
+    
+    # Check the data exist, if not, download them
+    flag = get_MAS_boundary_conditions(cr)
+    if flag < 0:
+         return -1, -1, -1
+    
+    # Read the HelioMAS data
+    MAS_vr, MAS_vr_Xa, MAS_vr_Xm, MAS_br, MAS_br_Xa, MAS_br_Xm = read_MAS_vr_br(cr)
+    
+    br_map = MAS_br
+    
+    # Convert the lat angles from N-pole to equator centred
+    br_lats = (np.pi/2)*u.rad - MAS_br_Xm
+
+    
+    # Flip lats, so they're increasing in value
+    br_lats = np.flipud(br_lats)
+    br_map = np.fliplr(br_map)
+    br_longs = MAS_br_Xa
+
+    return br_map.T, br_lats, br_longs
 
 @u.quantity_input(v_outer=u.km / u.s)
 @u.quantity_input(r_outer=u.solRad)
@@ -381,22 +511,23 @@ def map_vmap_inwards(v_map, v_map_lat, v_map_long, r_outer, r_inner):
     :param r_inner: Radial distance at inner radial boundary. Units of km.
     :return v_map_inner: Solar wind speed map at r_inner. Units of km/s.
     """
+    #updated to use correctly inverted maps
 
     if r_outer < r_inner:
         raise ValueError("Warning: r_outer < r_inner. Mapping will not work.")
 
     # Check the dimensions
-    assert(len(v_map_lat) == len(v_map[1, :]))
-    assert(len(v_map_long) == len(v_map[:, 1]))
+    assert(len(v_map_lat) == len(v_map[:, 1]))
+    assert(len(v_map_long) == len(v_map[1, :]))
 
-    v_map_inner = np.ones((len(v_map_long), len(v_map_lat)))
+    v_map_inner = np.ones((len(v_map_lat), len(v_map_long)))
     for ilat in range(0, len(v_map_lat)):
         # Map each point in to a new speed and longitude
-        v0, phis_new = map_v_inwards(v_map[:, ilat], r_outer, v_map_long, r_inner)
+        v0, phis_new = map_v_inwards(v_map[ilat, :], r_outer, v_map_long, r_inner)
 
         # Interpolate the mapped speeds back onto the regular Carr long grid,
         # making boundaries periodic * u.km/u.s
-        v_map_inner[:, ilat] = np.interp(v_map_long.value, phis_new.value, v0.value, period=2*np.pi)
+        v_map_inner[ilat, :] = np.interp(v_map_long.value, phis_new.value, v0.value, period=2*np.pi)
 
     return v_map_inner * u.km / u.s
 
@@ -430,17 +561,266 @@ def get_PFSS_maps(filepath):
     """
     
     assert os.path.exists(filepath)
-    nc = netcdf.netcdf_file(filepath, 'r')
+    #nc = netcdf.netcdf_file(filepath, 'r')
     
-    cotheta = nc.variables['cos(th)'].data
-    vr_lats = np.arcsin(cotheta[:, 0])*u.rad
+    nc = netcdf.netcdf_file(filepath,'r',mmap=False)
+    br_map=nc.variables['br'][:]
+    vr_map=nc.variables['vr'][:]* u.km / u.s
+    phi=nc.variables['ph'][:]
+    cotheta=nc.variables['cos(th)'][:]
+    
+    nc.close()
+    
+    phi = phi *u.rad
+    theta = (np.pi/2 - np.arccos(cotheta) ) *u.rad
+    vr_lats = theta[:, 0]
     br_lats = vr_lats
-    
-    phi = nc.variables['ph'].data
-    vr_longs = phi[0, :] * u.rad
+    vr_longs = phi[0, :] 
     br_longs = vr_longs
     
-    br_map = np.rot90(nc.variables['br'].data)
-    vr_map = np.rot90(nc.variables['vr'].data) * u.km / u.s
+    
+#    #theta is angle from north pole. convert to angle from equator
+#    cotheta = nc.variables['cos(th)'].data
+#    vr_lats = (np.pi/2 - np.arccos(cotheta[:, 0]) )*u.rad
+#    br_lats = vr_lats
+#    
+#    phi = nc.variables['ph'].data
+#    vr_longs = phi[0, :] * u.rad
+#    br_longs = vr_longs
+#    
+#    br_map = np.rot90(nc.variables['br'].data)
+#    vr_map = np.rot90(nc.variables['vr'].data) * u.km / u.s
 
-    return vr_map, vr_lats, vr_longs, br_map, br_lats, br_longs
+    return vr_map, vr_lats, vr_longs, br_map, br_lats, br_longs, phi, theta
+
+
+def get_WSA_maps(filepath):
+    """
+    a function to load, read and process WSA FITS maps from the UK Met Office 
+    to provide HUXt boundary conditions as lat-long maps, along with angle from
+    equator for the maps
+    maps returned in native resolution, not HUXt resolution
+
+    Parameters
+    ----------
+    filepath : STR 
+        The filepath for the PFSSpy .nc file
+
+    Returns
+    -------
+    vr_map : NP ARRAY 
+        Solar wind speed as a Carrington longitude-latitude map. In km/s   
+    vr_lats :
+        The latitudes for the Vr map, in radians from trhe equator   
+    vr_longs :
+        The Carrington longitudes for the Vr map, in radians
+    br_map : NP ARRAY
+        Br as a Carrington longitude-latitude map. Dimensionless
+    br_lats :
+        The latitudes for the Br map, in radians from trhe equator
+    br_longs :
+        The Carrington longitudes for the Br map, in radians 
+    phi :
+        Mesh grid of vr_longs, in radians
+    theta :
+        Mesh grid of vr_lats, in radians 
+    cr:
+        Carrington rotation number
+
+    """
+    
+    assert os.path.exists(filepath)
+    #nc = netcdf.netcdf_file(filepath, 'r')
+    
+    hdul = fits.open(filepath)
+    #hdul.info()
+ 
+    cr_num = hdul[0].header['CARROT']
+    dgrid = hdul[0].header['GRID']*np.pi/180
+    carrlong = hdul[0].header['CARRLONG']*np.pi/180
+ 
+    #mjd = htime.datetime2mjd(datetime.datetime(2022,2,24))
+    #cr = htime.mjd2crnum(mjd)
+ 
+ 
+    data = hdul[0].data
+    br_map_fits = data[0,:,:]
+    vr_map_fits = data[1,:,:]
+ 
+    hdul.close()
+ 
+    #compute the Carrington map grids
+    vr_long_edges = np.arange(0,2*np.pi+0.00001,dgrid)
+    vr_long_centres = (vr_long_edges[1:] + vr_long_edges[:-1])/2
+ 
+    vr_lat_edges = np.arange(-np.pi/2,np.pi/2+0.00001,dgrid)
+    vr_lat_centres = (vr_lat_edges[1:] + vr_lat_edges[:-1])/2
+ 
+    br_long_edges = np.arange(0,2*np.pi+0.00001,dgrid)
+    br_long_centres = (br_long_edges[1:] + br_long_edges[:-1])/2
+ 
+    br_lat_edges = np.arange(-np.pi/2,np.pi/2+0.00001,dgrid)
+    br_lat_centres = (br_lat_edges[1:] + br_lat_edges[:-1])/2
+ 
+    vr_longs = vr_long_centres * u.rad
+    vr_lats = vr_lat_centres * u.rad
+    
+    br_longs = br_long_centres * u.rad
+    br_lats = br_lat_centres * u.rad
+ 
+    #rotate the maps so they are in the Carrington frame
+    vr_map = np.empty(vr_map_fits.shape)
+    br_map = np.empty(br_map_fits.shape)
+ 
+    for nlat in range(0, len(vr_lat_centres)):
+        interp = interpolate.interp1d(_zerototwopi_(vr_long_centres + carrlong), 
+                                      vr_map_fits[nlat,:], kind = "nearest",
+                                      fill_value="extrapolate")
+        vr_map[nlat,:] = interp(vr_long_centres)
+        
+        # vr_map[nlat,:] = np.interp(vr_long_centres, ,
+        #                            period = 2*np.pi)
+    for nlat in range(0, len(br_lat_centres)):
+        interp = interpolate.interp1d(_zerototwopi_(br_long_centres + carrlong), 
+                                      br_map_fits[nlat,:], kind = "nearest",
+                                      fill_value="extrapolate")
+        br_map[nlat,:] = interp(br_long_centres)
+        # br_map[nlat,:] = np.interp(br_long_centres, br_long_centres + carrlong, br_map_fits[nlat,:],
+        #                            period = 2*np.pi)
+    vr_map = vr_map * u.km / u.s
+    #vr_map, vr_lats, vr_longs, br_map, br_lats, br_longs, phi, theta = Hin.get_PFSS_maps(filepath)
+ 
+    #create the mesh grid
+    phi = np.empty(vr_map_fits.shape)
+    theta = np.empty(vr_map_fits.shape)
+    for nlat in range(0, len(vr_lat_centres)):
+        theta[nlat,:] = vr_lats[nlat] 
+        phi[nlat,:] = vr_longs 
+    phi = phi*u.rad
+    theta = theta*u.rad
+    
+    
+#    #theta is angle from north pole. convert to angle from equator
+#    cotheta = nc.variables['cos(th)'].data
+#    vr_lats = (np.pi/2 - np.arccos(cotheta[:, 0]) )*u.rad
+#    br_lats = vr_lats
+#    
+#    phi = nc.variables['ph'].data
+#    vr_longs = phi[0, :] * u.rad
+#    br_longs = vr_longs
+#    
+#    br_map = np.rot90(nc.variables['br'].data)
+#    vr_map = np.rot90(nc.variables['vr'].data) * u.km / u.s
+
+    return vr_map, vr_lats, vr_longs, br_map, br_lats, br_longs, phi, theta, cr_num
+
+def datetime2huxtinputs(dt):
+    """
+    a function convert a datetime into huxt input parameters
+
+    Parameters
+    ----------
+    dt : DATETIME
+        The inpuyt datetime
+
+    Returns
+    -------
+    cr : INT
+        Carrington rotation number 
+    cr_lon_init : FLOAT (in u.rad)
+        The Carrington longitude of Earth at the given datetime
+
+    """
+    
+    cr_frac = sun.carrington_rotation_number(dt)
+    cr = int(np.floor(cr_frac))
+    cr_lon_init = 2*np.pi*(1 - (cr_frac-cr)) *u.rad
+    
+    return cr, cr_lon_init
+
+
+def import_cone2bc_parameters(filename):
+    """
+    Convert a cone2bc.in file (for inserting cone cmes into ENLIL) into a dictionary of CME parameters.
+    Assumes all cone2bc files have the same structure, except for the number of cone cmes.
+    filename: path to the cone2bc.in file to convert
+    
+    returns cmes: a dictionary of the cone cme parameters
+    """
+    
+    with open(filename, 'r') as file:
+        data=file.readlines()
+    
+    # Get the number of cmes.
+    n_cme = int(data[13].split('=')[1].split(',')[0])
+    
+    # Pull out the rows corresponding to the CME parameters
+    cme_sub = data[14:-3].copy()
+
+    # Extract the unique keys describing the CME parameters, excluding CME number.
+    keys = []
+    for i,d in enumerate(cme_sub):
+        k = d.split('=')[0].split('(')[0].strip()
+
+        if k not in keys:
+            keys.append(k)
+
+    # Build an empty dictionary to store the parameters of each CME. Set the CME key to be the 
+    # number of the CME in the cone2bc file (counting from 1 to N).
+    cmes = {i+1:{k:{} for k in keys} for i in range(n_cme)}
+
+    # Loop the CME parameters and bin into the dictionary
+    for i, d in enumerate(cme_sub):
+
+        parts = d.strip().split('=')
+        param_name = parts[0].split('(')[0]
+        cme_id = int(parts[0].split('(')[1].split(')')[0])
+        param_val = parts[1].split(',')[0]
+
+        if param_name == 'ldates':
+            param_val = param_val.strip("'")
+        else:
+            param_val = float(param_val)
+
+        cmes[cme_id][param_name] = param_val
+        
+    return cmes
+
+
+def ConeFile_to_ConeCME_list(model, filepath):
+    """
+    A function to produce a list of ConeCMEs for input to HUXt derived from a cone2bc.in file of Cone CMEs entered in ENLIL
+    model: A HUXt instance
+    filepath: The path to the relevant cone2bc.in file
+    returns: cme_list, a list of ConeCME instances.
+    """
+    
+    cme_params = import_cone2bc_parameters("cone2bc.in")
+
+    cme_list = []
+    for cme_id, cme_val in cme_params.items():
+        # CME initialisation date
+        t_cme = Time(cme_val['ldates'])
+        # CME initialisation relative to model initialisation, in days
+        dt_cme = (t_cme - model.time_init).jd*u.day
+
+        # Get lon, lat and speed
+        lon = cme_val['lon']*u.deg
+        lat = cme_val['lat']*u.deg
+        speed  = cme_val['vcld'] * u.km/u.s
+
+        # Get full angular width, cone2bc specifies angular half width under rmajor
+        wid = 2*cme_val['rmajor']*u.deg
+
+        #Thickness must be computed from CME cone initial radius and the xcld parameter,
+        # which specifies the relative elongation of the cloud, 1=spherical,
+        # 2=middle twice as long as cone radius e.g.
+        # compute initial radius of the cone
+        radius = np.abs(model.r[0] * np.tan(wid / 2.0)) #eqn on line 162 in ConeCME class
+        # Thickness determined from xcld and radius
+        thick = (1.0 - cme_val['xcld']) * radius
+        
+        cme = H.ConeCME(t_launch=dt_cme, longitude=lon, latitude=lat, width=wid, v=speed, thickness=thick)
+        cme_list.append(cme)
+        
+    return cme_list
