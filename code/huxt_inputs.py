@@ -12,6 +12,7 @@ from scipy import interpolate
 import datetime
 from sunpy.coordinates import sun
 
+
 def _zerototwopi_(angles):
     """
     Function to constrain angles to the 0 - 2pi domain.
@@ -24,6 +25,7 @@ def _zerototwopi_(angles):
     a = -np.floor_divide(angles_out, twopi)
     angles_out = angles_out + (a * twopi)
     return angles_out
+
 
 def get_MAS_boundary_conditions(cr=np.NaN, observatory='', runtype='', runnumber='', masres=''):
     """
@@ -318,6 +320,7 @@ def get_MAS_maps(cr):
 
     return vr_map, vr_lats, vr_longs
 
+
 def get_MAS_vrmap(cr):
     """
     a function to download, read and process MAS output to provide HUXt boundary
@@ -368,6 +371,7 @@ def get_MAS_vrmap(cr):
 
     return vr_map.T, vr_lats, vr_longs
 
+
 def get_MAS_brmap(cr):
     """
     a function to download, read and process MAS output to provide HUXt boundary
@@ -417,6 +421,7 @@ def get_MAS_brmap(cr):
     br_longs = MAS_br_Xa
 
     return br_map.T, br_lats, br_longs
+
 
 @u.quantity_input(v_outer=u.km / u.s)
 @u.quantity_input(r_outer=u.solRad)
@@ -561,8 +566,6 @@ def get_PFSS_maps(filepath):
     """
     
     assert os.path.exists(filepath)
-    #nc = netcdf.netcdf_file(filepath, 'r')
-    
     nc = netcdf.netcdf_file(filepath,'r',mmap=False)
     br_map=nc.variables['br'][:]
     vr_map=nc.variables['vr'][:]* u.km / u.s
@@ -577,19 +580,6 @@ def get_PFSS_maps(filepath):
     br_lats = vr_lats
     vr_longs = phi[0, :] 
     br_longs = vr_longs
-    
-    
-#    #theta is angle from north pole. convert to angle from equator
-#    cotheta = nc.variables['cos(th)'].data
-#    vr_lats = (np.pi/2 - np.arccos(cotheta[:, 0]) )*u.rad
-#    br_lats = vr_lats
-#    
-#    phi = nc.variables['ph'].data
-#    vr_longs = phi[0, :] * u.rad
-#    br_longs = vr_longs
-#    
-#    br_map = np.rot90(nc.variables['br'].data)
-#    vr_map = np.rot90(nc.variables['vr'].data) * u.km / u.s
 
     return vr_map, vr_lats, vr_longs, br_map, br_lats, br_longs, phi, theta
 
@@ -630,18 +620,11 @@ def get_WSA_maps(filepath):
     """
     
     assert os.path.exists(filepath)
-    #nc = netcdf.netcdf_file(filepath, 'r')
-    
     hdul = fits.open(filepath)
-    #hdul.info()
  
     cr_num = hdul[0].header['CARROT']
     dgrid = hdul[0].header['GRID']*np.pi/180
     carrlong = hdul[0].header['CARRLONG']*np.pi/180
- 
-    #mjd = htime.datetime2mjd(datetime.datetime(2022,2,24))
-    #cr = htime.mjd2crnum(mjd)
- 
  
     data = hdul[0].data
     br_map_fits = data[0,:,:]
@@ -678,18 +661,14 @@ def get_WSA_maps(filepath):
                                       fill_value="extrapolate")
         vr_map[nlat,:] = interp(vr_long_centres)
         
-        # vr_map[nlat,:] = np.interp(vr_long_centres, ,
-        #                            period = 2*np.pi)
     for nlat in range(0, len(br_lat_centres)):
         interp = interpolate.interp1d(_zerototwopi_(br_long_centres + carrlong), 
                                       br_map_fits[nlat,:], kind = "nearest",
                                       fill_value="extrapolate")
         br_map[nlat,:] = interp(br_long_centres)
-        # br_map[nlat,:] = np.interp(br_long_centres, br_long_centres + carrlong, br_map_fits[nlat,:],
-        #                            period = 2*np.pi)
+        
     vr_map = vr_map * u.km / u.s
-    #vr_map, vr_lats, vr_longs, br_map, br_lats, br_longs, phi, theta = Hin.get_PFSS_maps(filepath)
- 
+    
     #create the mesh grid
     phi = np.empty(vr_map_fits.shape)
     theta = np.empty(vr_map_fits.shape)
@@ -699,20 +678,8 @@ def get_WSA_maps(filepath):
     phi = phi*u.rad
     theta = theta*u.rad
     
-    
-#    #theta is angle from north pole. convert to angle from equator
-#    cotheta = nc.variables['cos(th)'].data
-#    vr_lats = (np.pi/2 - np.arccos(cotheta[:, 0]) )*u.rad
-#    br_lats = vr_lats
-#    
-#    phi = nc.variables['ph'].data
-#    vr_longs = phi[0, :] * u.rad
-#    br_longs = vr_longs
-#    
-#    br_map = np.rot90(nc.variables['br'].data)
-#    vr_map = np.rot90(nc.variables['vr'].data) * u.km / u.s
-
     return vr_map, vr_lats, vr_longs, br_map, br_lats, br_longs, phi, theta, cr_num
+
 
 def datetime2huxtinputs(dt):
     """

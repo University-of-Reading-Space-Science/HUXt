@@ -7,8 +7,6 @@ import glob
 import h5py
 from numba import jit
 import copy
-from packaging import version
-from scipy.ndimage import gaussian_filter1d
 # check the numpy version, as this can cause all manner of difficult-to-diagnose problems
 assert(version.parse(np.version.version) >= version.parse("1.18"))
 
@@ -234,10 +232,6 @@ class ConeCME:
                     id_good = np.isfinite(cme_r_back)
                     cme_r_back = cme_r_back[id_good]
                     lon_back = lon_back[id_good]
-                    
-                    # Apply smoothing to the front and back.
-                    cme_r_front = gaussian_filter1d(cme_r_front, 2.0, mode='nearest')
-                    cme_r_back = gaussian_filter1d(cme_r_back, 2.0, mode='nearest')
                                         
                     # Get one array of longitudes and radii from the front and back particles
                     lons = np.hstack([lon_front, lon_back])
@@ -300,13 +294,25 @@ class ConeCME:
 
             # If there are any CME front coords, then work out pos.
             if np.any(front_id):
-                # Lookup cme front radial coord along body longitude
-                r_interp = np.interp(arrive_lon[i], lon_cme, r_cme, left=np.NaN, right=np.NaN)
-                if np.isfinite(r_interp):
-                    t_front.append(coord['time'].jd)
-                    r_front.append(r_interp)
-                else:
-                    continue
+
+                # Handle case for HUXt run on multiple longitudes first
+                if len(lon_cme) > 1:
+                    # Lookup cme front radial coord along body longitude
+                    r_interp = np.interp(arrive_lon[i], lon_cme, r_cme, left=np.NaN, right=np.NaN)
+                    if np.isfinite(r_interp):
+                        t_front.append(coord['time'].jd)
+                        r_front.append(r_interp)
+                    else:
+                        continue
+                elif len(lon_cme) == 1:
+                    # HUXt run on a single longitude, so don't interpolate front to body lon
+                    # Instead, check when cme lon within tolerance lon of body
+
+                    # If body and cme within 1.5 deg of each other, assume close enough for hit.
+                    if np.isclose(arrive_lon[i], lon_cme, atol=1.5*u.deg):
+                        t_front.append(coord['time'].jd)
+                        r_front.append(r_cme[0])
+
 
                 # Has CME front crossed body radius
                 if r_front[-1] > arrive_rad[i]:
@@ -321,7 +327,7 @@ class ConeCME:
                     t_transit = (t_arrive - t_front[0])*u.d
                     t_arrive = Time(t_arrive, format='jd')
                     break
-
+                    
         if not hit:
             t_arrive = Time("0000-01-01T00:00:00")
             t_transit = np.NaN*u.d

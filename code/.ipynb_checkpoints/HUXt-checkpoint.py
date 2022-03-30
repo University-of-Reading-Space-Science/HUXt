@@ -7,8 +7,6 @@ import glob
 import h5py
 from numba import jit
 import copy
-from packaging import version
-from scipy.ndimage import gaussian_filter1d
 # check the numpy version, as this can cause all manner of difficult-to-diagnose problems
 assert(version.parse(np.version.version) >= version.parse("1.18"))
 
@@ -136,6 +134,7 @@ class ConeCME:
     # Some decorators for checking the units of input arguments
     @u.quantity_input(t_launch=u.s)
     @u.quantity_input(longitude=u.deg)
+    @u.quantity_input(latitude=u.deg)
     @u.quantity_input(v=(u.km / u.s))
     @u.quantity_input(width=u.deg)
     @u.quantity_input(thickness=u.solRad)
@@ -233,10 +232,6 @@ class ConeCME:
                     id_good = np.isfinite(cme_r_back)
                     cme_r_back = cme_r_back[id_good]
                     lon_back = lon_back[id_good]
-                    
-                    # Apply smoothing to the front and back.
-                    cme_r_front = gaussian_filter1d(cme_r_front, 2.0, mode='nearest')
-                    cme_r_back = gaussian_filter1d(cme_r_back, 2.0, mode='nearest')
                                         
                     # Get one array of longitudes and radii from the front and back particles
                     lons = np.hstack([lon_front, lon_back])
@@ -299,13 +294,25 @@ class ConeCME:
 
             # If there are any CME front coords, then work out pos.
             if np.any(front_id):
-                # Lookup cme front radial coord along body longitude
-                r_interp = np.interp(arrive_lon[i], lon_cme, r_cme, left=np.NaN, right=np.NaN)
-                if np.isfinite(r_interp):
-                    t_front.append(coord['time'].jd)
-                    r_front.append(r_interp)
-                else:
-                    continue
+
+                # Handle case for HUXt run on multiple longitudes first
+                if len(lon_cme) > 1:
+                    # Lookup cme front radial coord along body longitude
+                    r_interp = np.interp(arrive_lon[i], lon_cme, r_cme, left=np.NaN, right=np.NaN)
+                    if np.isfinite(r_interp):
+                        t_front.append(coord['time'].jd)
+                        r_front.append(r_interp)
+                    else:
+                        continue
+                elif len(lon_cme) == 1:
+                    # HUXt run on a single longitude, so don't interpolate front to body lon
+                    # Instead, check when cme lon within tolerance lon of body
+
+                    # If body and cme within 1.5 deg of each other, assume close enough for hit.
+                    if np.isclose(arrive_lon[i], lon_cme, atol=1.5*u.deg):
+                        t_front.append(coord['time'].jd)
+                        r_front.append(r_cme[0])
+
 
                 # Has CME front crossed body radius
                 if r_front[-1] > arrive_rad[i]:
@@ -320,7 +327,7 @@ class ConeCME:
                     t_transit = (t_arrive - t_front[0])*u.d
                     t_arrive = Time(t_arrive, format='jd')
                     break
-
+                    
         if not hit:
             t_arrive = Time("0000-01-01T00:00:00")
             t_transit = np.NaN*u.d
@@ -354,7 +361,7 @@ class HUXt:
         frame : either synodic or sidereal
         kms: astropy.unit instance of km/s.       
         lon: Array of model longtidues (in radians).
-        r_grid: Array of longitudinal coordinates meshed with the radial coordinates (in radians).
+        model_time: time in seconds from the model start time. Includes spin up
         nlon: Number of longitudinal grid points.
         nr: Number of radial grid points.
         Nt: Total number of model time steps, including spin up.
@@ -431,7 +438,7 @@ class HUXt:
 
         # Setup radial coordinates - in solar radius
         self.r, self.dr, self.rrel, self.nr = radial_grid(r_min=r_min, r_max=r_max)
-        self.buffertime = ((8.0 * u.day) / (210 * u.solRad)) * self.rrel[-1]
+        self.buffertime = ((5.0 * u.day) / (210 * u.solRad)) * self.rrel[-1]
 
         # Setup longitude coordinates - in radians.
         self.lon, self.dlon, self.nlon = longitude_grid(lon_out=lon_out, lon_start=lon_start, lon_stop=lon_stop)
@@ -497,26 +504,72 @@ class HUXt:
         # Empty dictionary for storing the coordinates of CME boundaries.
         self.cmes = []
 
-        # Initialise an array for tracking a CME
-        self.cme_particles = np.zeros((1, self.time.size, 2, self.lon.size)) * np.NaN * u.dimensionless_unscaled
-
         # Numpy array of model parameters for parsing to external functions that use numba
         self.model_params = np.array([self.dtdr.value, self.alpha.value, self.r_accel.value,
                                       self.dt_scale.value, self.nt_out, self.nr, self.nlon,
                                       self.r[0].to('km').value])
         return
 
+
+    def ts_from_vlong(self):
+        """
+        Generate the input ambient time series from the v_boundary (lon) values
+        """
+        buffersteps = np.fix(self.buffertime.to(u.s) / self.dt)
+        buffertime = buffersteps * self.dt
+        model_time = np.arange(-buffertime.value, (self.simtime.to('s') + self.dt).value, self.dt.value) * self.dt.unit
+        dlondt = self.twopi * self.dt / self.rotation_period
+        all_lons, dlon, nlon = longitude_grid()
+        self.model_time = model_time
+
+        # How many radians of Carrington rotation in this simulation length
+        simlon = self.twopi * self.simtime / self.rotation_period
+        # How many radians of Carrington rotation in the spin up period
+        bufferlon = self.twopi * buffertime / self.rotation_period
+        
+        
+        #variables to store the input conditions.
+        self.input_v_ts = np.nan * np.ones((model_time.size,nlon))
+        
+        # Loop through model longitudes and solve each radial profile.
+        for i in range(self.lon.size):
+
+            if self.lon.size == 1:
+                lon_out = self.lon.value
+            else:
+                lon_out = self.lon[i].value
+
+            # Find the Carrigton longitude range spanned by the spin up and simulation period,
+            # centered on simulation longitude
+            lon_start = (lon_out - simlon - dlondt)
+            lon_stop = (lon_out + bufferlon)
+            lonint = np.arange(lon_start, lon_stop, dlondt)
+            # Rectify so that it is between 0 - 2pi
+            loninit = _zerototwopi_(lonint)
+            # Interpolate the inner boundary speed to this higher resolution
+            vinit = np.interp(loninit, all_lons.value, self.v_boundary.value, period=2 * np.pi)
+            # convert from cr longitude to timesolve
+            vinput = np.flipud(vinit)
+            #store the input series
+            self.input_v_ts[:,i] = vinput
+            
+        return
+            
+            
     def solve(self, cme_list, save=False, tag=''):
         """
-        Solve HUXt for the provided boundary conditions and cme list
+        Solve HUXt for the provided longitudinal boundary conditions and cme list
 
         :param cme_list: A list of ConeCME instances to use in solving HUXt
         :param save: Boolean, if True saves model output to HDF5 file
         :param tag: String, appended to the filename of saved soltuion.
 
         Returns:
-
         """
+       
+        #======================================================================
+        #process CME list 
+        #======================================================================
         # Make a copy of the CME list objects so that the originals are not modified
         mycme_list = copy.deepcopy(cme_list)
 
@@ -552,49 +605,72 @@ class HUXt:
             cme_params = cme_params[id_sort]
             # Also sort the list of ConeCMEs so it corresponds ot cme_params
             self.cmes = [self.cmes[i] for i in id_sort]
-            do_cme = True
         else:
-            do_cme = False
             cme_params = np.NaN * np.zeros((1, 9))
             
+        #======================================================================
+        #generate ambient solar wind time series
+        #======================================================================
+        #if the input time series has not been prescribed,
+        #generate it from v(long)
+        if hasattr(self, 'input_v_ts'):
+            print('Using prescribed input V time series')
+        else:
+            print('Generating V time series from prescribed v(long)')
+            self.ts_from_vlong()           
+        
+        #======================================================================
+        #Add CMEs
+        #======================================================================
+        #see if the cmes-flag input time series has been prescibed
+        if hasattr(self, 'input_iscme_ts'):
+            print('Using prescribed input CME-flag time series')
+            n_cme = np.nanmax(self.input_iscme_ts)
+            #create dummy CME list to sort the boundaries
+            self.cmes = []
+            for n in range(0,n_cme):
+                cme = ConeCME(t_launch=0*u.s, longitude=0*u.deg, 
+                              width=0*u.deg, v=0*self.kms, thickness=0*u.solRad)
+                self.cmes.append(cme)
+        else:
+            print('Adding CMEs to input time series ')  
+            self.input_iscme_ts = 0 * np.ones((self.model_time.size,
+                                               self.nlon), dtype='int')
+            
+            n_cme = len(self.cmes)
+            # Loop through model longitudes and add the CMEs
+            for i in range(self.lon.size):
+                if self.lon.size == 1:
+                    lon_out = self.lon.value
+                else:
+                    lon_out = self.lon[i].value
+     
+                #add the CMEs to the input series
+                v, isincme = add_cmes_to_input_series(self.input_v_ts[:,i], 
+                                                      self.model_time, lon_out, 
+                                                      self.r[0].to('km').value, cme_params, 
+                                                      self.latitude.value)
+                self.input_v_ts[:,i] = v
+                self.input_iscme_ts[:,i] = isincme
+        
+        #======================================================================
+        #Solve the time series at each longitude
+        #======================================================================
         # Set up the test particle position field
-        self.cme_particles = np.zeros((len(self.cmes), self.nt_out, 2, self.nlon)) * u.dimensionless_unscaled
-
-        buffersteps = np.fix(self.buffertime.to(u.s) / self.dt)
-        buffertime = buffersteps * self.dt
-        model_time = np.arange(-buffertime.value, (self.simtime.to('s') + self.dt).value, self.dt.value) * self.dt.unit
-        dlondt = self.twopi * self.dt / self.rotation_period
-        all_lons, dlon, nlon = longitude_grid()
-
-        # How many radians of Carrington rotation in this simulation length
-        simlon = self.twopi * self.simtime / self.rotation_period
-        # How many radians of Carrington rotation in the spin up period
-        bufferlon = self.twopi * buffertime / self.rotation_period
-
-        # Loop through model longitudes and solve each radial profile.
+        self.cme_particles = np.zeros((n_cme, self.nt_out, 2, self.nlon)) * u.dimensionless_unscaled
+            
+        # Solve for the input time series
         for i in range(self.lon.size):
-
             if self.lon.size == 1:
                 lon_out = self.lon.value
             else:
                 lon_out = self.lon[i].value
-
-            # Find the Carrigton longitude range spanned by the spin up and simulation period,
-            # centered on simulation longitude
-            lon_start = (lon_out - simlon - dlondt)
-            lon_stop = (lon_out + bufferlon)
-            lonint = np.arange(lon_start, lon_stop, dlondt)
-            # Rectify so that it is between 0 - 2pi
-            loninit = _zerototwopi_(lonint)
-            # Interpolate the inner boundary speed to this higher resolution
-            vinit = np.interp(loninit, all_lons.value, self.v_boundary.value, period=2 * np.pi)
-            # convert from cr longitude to timesolve
-            vinput = np.flipud(vinit)
-            
-            # Solve for these inputs, adding in CMEs where necessary
-            v, cme_r_bounds = solve_radial(vinput, model_time, self.rrel.value, lon_out,
-                                           self.model_params, do_cme, cme_params,
-                                           self.latitude.value)
+                
+            v, cme_r_bounds = solve_radial(self.input_v_ts[:,i],
+                                           self.input_iscme_ts[:,i],
+                                           self.model_time, 
+                                           self.rrel.value, lon_out,
+                                           self.model_params, n_cme)
             # Save the outputs
             self.v_grid[:, :, i] = v * self.kms
             
@@ -613,7 +689,8 @@ class HUXt:
                 print("Warning, blank tag means file likely to be overwritten")
             self.save(tag=tag)
         return
-
+    
+        
     def save(self, tag=''):
         """
         Save all model fields output to a HDF5 file.
@@ -753,6 +830,7 @@ class HUXt3d:
         :param simtime: Duration of the simulation window, in days.
         :param dt_scale: Integer scaling number to set the model output time step relative to the models CFL time.
         """
+        #now works with correctly transposed maps
                  
         # Define latitude grid
         self.latitude_min = latitude_min.to(u.rad)
@@ -760,8 +838,8 @@ class HUXt3d:
         self.lat, self.nlat = latitude_grid(self.latitude_min, self.latitude_max)
         
         # Check the dimensions
-        assert(len(v_map_lat) == len(v_map[1, :]))
-        assert(len(v_map_long) == len(v_map[:, 1]))
+        assert(len(v_map_lat) == len(v_map[:,1]))
+        assert(len(v_map_long) == len(v_map[1, :]))
         
         # Get the HUXt longitunidal grid
         longs, dlon, nlon = longitude_grid(lon_start=0.0*u.rad, lon_stop=2*np.pi*u.rad)
@@ -771,7 +849,7 @@ class HUXt3d:
         vlong = np.ones(len(v_map_long))
         for thislat in self.lat:
             for ilong in range(0, len(v_map_long)):
-                vlong[ilong] = np.interp(thislat.value, v_map_lat.value, v_map[ilong, :].value)
+                vlong[ilong] = np.interp(thislat.value, v_map_lat.value, v_map[:, ilong].value)
 
             # Interpolate this longitudinal profile to the HUXt resolution
             self.v_in.append(np.interp(longs.value, v_map_long.value, vlong)*u.km/u.s)
@@ -792,7 +870,8 @@ class HUXt3d:
             model.solve(cme_list)
         
         return
-    
+ 
+
     
 def huxt_constants():
     """
@@ -1024,21 +1103,20 @@ def _zerototwopi_(angles):
 
 
 @jit(nopython=True)
-def solve_radial(vinput, model_time, rrel, lon, params, 
-                 do_cme, cme_params, latitude):
+def solve_radial(vinput, iscmeinput, model_time, rrel, lon, params, 
+                 n_cme):
     """
-    Solve the radial profile as a function of time (including spinup), and return radial profile at specified
-    output timesteps.
+    Solve the radial profile as a function of time (including spinup), and
+    return radial profile at specified output timesteps.
+    Tracks CME frotns as test particles
     
     :param vinput: Timeseries of inner boundary solar wind speeds
+    :param vinput: Timeseries of in/out of a CME at the inner boundary
     :param model_time: Array of model timesteps
     :param rrel: Array of model radial coordinates relative to inner boundary coordinate
     :param lon: The longitude of this radial
     :param params: Array of HUXt parameters
-    :param do_cme: Boolean, if True any provided ConeCMEs are included in the solution.
-    :param cme_params: Array of ConeCME parameters to include in the solution. 1 Row for each CME, with columns as
-                       required by _is_in_cone_cme_boundary_
-    :param latitude: Latitude (from equator) of the HUXt plane
+    :param n_cme: Number of CMEs in the whole model run (not nec this longitude)
 
     Returns:
 
@@ -1052,7 +1130,6 @@ def solve_radial(vinput, model_time, rrel, lon, params,
     nt_out = np.int32(params[4])
     nr = np.int32(params[5])
     r_boundary = params[7]
-    n_cme = cme_params.shape[0]
     
     # Compute the radial grid for the test particles
     rgrid = rrel*695700.0 + r_boundary  # Can't use astropy.untis because numba
@@ -1062,6 +1139,11 @@ def solve_radial(vinput, model_time, rrel, lon, params,
     # Preallocate space for solutions
     v_grid = np.zeros((nt_out, nr)) 
     cme_particles = np.zeros((n_cme, nt_out, 2))*np.nan
+    
+    #check if CMEs need to be tracked.
+    do_cme = 0
+    if np.any(iscmeinput) > 0:
+        do_cme = 1
     
     iter_count = 0
     t_out = 0
@@ -1077,28 +1159,23 @@ def solve_radial(vinput, model_time, rrel, lon, params,
         v[0] = vinput[t]
         
         # Compute boundary speed of each CME at this time. 
-        # Set boundary to the maximum CME speed at this time.
         if time > 0:
             if do_cme == 1:
-                
-                v_update_cme = np.zeros(n_cme)*np.nan
                 for n in range(n_cme):
-                    cme = cme_params[n, :]
                     # Check if this point is within the cone CME
-                    if _is_in_cme_boundary_(r_boundary, lon, latitude, time, cme):                
-                        v_update_cme[n] = cme[4]
+                    if iscmeinput[t] > 0: 
+                        #v_update_cme[n] = cme[4]
+                        thiscme = iscmeinput[t] - 1
 
                         # If the leading edge test particle doesn't exist, add it
-                        if np.isnan(r_cmeparticles[n, 0]):
-                            r_cmeparticles[n, 0] = r_boundary
+                        if np.isnan(r_cmeparticles[thiscme, 0]):
+                            r_cmeparticles[thiscme, 0] = r_boundary
                             
                         # Hold the CME trailing edge test particle at the inner boundary
                         # Until if condition breaks
-                        r_cmeparticles[n, 1] = r_boundary
+                        r_cmeparticles[thiscme, 1] = r_boundary
                         
-                # See if there are any CMEs
-                if not np.all(np.isnan(v_update_cme)):
-                    v[0] = np.nanmax(v_update_cme)
+
 
         # Update all fields for the given longitude
         u_up = v[1:].copy()
@@ -1139,6 +1216,51 @@ def solve_radial(vinput, model_time, rrel, lon, params,
     
     return v_grid, cme_particles
 
+@jit(nopython=True)
+def add_cmes_to_input_series(vinput, model_time, lon, r_boundary, 
+                  cme_params, latitude):
+    """
+    Add CMEs to the model input time series
+    
+    :param vinput: Timeseries of inner boundary solar wind speeds
+    :param model_time: Array of model timesteps
+    :param lon: The longitude of this radial
+    :param r_boundary: The HUXt inner boundary in rS
+    :param cme_params: Array of ConeCME parameters to include in the solution. 
+                        1 Row for each CME, with columns as
+                       required by _is_in_cone_cme_boundary_
+    :param latitude: Latitude (from equator) of the HUXt plane
+
+    Returns: 
+        v [vinput with CME speeds added]
+        isincme [time series of CME occurrence at inner boundary]
+
+    """
+    
+    n_cme = cme_params.shape[0]
+    v = vinput
+    isincme = v*0
+   
+    for t, time in enumerate(model_time):
+   
+        # Compute boundary speed of each CME at this time. 
+        # Set boundary to the maximum CME speed at this time.
+        if time > 0:        
+            v_update_cme = np.zeros(n_cme)*np.nan
+            for n in range(n_cme):
+                cme = cme_params[n, :]
+                # Check if this point is within the cone CME
+                if _is_in_cme_boundary_(r_boundary, lon, latitude, time, cme):                
+                    v_update_cme[n] = cme[4]  
+                    #record the CME number
+                    isincme[t] = n + 1
+                    
+            # See if there are any CMEs
+            if not np.all(np.isnan(v_update_cme)):
+                v[t] = np.nanmax(v_update_cme)
+                
+
+    return v, isincme
 
 @jit(nopython=True)
 def _upwind_step_(v_up, v_dn, dtdr, alpha, r_accel, rrel):
@@ -1323,3 +1445,8 @@ def load_HUXt_run(filepath):
         model = []
 
     return model, cme_list
+
+
+
+#create an empty model class to insert the time-dependent boundary conditions
+    
