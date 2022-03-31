@@ -4,7 +4,7 @@ h5py==3.1.0
 httplib2==0.19.0
 imageio==2.9.0
 imageio-ffmpeg==0.4.3
-jupyterlab==3.0.17
+jupyterlab==3.3.2
 matplotlib==3.3.4
 moviepy==1.0.1
 numpy==1.20.1
