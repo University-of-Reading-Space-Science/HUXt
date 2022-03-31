@@ -1143,7 +1143,7 @@ def solve_radial(vinput, iscmeinput, model_time, rrel, lon, params,
     Tracks CME frotns as test particles
     
     :param vinput: Timeseries of inner boundary solar wind speeds
-    :param vinput: Timeseries of in/out of a CME at the inner boundary
+    :param iscmeinput: Timeseries of in/out of a CME at the inner boundary
     :param model_time: Array of model timesteps
     :param rrel: Array of model radial coordinates relative to inner boundary coordinate
     :param lon: The longitude of this radial
