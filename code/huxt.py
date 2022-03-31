@@ -606,11 +606,16 @@ class HUXt:
                 lat = self.latitude.to(u.rad).value
                 cme_in_domain = []
                 
-                # Loop round longitudes to find intersections
-                for lon in self.lon.to(u.rad).value:
-                    # Set time step and cme launch time to be zero, to force check for longitude boundary intersection
+                if self.lon.size == 1:
+                    lon = self.lon.to(u.rad).value
                     is_in_domain = _is_in_cme_boundary_(r_bound, lon, lat, dt, cme_params)
                     cme_in_domain.append(is_in_domain)
+                else:
+                    # Loop round longitudes to find intersections
+                    for lon in self.lon.to(u.rad).value:
+                        # Set time step and cme launch time to be zero, to force check for longitude boundary intersection
+                        is_in_domain = _is_in_cme_boundary_(r_bound, lon, lat, dt, cme_params)
+                        cme_in_domain.append(is_in_domain)
 
                 # If there is any overlap, append the CME list.
                 if np.any(cme_in_domain):
@@ -865,7 +870,6 @@ class HUXt3d:
         self.latitude_max = latitude_max.to(u.rad)
         self.lat, self.nlat = latitude_grid(self.latitude_min, self.latitude_max)
         
-        # Check the dimensions
         assert(len(v_map_lat) == len(v_map[:,1]))
         assert(len(v_map_long) == len(v_map[1, :]))
         

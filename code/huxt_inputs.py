@@ -317,11 +317,11 @@ def get_MAS_maps(cr):
     
     vr_longs = MAS_vr_Xa
     br_longs = MAS_br_Xa
+    
+    return vr_map.T, vr_lats, vr_longs
 
-    return vr_map, vr_lats, vr_longs
 
-
-def get_MAS_vrmap(cr):
+def get_MAS_vr_map(cr):
     """
     a function to download, read and process MAS output to provide HUXt boundary
     conditions as lat-long maps, along with angle from equator for the maps
@@ -362,17 +362,16 @@ def get_MAS_vrmap(cr):
     
     # Convert the lat angles from N-pole to equator centred
     vr_lats = (np.pi/2)*u.rad - MAS_vr_Xm
-
     
     # Flip lats, so they're increasing in value
     vr_lats = np.flipud(vr_lats)
     vr_map = np.fliplr(vr_map)
     vr_longs = MAS_vr_Xa
-
+    
     return vr_map.T, vr_lats, vr_longs
 
 
-def get_MAS_brmap(cr):
+def get_MAS_br_map(cr):
     """
     a function to download, read and process MAS output to provide HUXt boundary
     conditions as lat-long maps, along with angle from equator for the maps
@@ -414,7 +413,6 @@ def get_MAS_brmap(cr):
     # Convert the lat angles from N-pole to equator centred
     br_lats = (np.pi/2)*u.rad - MAS_br_Xm
 
-    
     # Flip lats, so they're increasing in value
     br_lats = np.flipud(br_lats)
     br_map = np.fliplr(br_map)
