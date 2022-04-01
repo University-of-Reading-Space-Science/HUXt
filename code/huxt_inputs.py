@@ -33,7 +33,7 @@ def get_MAS_boundary_conditions(cr=np.NaN, observatory='', runtype='', runnumber
     flag: Integer, 1 = successful download. 0 = files exist, -1 = no file found.
     """
 
-    assert (np.isnan(cr) is False)
+    assert (np.isnan(cr) == False)
 
     # The order of preference for different MAS run results
     overwrite = False
@@ -66,19 +66,19 @@ def get_MAS_boundary_conditions(cr=np.NaN, observatory='', runtype='', runnumber
     _boundary_dir_ = dirs['boundary_conditions']
 
     # Example URL: http://www.predsci.com/data/runs/cr2010-medium/mdi_mas_mas_std_0101/helio/br_r0.hdf
-    heliomas_url_front = 'https://shadow.predsci.com/data/runs/cr'
-    # heliomas_url_front = 'http://www.predsci.com/data/runs/cr'
+    # heliomas_url_front = 'https://shadow.predsci.com/data/runs/cr'
+    heliomas_url_front = 'http://www.predsci.com/data/runs/cr'
     heliomas_url_end = '_r0.hdf'
 
     vrfilename = 'HelioMAS_CR' + str(int(cr)) + '_vr' + heliomas_url_end
     brfilename = 'HelioMAS_CR' + str(int(cr)) + '_br' + heliomas_url_end
 
-    if (os.path.exists(os.path.join(_boundary_dir_, brfilename)) is False or
-            os.path.exists(os.path.join(_boundary_dir_, vrfilename)) is False or
-            overwrite is True):  # Check if the files already exist
+    if (os.path.exists(os.path.join(_boundary_dir_, brfilename)) == False or
+            os.path.exists(os.path.join(_boundary_dir_, vrfilename)) == False or
+            overwrite == True):  # Check if the files already exist
 
         # Search MHDweb for a HelioMAS run, in order of preference
-        h = httplib2.Http(disable_ssl_certificate_validation=True)
+        h = httplib2.Http(disable_ssl_certificate_validation=False)
         foundfile = False
         for res in masres_order:
             for masob in observatories_order:
@@ -104,7 +104,7 @@ def get_MAS_boundary_conditions(cr=np.NaN, observatory='', runtype='', runnumber
             if foundfile:
                 break
 
-        if foundfile is False:
+        if foundfile == False:
             print('No data available for given CR and observatory preferences')
             return -1
 
@@ -183,7 +183,7 @@ def read_MAS_vr_br(cr):
 def get_MAS_long_profile(cr, lat=0.0 * u.deg):
     """
     Function to download, read and process MAS output to provide a longitude profile at a specified latitude
-    of the solar wind speed and radial magnetic field for use as boundary conditions in HUXt.
+    of the solar wind speed for use as boundary conditions in HUXt.
 
     Args:
         cr: Integer Carrington rotation number
@@ -192,10 +192,8 @@ def get_MAS_long_profile(cr, lat=0.0 * u.deg):
     Returns:
         vr_in: Solar wind speed as a function of Carrington longitude at solar equator.
                Interpolated to HUXt longitudinal resolution. np.array (NDIM = 1) in units of km/s
-        br_in: Radial magnetic field as a function of Carrington longitude at solar equator.
-               Interpolated to HUXt longitudinal resolution. Dimensionless np.array.
     """
-    assert (np.isnan(cr) is False and cr > 0)
+    assert (np.isnan(cr) == False and cr > 0)
     assert (lat >= -90.0 * u.deg)
     assert (lat <= 90.0 * u.deg)
 
@@ -214,62 +212,11 @@ def get_MAS_long_profile(cr, lat=0.0 * u.deg):
     for i in range(0, len(MAS_vr_Xa)):
         vr[i] = np.interp(ang_from_N_pole, MAS_vr_Xm.value, MAS_vr[i][:].value)
 
-    br = np.ones(len(MAS_br_Xa))
-    for i in range(0, len(MAS_br_Xa)):
-        br[i] = np.interp(ang_from_N_pole, MAS_br_Xm.value, MAS_br[i][:])
-
     # Now interpolate on to the HUXt longitudinal grid
     longs, dlon, nlon = H.longitude_grid(lon_start=0.0 * u.rad, lon_stop=2 * np.pi * u.rad)
     vr_in = np.interp(longs.value, MAS_vr_Xa.value, vr) * u.km / u.s
-    br_in = np.interp(longs.value, MAS_br_Xa.value, br)
 
-    return vr_in, br_in
-
-
-def get_MAS_maps(cr):
-    """
-    A function to download, read and process MAS output to return longitude-latitude maps
-    of solar wind speed and radial magnetic field for use as boundary conditions in HUXt.
-    Maps returned in native resolution, not HUXt resolution
-
-    Args:
-        cr: Integer, Carrington rotation number
-
-    Returns:
-        vr_map: Solar wind speed as a Carrington longitude-latitude map. np.array with units of km/s
-        vr_lats: The latitudes for the Vr map, relative to the equator. np.array with units of radians
-        vr_longs: The Carrington longitudes for the Vr map, np.array with units of radians
-        br_map: Radial magnetic field as a Carrington longitude-latitude map. dimensionless np.array
-        br_lats: The latitudes for the Br map, relative to the equator, np.array in units of radians.
-        br_longs: The Carrington longitudes for the Vr map, np.array in units of radians.
-    """
-
-    assert (np.isnan(cr) is False and cr > 0)
-
-    # Check the data exist, if not, download them
-    flag = get_MAS_boundary_conditions(cr)
-    assert (flag > -1)
-
-    # Read the HelioMAS data
-    MAS_vr, MAS_vr_Xa, MAS_vr_Xm, MAS_br, MAS_br_Xa, MAS_br_Xm = read_MAS_vr_br(cr)
-
-    vr_map = MAS_vr
-    br_map = MAS_br
-
-    # Convert the lat angles from N-pole to equator centred
-    vr_lats = (np.pi / 2) * u.rad - MAS_vr_Xm
-    br_lats = (np.pi / 2) * u.rad - MAS_br_Xm
-
-    # Flip lats, so they're increasing in value
-    vr_lats = np.flipud(vr_lats)
-    br_lats = np.flipud(br_lats)
-    vr_map = np.fliplr(vr_map)
-    br_map = np.fliplr(br_map)
-
-    vr_longs = MAS_vr_Xa
-    br_longs = MAS_br_Xa
-
-    return vr_map.T, vr_lats, vr_longs, br_map.T, br_lats, br_longs
+    return vr_in
 
 
 def get_MAS_vr_map(cr):
@@ -287,7 +234,7 @@ def get_MAS_vr_map(cr):
         vr_longs: The Carrington longitudes for the Vr map, np.array with units of radians
     """
 
-    assert (np.isnan(cr) is False and cr > 0)
+    assert (np.isnan(cr) == False and cr > 0)
 
     # Check the data exist, if not, download them
     flag = get_MAS_boundary_conditions(cr)
@@ -308,45 +255,6 @@ def get_MAS_vr_map(cr):
     vr_longs = MAS_vr_Xa
 
     return vr_map.T, vr_lats, vr_longs
-
-
-def get_MAS_br_map(cr):
-    """
-    Function to download, read and process MAS radial magnetic field output to provide HUXt boundary
-    conditions as lat-long maps, along with angle from equator for the maps.
-    Maps returned in native resolution, not HUXt resolution.
-
-    Args:
-        cr: Integer, Carrington rotation number
-
-    Returns:
-        br_map: Radial magnetic field as a Carrington longitude-latitude map. dimensionless np.array.
-        br_lats: The latitudes for the Br map, relative to the equator, np.array in units of radians.
-        br_longs: The Carrington longitudes for the Vr map, np.array in units of radians.
-
-    """
-
-    assert (np.isnan(cr) is False and cr > 0)
-
-    # Check the data exist, if not, download them
-    flag = get_MAS_boundary_conditions(cr)
-    if flag < 0:
-        return -1, -1, -1
-
-    # Read the HelioMAS data
-    MAS_vr, MAS_vr_Xa, MAS_vr_Xm, MAS_br, MAS_br_Xa, MAS_br_Xm = read_MAS_vr_br(cr)
-
-    br_map = MAS_br
-
-    # Convert the lat angles from N-pole to equator centred
-    br_lats = (np.pi / 2) * u.rad - MAS_br_Xm
-
-    # Flip lats, so they're increasing in value
-    br_lats = np.flipud(br_lats)
-    br_map = np.fliplr(br_map)
-    br_longs = MAS_br_Xa
-
-    return br_map.T, br_lats, br_longs
 
 
 @u.quantity_input(v_outer=u.km / u.s)
