@@ -17,8 +17,8 @@ mpl.rc("legend", fontsize=16)
 
 
 @u.quantity_input(time=u.day)
-def plot(model, time, save=False, tag='', fighandle = np.nan, axhandle = np.nan,
-         minimalplot = False):
+def plot(model, time, save=False, tag='', fighandle=np.nan, axhandle=np.nan,
+         minimalplot=False):
     """
     Make a contour plot on polar axis of the solar wind solution at a specific time.
     :param model: An instance of the HUXt class with a completed solution.
@@ -70,7 +70,7 @@ def plot(model, time, save=False, tag='', fighandle = np.nan, axhandle = np.nan,
     mymap.set_under([0, 0, 0])
     levels = np.arange(plotvmin, plotvmax + dv, dv)
     
-    #if no fig and axis handles are given, create a new figure
+    # if no fig and axis handles are given, create a new figure
     if isinstance(fighandle, float):
         fig, ax = plt.subplots(figsize=(10, 10), subplot_kw={"projection": "polar"})
     else:
@@ -90,13 +90,12 @@ def plot(model, time, save=False, tag='', fighandle = np.nan, axhandle = np.nan,
             cme_lons = np.append(cme_lons, cme_lons[0])
             cme_r = np.append(cme_r, cme_r[0])
             ax.plot(cme_lons, cme_r, '-', color=cme_colors[cid], linewidth=3)
-       
-        
+
     ax.set_ylim(0, model.r.value.max())
     ax.set_yticklabels([])
     ax.set_xticklabels([])
     
-    if minimalplot == False:
+    if not minimalplot:
         # Add on observers 
         for body, style in zip(['EARTH', 'VENUS', 'MERCURY', 'STA', 'STB'], ['co', 'mo', 'ko', 'rs', 'y^']):
             obs = model.get_observer(body)
@@ -312,7 +311,7 @@ def plot_timeseries(model, radius, lon, save=False, tag=''):
     lon_label = " Longitude: {:3.2f}".format(lon_out) + "$^\circ$"
     label = "HUXt" + radius_label + lon_label
     ax.set_title(label, fontsize=20)
-    #ax.legend(loc=1)
+
     if save:
         cr_num = np.int32(model.cr_num.value)
         r_tag = np.int32(r_out)
@@ -333,9 +332,9 @@ def get_earth_timeseries(model):
     """
     earth_pos = model.get_observer('Earth')
 
-    #adjust the HEEQ coordinates if the sidereal frame has been used
+    # adjust the HEEQ coordinates if the sidereal frame has been used
     if model.frame == 'sidereal':
-        deltalon = earth_pos.lon_hae -  earth_pos.lon_hae[0]
+        deltalon = earth_pos.lon_hae - earth_pos.lon_hae[0]
         lonheeq = H._zerototwopi_(earth_pos.lon.value + deltalon.value)
     elif model.frame == 'synodic':
         lonheeq = earth_pos.lon.value 
@@ -343,26 +342,26 @@ def get_earth_timeseries(model):
     if model.nlon == 1:
         print('Single longitude simulated. Extracting time series at Earth r')
 
-    time = np.ones((model.nt_out))*np.nan
-    lon = np.ones((model.nt_out))*np.nan
-    rad = np.ones((model.nt_out))*np.nan
-    speed = np.ones((model.nt_out))*np.nan
+    time = np.ones(model.nt_out)*np.nan
+    lon = np.ones(model.nt_out)*np.nan
+    rad = np.ones(model.nt_out)*np.nan
+    speed = np.ones(model.nt_out)*np.nan
 
     for t in range(model.nt_out):
         time[t] = (model.time_init + model.time_out[t]).jd
 
-        #find the nearest R coord
+        # find the nearest R coord
         id_r = np.argmin(np.abs(model.r.value - earth_pos.r[t].value))
         rad[t] = model.r[id_r].value
         lon[t] = lonheeq[t]
-        #then interpolate the values in longitude
+        # then interpolate the values in longitude
         if model.nlon == 1:
             speed[t] = model.v_grid[t, id_r, 0].value
         else:
             speed[t] = np.interp(lonheeq[t], model.lon.value, model.v_grid[t, id_r, :].value, period=2*np.pi)
 
     time = Time(time, format='jd')
-    #print(time, rad, lon, speed)
+
     earth_time_series = pd.DataFrame(data={'time':time.datetime, 'r':rad, 'lon':lon, 'vsw':speed})
     return earth_time_series
 
@@ -378,7 +377,7 @@ def plot_3d_meridional(model3d, time, lon=np.NaN*u.deg, save=False, tag=''):
     :return fig: Figure handle.
     :return ax: Axes handle.
     """
-    #get the metadata from one of the individual HUXt elements
+    # get the metadata from one of the individual HUXt elements
     model=model3d.HUXtlat[0]
     
     if (time < model.time_out.min()) | (time > (model.time_out.max())):
@@ -387,7 +386,7 @@ def plot_3d_meridional(model3d, time, lon=np.NaN*u.deg, save=False, tag=''):
     id_t = np.argmin(np.abs(model.time_out - time))
     time_out = model.time_out[id_t].to(u.day).value
     
-    #get the requested longitude
+    # get the requested longitude
     if model.lon.size == 1:
         id_lon = 0
         lon_out = model.lon.value
@@ -395,14 +394,16 @@ def plot_3d_meridional(model3d, time, lon=np.NaN*u.deg, save=False, tag=''):
         id_lon = np.argmin(np.abs(model.lon - lon))
         lon_out = model.lon[id_lon].to(u.deg).value
         
-    #loop over latitudes and extract the radial profiles
-    mercut=np.ones((len(model.r),model3d.nlat))
-    ymax=0.0
-    for n in range(0,model3d.nlat):
-        model=model3d.HUXtlat[n]
-        ymin=200; ymax=810; dv=19;
-        ylab='Solar Wind Speed (km/s)'
-        mercut[:,n]=model.v_grid[id_t, :, id_lon]
+    # loop over latitudes and extract the radial profiles
+    mercut = np.ones((len(model.r), model3d.nlat))
+    ymax = 0.0
+    for n in range(0, model3d.nlat):
+        model = model3d.HUXtlat[n]
+        ymin = 200
+        ymax = 810
+        dv = 19
+        ylab = 'Solar Wind Speed (km/s)'
+        mercut[:, n] = model.v_grid[id_t, :, id_lon]
         mymap = mpl.cm.viridis
         
     mymap.set_over('lightgrey')
@@ -455,7 +456,7 @@ def animate_3d(model3d, lon=np.NaN*u.deg, tag=''):
 
     # Set the duration of the movie
     # Scaled so a 5 day simulation with dt_scale=4 is a 10 second movie.
-    model=model3d.HUXtlat[0]
+    model = model3d.HUXtlat[0]
     duration = model.simtime.value * (10 / 432000)
 
     def make_frame_3d(t):
@@ -465,7 +466,7 @@ def animate_3d(model3d, lon=np.NaN*u.deg, tag=''):
         """
         # Get the time index closest to this fraction of movie duration
         i = np.int32((model.nt_out - 1) * t / duration)
-        fig, ax =  plot_3d_meridional(model3d, model.time_out[i], lon)
+        fig, ax = plot_3d_meridional(model3d, model.time_out[i], lon)
         frame = mplfig_to_npimage(fig)
         plt.close('all')
         return frame
