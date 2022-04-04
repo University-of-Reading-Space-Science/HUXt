@@ -941,7 +941,7 @@ def radial_grid(r_min=30.0 * u.solRad, r_max=240. * u.solRad):
     Returns:
         r: An array of radial coordinates, relative to Sun center, in solar radii.
         dr: The radial grid step value, in solar radii.
-        rrel: An array of radial coordinates, relative to the model inner boundary at 30 solar radii.
+        rrel: An array of radial coordinates, relative to the model inner boundary.
         nr: The number of radial grid steps.
     """
     if r_min >= r_max:
@@ -962,7 +962,7 @@ def radial_grid(r_min=30.0 * u.solRad, r_max=240. * u.solRad):
     r = np.arange(r_min.value, r_max.value + dr.value, dr.value)
     r = r * dr.unit
     nr = r.size
-    rrel = r - 30*u.solRad
+    rrel = r - r_min
     return r, dr, rrel, nr
 
 
