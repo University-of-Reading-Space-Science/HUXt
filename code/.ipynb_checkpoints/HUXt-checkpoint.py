@@ -8,7 +8,7 @@ import h5py
 from numba import jit
 import copy
 from packaging import version
-from scipy.ndimage import gaussian_filter1d
+from scipy.ndimage import  gaussian_filter1d
 # check the numpy version, as this can cause all manner of difficult-to-diagnose problems
 assert(version.parse(np.version.version) >= version.parse("1.18"))
 
@@ -847,7 +847,7 @@ def radial_grid(r_min=30.0 * u.solRad, r_max=240. * u.solRad):
     r = np.arange(r_min.value, r_max.value + dr.value, dr.value)
     r = r * dr.unit
     nr = r.size
-    rrel = r - 30*u.solRad
+    rrel = r - r[0]
     return r, dr, rrel, nr
 
 
