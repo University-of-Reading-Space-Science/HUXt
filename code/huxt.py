@@ -962,7 +962,7 @@ def radial_grid(r_min=30.0 * u.solRad, r_max=240. * u.solRad):
     r = np.arange(r_min.value, r_max.value + dr.value, dr.value)
     r = r * dr.unit
     nr = r.size
-    rrel = r - r_min
+    rrel = r - r[0]
     return r, dr, rrel, nr
 
 
