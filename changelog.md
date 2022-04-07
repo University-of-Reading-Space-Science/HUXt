@@ -3,6 +3,7 @@
 # V4.0.0
 
 ## Bug fixes
+- `radial_grid()` returned incorrect relative radial grid values (`rrel`) for HUXt instances with inner boundaries other than  30Rs. This unfortunately resuleted in increasingly large errors as lower inner boundaries were used. For example, at 10Rs, the model solutions were, on average, wrong by 8%. 
 - Updated dependencies in `environment.yml` and `requirements.txt` to mititgate security issues raised in the Dependabot alerts.
 - Removed Gaussian smoothing of the CME front in `ConeCME._track_`, as this made CME tracking inconsistent between HUXt runs that spanned different regions of the CME. Now CME kinematics calculations match along a specific longitude irrespective of whether the HUXt domain partially or wholly covers the CME width. 
 - Fixed `ConeCME.compute_arrival_at_body()` so that it also works with HUXt solutions for only one longitude coordinate. Now HUXt simulations along one, many, or all longitudes should return consistent CME arrival times. This requires a different approach to the method for multiple longitudes, and can result in small differences in the CME arrival time, of the order of the model timestep. However, this is much smaller than all other sources of uncertainty in this simulation and calculation.
