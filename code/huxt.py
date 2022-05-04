@@ -305,6 +305,7 @@ class ConeCME:
                         r_front.append(r_interp)
                     else:
                         continue
+                        
                 elif len(lon_cme) == 1:
                     # HUXt run on a single longitude, so don't interpolate front to body lon
                     # Instead, check when cme lon within tolerance lon of body
@@ -313,6 +314,8 @@ class ConeCME:
                     if np.isclose(arrive_lon[i], lon_cme, atol=1.5*u.deg):
                         t_front.append(coord['time'].jd)
                         r_front.append(r_cme[0])
+                    else:
+                        continue
 
                 # Has CME front crossed body radius
                 if r_front[-1] > arrive_rad[i]:
