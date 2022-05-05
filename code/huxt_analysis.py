@@ -151,7 +151,7 @@ def animate(model, tag):
 
     # Set the duration of the movie
     # Scaled so a 5 day simulation with dt_scale=4 is a 10 second movie.
-    duration = model.simtime.value * (1 / 432000)
+    duration = model.simtime.value * (10 / 432000)
 
     def make_frame(t):
         """
