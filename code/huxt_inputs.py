@@ -616,6 +616,88 @@ def ConeFile_to_ConeCME_list(model, filepath):
     return cme_list
 
 
+def get_time_dependent_boundary(vgrid_Carr, time_grid, starttime, simtime,
+                       r_min = 215*u.solRad, r_max = 1290*u.solRad,
+                       dt_scale = 100, latitude = 0*u.deg, 
+                       frame = 'sidereal',
+                       lon_start = 0*u.rad, lon_stop = 2*np.pi *u.rad):
+    
+    """
+    A function to compute an explicitly time dependent inner boundary condition for HUXt,
+    rather than due to synodic/sidereal rotation of static coronal strucutre.    
+
+    :param vgrid_Carr: input solar wind speed as a function of Carrington longitude and time
+    :param time_grid: time steps (in MJD) of vgrid_Carr
+    :param starttime: The datetime object giving the start of the HUXt run
+    :param simtime: The duration fo the HUXt run (in u.day)
+    """
+    
+    #work out the start time in terms of cr number and cr_lon_init
+    cr, cr_lon_init = datetime2huxtinputs(starttime)
+    
+    #set up the dummy model class
+    model = H.HUXt(v_boundary=np.ones((128))*400*u.km/u.s, 
+                   lon_start= lon_start , lon_stop = lon_stop,
+                   latitude = latitude, 
+                   r_min = r_min, r_max = r_max,
+                   simtime = simtime, dt_scale = dt_scale, cr_num = cr,
+                   cr_lon_init  = cr_lon_init,
+                   frame = frame)
+    
+    #extract the values from the model class
+    buffertime = model.buffertime
+    simtime = model.simtime
+    frame = model.frame
+    dt = model.dt
+    cr_lon_init = model.cr_lon_init
+    all_lons, dlon, nlon = H.longitude_grid()
+    latitude = model.latitude
+    time_init = model.time_init
+    
+    constants = H.huxt_constants()
+    if frame == 'synodic':
+        rotation_period = constants['synodic_period']
+    elif frame == 'sidereal':    
+        rotation_period = constants['sidereal_period']
+    
+    # compute the model time step
+    buffersteps = np.fix(buffertime.to(u.s) / dt)
+    buffertime = buffersteps * dt
+    model_time = np.arange(-buffertime.value, (simtime.to('s') + dt).value,dt.value) * dt.unit
+   
+    # interpolate the solar wind speed onto the model grid 
+    #variables to store the input conditions.
+    input_ambient_ts = np.nan * np.ones((model_time.size,nlon))
+    
+    for t in range(0, len(model_time)):
+        
+        mjd = time_init.mjd + model_time[t].to(u.day).value
+        
+        #find the nearest time to the current model time
+        t_input = np.argmin(abs(time_grid - mjd))
+        
+        #shift the longitude to match the initial model time
+        dlon_from_start = 2*np.pi * u.rad * model_time[t] / rotation_period
+        
+        lon_shifted = H._zerototwopi_((all_lons - cr_lon_init + dlon_from_start).value)
+        #put longitudes in ascending order for np.interp
+        id_sort = np.argsort(lon_shifted)
+        lon_shifted = lon_shifted[id_sort]
+        
+        #take the vlong slice at this value
+        v_boundary = vgrid_Carr[:, t_input]
+        v_b_shifted = v_boundary[id_sort]
+        #interpolate back to the original grid
+        v_boundary = np.interp(all_lons.value, lon_shifted, v_b_shifted, period=2*np.pi)
+        input_ambient_ts[t, :] = v_boundary
+        
+    #fill the nan values
+    mask = np.isnan(input_ambient_ts)
+    input_ambient_ts[mask] = 400
+     
+    return model_time, input_ambient_ts
+
+
 def _zerototwopi_(angles):
     """
     Function to constrain angles to the 0 - 2pi domain.

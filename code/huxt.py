@@ -411,6 +411,10 @@ class HUXt:
         :param simtime: Duration of the simulation window, in days.
         :param dt_scale: Integer scaling number to set the model output time step relative to the models CFL time.
         :param frame: string determining the rotation frame for the model
+        :param input_v_ts: Time series of inner boundary conditions. For initialising HUXt with, for example, 
+                           in-situ observations from L1. If used as keyword input argument, overrides v_boundary input.
+        :param input_iscme_ts: Boolean mask time series indicating what time steps correspond to CMEs in input_v_ts.
+                               If used as keyword input argument, overrides ConeCMEs past to huxt.sovle().
         """
 
         # some constants and units
