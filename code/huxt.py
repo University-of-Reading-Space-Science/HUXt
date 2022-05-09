@@ -393,7 +393,9 @@ class HUXt:
                  cr_num=np.NaN, cr_lon_init=360.0 * u.deg, latitude=0*u.deg,
                  r_min=30 * u.solRad, r_max=240 * u.solRad,
                  lon_out=np.NaN * u.rad, lon_start=np.NaN * u.rad, lon_stop=np.NaN * u.rad,
-                 simtime=5.0 * u.day, dt_scale=1.0, frame='synodic'):
+                 simtime=5.0 * u.day, dt_scale=1.0, frame='synodic',
+                 input_v_ts=np.NaN * (u.km/u.s),
+                 input_iscme_ts=np.NaN):
         """
         Initialise the HUXt model instance.
 
@@ -471,6 +473,23 @@ class HUXt:
             self.v_boundary = v_boundary
         # Keep a protected version that isn't processed for use in saving/loading model runs
         self._v_boundary_init_ = self.v_boundary.copy()
+        
+        # Process inputs for time dependent boundary conditions from in-situ data
+        # Solar wind boundary
+        if np.all(np.isnan(input_v_ts)):
+            self.input_v_ts = np.NaN * (u.km / u.s)
+            self.input_v_ts_flag = False
+        else:
+            self.input_v_ts = input_v_ts
+            self.input_v_ts_flag = True
+        
+        # CME flag boundary
+        if np.all(np.isnan(input_iscme_ts)):
+            self.input_iscme_ts = np.NaN
+            self.input_iscme_ts_flag = False
+        else:
+            self.input_iscme_ts = input_iscme_ts
+            self.input_iscme_ts_flag = True   
         
         # Determine CR number, used for spacecraft/planetary positions
         if np.isnan(cr_num):
@@ -649,27 +668,26 @@ class HUXt:
         # ======================================================================
         # If the input time series has not been prescribed,
         # Generate it from v(long)
-        if hasattr(self, 'input_v_ts'):
-            print('Using prescribed input V time series')
-        else:
-            print('Generating V time series from prescribed v(long)')
+        if not self.input_v_ts_flag:
             self.ts_from_vlong()           
         
         # ======================================================================
         # Add CMEs
         # ======================================================================
         # See if the cmes-flag input time series has been prescribed
-        if hasattr(self, 'input_iscme_ts'):
-            print('Using prescribed input CME-flag time series')
+        if self.input_iscme_ts_flag:
+            # CME input has been parsed as input - set up some dummy coneCME's
+            # to hold the CME tracking data
             n_cme = np.nanmax(self.input_iscme_ts)
             # Create dummy CME list to sort the boundaries
             self.cmes = []
-            for n in range(0,n_cme):
+            for n in range(0, n_cme):
                 cme = ConeCME(t_launch=0*u.s, longitude=0*u.deg, 
                               width=0*u.deg, v=0*self.kms, thickness=0*u.solRad)
                 self.cmes.append(cme)
         else:
-            print('Adding CMEs to input time series ')  
+            # CME input has not been specified, but ConeCME's may have been input
+            # So configure input_iscme_ts from the ConeCMES.
             self.input_iscme_ts = 0 * np.ones((self.model_time.size,
                                                self.nlon), dtype='int')
             
