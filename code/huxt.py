@@ -447,8 +447,7 @@ class HUXt:
 
         # Setup radial coordinates - in solar radius
         self.r, self.dr, self.rrel, self.nr = radial_grid(r_min=r_min, r_max=r_max)
-        self.buffertime = ((5.0 * u.day) / (210 * u.solRad)) * self.rrel[-1]
-
+        
         # Setup longitude coordinates - in radians.
         self.lon, self.dlon, self.nlon = longitude_grid(lon_out=lon_out, lon_start=lon_start, lon_stop=lon_stop)
         
@@ -521,6 +520,11 @@ class HUXt:
         
         v_b_shifted = self.v_boundary[id_sort]
         self.v_boundary = np.interp(lon_boundary.value, lon_shifted, v_b_shifted, period=self.twopi)
+        
+        # Compute the buffertime required to spin up HUXt, based on minimum speed on the inner boundary
+        # and span of radial grid
+        self.buffertime  = 1.5*(self.rrel[-1] / self.v_boundary.min()).to(u.day)
+        
         # Preallocate space for the output for the solar wind fields for the cme and ambient solution.
         self.v_grid = np.zeros((self.nt_out, self.nr, self.nlon)) * self.kms
         
