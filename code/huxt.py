@@ -1137,7 +1137,7 @@ def _setup_dirs_():
         print('Error: Cannot find correct config file with project directories. Check config.dat exists')
         print('Defaulting to current directory')
         dirs = {'root': os.getcwd()}
-        for rel_path in ['boundary_conditions', 'ephemeris', 'HUXt_data', 'HUXt_figures']:
+        for rel_path in ['boundary_conditions', 'ephemeris', 'HUXt_data', 'HUXt_figures', 'test_data']:
             if rel_path == 'ephemeris':
                 dirs[rel_path] = os.path.join(os.getcwd(), "ephemeris.hdf5")
             else:
