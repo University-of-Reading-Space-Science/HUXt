@@ -1,12 +1,13 @@
-import numpy as np
+import os
+
 import astropy.units as u
 from astropy.time import Time
-import os
 import matplotlib.pyplot as plt
 import matplotlib as mpl
 import moviepy.editor as mpy
-import pandas as pd
 from moviepy.video.io.bindings import mplfig_to_npimage
+import numpy as np
+import pandas as pd
 
 import huxt as H
 

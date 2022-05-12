@@ -1,14 +1,17 @@
-import numpy as np
+import copy
+import errno
+import glob
+import os
+
 import astropy.units as u
 from astropy.time import Time, TimeDelta
-from sunpy.coordinates import sun
-import os
-import glob
 import h5py
+import numpy as np
 from numba import jit
-import copy
-# check the numpy version, as this can cause all manner of difficult-to-diagnose problems
 from packaging import version
+from sunpy.coordinates import sun
+
+# check the numpy version, as this can cause all manner of difficult-to-diagnose problems
 assert(version.parse(np.version.version) >= version.parse("1.18"))
 
 
@@ -1507,9 +1510,7 @@ def load_HUXt_run(filepath):
 
     else:
         # File doesnt exist return nothing
-        print("Warning: {} doesnt exist.".format(filepath))
-        cme_list = []
-        model = []
-
+        raise FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT), filepath)
+        
     return model, cme_list
     

@@ -1,16 +1,18 @@
-import httplib2
-import urllib
-import huxt as H
 import os
+import urllib
 import ssl
-from pyhdf.SD import SD, SDC
-import numpy as np
+
 import astropy.units as u
 from astropy.io import fits
 from astropy.time import Time
+import numpy as np
+import httplib2
+from pyhdf.SD import SD, SDC
 from scipy.io import netcdf
 from scipy import interpolate
 from sunpy.coordinates import sun
+
+import huxt as H
 
 
 def get_MAS_boundary_conditions(cr=np.NaN, observatory='', runtype='', runnumber='', masres=''):

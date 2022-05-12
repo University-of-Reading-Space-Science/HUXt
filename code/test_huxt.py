@@ -1,8 +1,9 @@
+import os
+
 import astropy.units as u
 from astropy.time import Time
 import h5py
 import numpy as np
-import os
 
 import huxt as H
 
