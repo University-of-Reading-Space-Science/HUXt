@@ -1492,7 +1492,7 @@ def load_HUXt_run(filepath):
                            for j in range(len(coords_group))}
 
             for time_key, pos in coords_group.items():
-                t = np.int(time_key.split("_")[2])
+                t = int(time_key.split("_")[2])
                 time_out = Time(pos['time'][()], format="isot")
                 time_out.format = 'jd'
                 coords_data[t]['time'] = time_out
