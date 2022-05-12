@@ -1132,31 +1132,33 @@ def _setup_dirs_():
     """
     Function to pull out the directories of boundary conditions, ephemeris, and to save figures and output data.
     """
-    # Find the config.dat file path
-    files = glob.glob('config.dat')
-
-    if len(files) != 1:
-        # If wrong number of config files, guess directories
-        print('Error: Cannot find correct config file with project directories. Check config.dat exists')
-        print('Defaulting to current directory')
-        dirs = {'root': os.getcwd()}
-        for rel_path in ['boundary_conditions', 'ephemeris', 'HUXt_data', 'HUXt_figures', 'test_data']:
-            if rel_path == 'ephemeris':
-                dirs[rel_path] = os.path.join(os.getcwd(), "ephemeris.hdf5")
-            else:
-                dirs[rel_path] = os.getcwd()
-    else:
-        # Extract data and figure directories from config.dat
-        with open(files[0], 'r') as file:
+    
+    # Get path of huxt.py, and work out root dir of HUXt repository
+    cwd = os.path.abspath(os.path.dirname(__file__))
+    root = os.path.dirname(cwd)
+   
+    # Config file must be saved in HUXt/code
+    config_file = os.path.join(cwd, 'config.dat')
+    
+    if os.path.isfile(config_file):
+        
+        with open(config_file, 'r') as file:
             lines = file.read().splitlines()
-            root = lines[0].split(',')[1]
-            dirs = {line.split(',')[0]: os.path.join(root, line.split(',')[1]) for line in lines[1:]}
+            dirs = {line.split(',')[0]: os.path.join(root, line.split(',')[1]) for line in lines}
+            
+        dirs['root']=root
 
         # Just check the directories exist.
-        for val in dirs.values():
-            if not os.path.exists(val):
-                print('Error, invalid path, check config.dat: ' + val)
-
+        for key, val in dirs.items():
+                if key == 'ephemeris':
+                    if not os.path.isfile(val):
+                        raise FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT), val)
+                else:
+                    if not os.path.isdir(val):
+                        raise NotADirectoryError(errno.ENOENT, os.strerror(errno.ENOENT), val)
+    else:
+        raise FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT), config_file)
+                
     return dirs
 
 
