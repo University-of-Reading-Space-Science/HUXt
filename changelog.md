@@ -3,6 +3,7 @@
 # V4.0.0
 
 ## Bug fixes
+- `ConeCME._track_` had a bug due to incorrectly wrapping longitudes of the CME particles. This meant that the plotting routines drew the incorrect CME boundary for CMEs with noses at longitudes just less than 360 deg, with flanks that cross the 360-0 wrapover.  
 - `huxt/load_HUXt_run()` now raises an FileNotFound exception if given an invalid filepath. Before it returned empty lists in place of the HUXt and ConeCME classes.
 - `HUXt.buffertime`, which controls the model spin-up time, was set to a fixed value which was too low. For some edge cases that included very low solar wind speeds, this didn't give the model enough time to spin-up properly and so the model solution contained some artefacts of the spin-up for some time steps in the outer limits of the radial grid. `HUXt.buffertime` is now a function of the minimum inner boundary speed and works as intended for uniform inner boundary speeds between 200km/s and 1000 km/s. 
 - `radial_grid()` returned incorrect relative radial grid values (`rrel`) for HUXt instances with inner boundaries other than  30Rs. This unfortunately resuleted in increasingly large errors as lower inner boundaries were used. For example, at 10Rs, the model solutions were, on average, wrong by 8%. 
