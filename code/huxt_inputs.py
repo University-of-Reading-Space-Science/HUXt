@@ -220,6 +220,45 @@ def get_MAS_long_profile(cr, lat=0.0 * u.deg):
 
     return vr_in
 
+def get_MAS_br_long_profile(cr, lat=0.0 * u.deg):
+    """
+    Function to download, read and process MAS output to provide a longitude profile at a specified latitude
+    of the Br for use as boundary conditions in HUXt.
+
+    Args:
+        cr: Integer Carrington rotation number
+        lat: Latitude at which to extract the longitudinal profile, measure up from equator. Float with units of deg
+
+    Returns:
+
+        br_in: Br as a function of Carrington longitude at solar equator.
+               Interpolated to HUXt longitudinal resolution. np.array (NDIM = 1)
+    """
+    assert (np.isnan(cr) == False and cr > 0)
+    assert (lat >= -90.0 * u.deg)
+    assert (lat <= 90.0 * u.deg)
+
+    # Convert angle from equator to angle down from N pole
+    ang_from_N_pole = np.pi / 2 - (lat.to(u.rad)).value
+
+    # Check the data exist, if not, download them
+    flag = get_MAS_boundary_conditions(cr)
+    assert (flag > -1)
+
+    # Read the HelioMAS data
+    MAS_vr, MAS_vr_Xa, MAS_vr_Xm, MAS_br, MAS_br_Xa, MAS_br_Xm = read_MAS_vr_br(cr)
+
+    # Extract the value at the given latitude
+    br = np.ones(len(MAS_br_Xa))
+    for i in range(0, len(MAS_br_Xa)):
+        br[i] = np.interp(ang_from_N_pole, MAS_br_Xm.value, MAS_br[i][:])
+
+    # Now interpolate on to the HUXt longitudinal grid
+    longs, dlon, nlon = H.longitude_grid(lon_start=0.0 * u.rad, lon_stop=2 * np.pi * u.rad)
+    br_in = np.interp(longs.value, MAS_br_Xa.value, br) 
+
+    return br_in
+
 
 def get_MAS_vr_map(cr):
     """

@@ -385,6 +385,7 @@ class HUXt:
         v_boundary: Inner boundary solar wind speed profile (in km/s).
         v_max: Maximum model speed (in km/s), used with the CFL condition to set the model time step.
         v_grid: Array of model speed including ConeCMEs for each time, radius, and longitude (in km/s).
+        v_grid_full: As v_grid, but for all timesteps, including spin up
     """
 
     # Decorators to check units on input arguments
@@ -398,7 +399,8 @@ class HUXt:
                  lon_out=np.NaN * u.rad, lon_start=np.NaN * u.rad, lon_stop=np.NaN * u.rad,
                  simtime=5.0 * u.day, dt_scale=1.0, frame='synodic',
                  input_v_ts=np.NaN * (u.km/u.s),
-                 input_iscme_ts=np.NaN):
+                 input_iscme_ts=np.NaN,
+                 save_full_v = False):
         """
         Initialise the HUXt model instance.
 
@@ -418,6 +420,7 @@ class HUXt:
                            in-situ observations from L1. If used as keyword input argument, overrides v_boundary input.
         :param input_iscme_ts: Boolean mask time series indicating what time steps correspond to CMEs in input_v_ts.
                                If used as keyword input argument, overrides ConeCMEs past to huxt.sovle().
+        :param save_full_v: Boolean flag to determine if full v field (including spin up) is saved for post processing.
         """
 
         # some constants and units
@@ -530,6 +533,14 @@ class HUXt:
         
         # Preallocate space for the output for the solar wind fields for the cme and ambient solution.
         self.v_grid = np.zeros((self.nt_out, self.nr, self.nlon)) * self.kms
+        # Preallocate space for the full output for the solar wind fields if required
+        self.save_full_v = save_full_v
+        if self.save_full_v:
+            buffersteps = np.fix(self.buffertime.to(u.s) / self.dt)
+            buffertime = buffersteps * self.dt
+            model_time = np.arange(-buffertime.value, (self.simtime.to('s') + self.dt).value, self.dt.value) * self.dt.unit
+            self.v_grid_full = np.zeros((len(model_time), 
+                                         self.nr, self.nlon)) * self.kms
         
         # Mesh the spatial coordinates.
         self.lon_grid, self.r_grid = np.meshgrid(self.lon, self.r)
@@ -731,14 +742,23 @@ class HUXt:
             else:
                 lon_out = self.lon[i].value
                 
-            v, cme_r_bounds = solve_radial(self.input_v_ts[:,i],
-                                           self.input_iscme_ts[:,i],
-                                           self.model_time, 
-                                           self.rrel.value, lon_out,
-                                           self.model_params, n_cme)
+            #check whether the full grid needs saving
+            if self.save_full_v:
+                v, cme_r_bounds, v_full = solve_radial_full(self.input_v_ts[:,i],
+                                               self.input_iscme_ts[:,i],
+                                               self.model_time, 
+                                               self.rrel.value, lon_out,
+                                               self.model_params, n_cme)
+                
+                self.v_grid_full[:, :, i] = v_full * self.kms
+            else:
+                v, cme_r_bounds = solve_radial(self.input_v_ts[:,i],
+                                               self.input_iscme_ts[:,i],
+                                               self.model_time, 
+                                               self.rrel.value, lon_out,
+                                               self.model_params, n_cme)
             # Save the outputs
             self.v_grid[:, :, i] = v * self.kms
-            
             self.cme_particles[:, :, :, i] = cme_r_bounds * u.dimensionless_unscaled
             
         # Update CMEs positions by tracking through the solution.
@@ -1287,6 +1307,120 @@ def solve_radial(vinput, iscmeinput, model_time, rrel, lon, params,
                     iter_count = 0
     
     return v_grid, cme_particles
+
+@jit(nopython=True)
+def solve_radial_full(vinput, iscmeinput, model_time, rrel, lon, params, 
+                 n_cme):
+    """
+    Solve the radial profile as a function of time (including spinup), and
+    return radial profile at specified output timesteps.
+    Tracks CME frotns as test particles
+    
+    :param vinput: Timeseries of inner boundary solar wind speeds
+    :param iscmeinput: Timeseries of in/out of a CME at the inner boundary
+    :param model_time: Array of model timesteps
+    :param rrel: Array of model radial coordinates relative to inner boundary coordinate
+    :param lon: The longitude of this radial
+    :param params: Array of HUXt parameters
+    :param n_cme: Number of CMEs in the whole model run (not nec this longitude)
+
+    Returns:
+
+    """
+    
+    # Main model loop
+    dtdr = params[0]
+    alpha = params[1]
+    r_accel = params[2]
+    dt_scale = np.int32(params[3])
+    nt_out = np.int32(params[4])
+    nr = np.int32(params[5])
+    r_boundary = params[7]
+    
+    # Compute the radial grid for the test particles
+    rgrid = rrel*695700.0 + r_boundary  # Can't use astropy.untis because numba
+    dr = rgrid[1]-rgrid[0]
+    dt = dtdr*dr
+   
+    # Preallocate space for solutions
+    v_grid = np.zeros((nt_out, nr)) 
+    v_grid_full = np.zeros((len(model_time), nr)) 
+    cme_particles = np.zeros((n_cme, nt_out, 2))*np.nan
+    
+    # Check if CMEs need to be tracked.
+    do_cme = 0
+    if np.any(iscmeinput) > 0:
+        do_cme = 1
+    
+    iter_count = 0
+    t_out = 0
+    
+    for t, time in enumerate(model_time):
+        # Get the initial condition, which will update in the loop,
+        # and snapshots saved to output at right steps.
+        if t == 0:
+            v = np.ones(nr) * 400
+            r_cmeparticles = np.ones((n_cme, 2))*np.nan
+            
+        # Update the inner boundary conditions
+        v[0] = vinput[t]
+        
+        # Compute boundary speed of each CME at this time. 
+        if time > 0:
+            if do_cme == 1:
+                for n in range(n_cme):
+                    # Check if this point is within the cone CME
+                    if iscmeinput[t] > 0:
+                        thiscme = iscmeinput[t] - 1
+
+                        # If the leading edge test particle doesn't exist, add it
+                        if np.isnan(r_cmeparticles[thiscme, 0]):
+                            r_cmeparticles[thiscme, 0] = r_boundary
+                            
+                        # Hold the CME trailing edge test particle at the inner boundary
+                        # Until if condition breaks
+                        r_cmeparticles[thiscme, 1] = r_boundary
+
+        # Update all fields for the given longitude
+        u_up = v[1:].copy()
+        u_dn = v[:-1].copy()
+        
+        # Do a single model time step
+        u_up_next = _upwind_step_(u_up, u_dn, dtdr, alpha, r_accel, rrel)
+        # Save the updated time step
+        v[1:] = u_up_next.copy()
+        
+        # Move the test particles forward
+        if t > 0:        
+            for n in range(0, n_cme):  # loop over each CME
+                for bound in range(0, 2):  # loop over front and rear boundaries
+                    if np.isnan(r_cmeparticles[n, bound]) == False:
+                        # Linearly interpolate the speed
+                        v_test = np.interp(r_cmeparticles[n, bound] - dr/2, rgrid, v)
+                        # Advance the test particle
+                        r_cmeparticles[n, bound] = (r_cmeparticles[n, bound] + v_test * dt)
+                            
+                if r_cmeparticles[n, 0] > rgrid[-1]:
+                    # If the leading edge is past the outer boundary, put it at the outer boundary
+                    r_cmeparticles[n, 0] = rgrid[-1]
+                    
+                if r_cmeparticles[n, 1] > rgrid[-1]:
+                    # If the trailing edge is past the outer boundary,delete
+                    r_cmeparticles[n, :] = rgrid[-1]
+
+        # Save this frame to output if it is an output time step
+        if time >= 0:
+            iter_count = iter_count + 1
+            if iter_count == dt_scale:
+                if t_out <= nt_out - 1:
+                    v_grid[t_out, :] = v.copy()
+                    cme_particles[:, t_out, :] = r_cmeparticles.copy()
+                    t_out = t_out + 1
+                    iter_count = 0
+                    
+        v_grid_full[t, :] = v.copy()
+        
+    return v_grid, cme_particles, v_grid_full
 
 @jit(nopython=True)
 def add_cmes_to_input_series(vinput, model_time, lon, r_boundary, 
