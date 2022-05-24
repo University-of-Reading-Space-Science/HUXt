@@ -299,7 +299,7 @@ class ConeCME:
             lon_cme = coord['lon']
             front_id = coord['front_id'] == 1.0
             r_cme = r_cme[front_id]
-            lon_cme = lon_cme[front_id]
+            lon_cme = lon_cme[front_id] - self.longitude
 
             # If there are any CME front coords, then work out pos.
             if np.any(front_id):
