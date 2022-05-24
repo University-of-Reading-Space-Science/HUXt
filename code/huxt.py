@@ -212,12 +212,17 @@ class ConeCME:
                 if lon.size == 1:
                     if lon > np.pi*u.rad:
                         lon -= 2*np.pi*u.rad
+                    elif lon < -np.pi*u.rad:
+                        lon += 2*np.pi*u.rad
                         
                     lons = np.hstack([lon, lon])
                     cme_r = np.hstack([cme_r_front, cme_r_back])
                     front_id = np.hstack([1.0, 0.0])
                 else:
+                    # Correct the wrap arounds at +/-pi
                     lon[lon > np.pi*u.rad] -= 2*np.pi*u.rad
+                    lon[lon < -np.pi*u.rad] += 2*np.pi*u.rad
+                    
                     # Find indices that sort the longitudes, to make a wraparound of lons
                     id_sort_inc = np.argsort(lon)
                     id_sort_dec = np.flipud(id_sort_inc)
@@ -294,7 +299,7 @@ class ConeCME:
             lon_cme = coord['lon']
             front_id = coord['front_id'] == 1.0
             r_cme = r_cme[front_id]
-            lon_cme = lon_cme[front_id]
+            lon_cme = lon_cme[front_id] - self.longitude
 
             # If there are any CME front coords, then work out pos.
             if np.any(front_id):
