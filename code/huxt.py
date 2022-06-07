@@ -352,9 +352,8 @@ class HUXt:
     """
     A class containing the HUXt model described in Owens et al. (2020, DOI: 10.1007/s11207-020-01605-3)
 
-    Users must specify the solar wind speed boundary condition through either the v_boundary, or cr_num keyword
-    arguments. Failure to do so defaults to a 400 km/s boundary. v_boundary takes precedence over cr_num, so specifying
-    both results in only v_boundary being used.
+    Users must specify the solar wind speed boundary condition through the v_boundary keyword
+    argument. Failure to do so defaults to a 400 km/s boundary.
     
     Model coordinate system is HEEQ radius and longitude.
     
@@ -390,7 +389,7 @@ class HUXt:
         v_boundary: Inner boundary solar wind speed profile (in km/s).
         v_max: Maximum model speed (in km/s), used with the CFL condition to set the model time step.
         v_grid: Array of model speed including ConeCMEs for each time, radius, and longitude (in km/s).
-        v_grid_full: As v_grid, but for all timesteps, including spin up
+        v_grid_full: As v_grid, but for all timesteps, including spin up. Included if save_full_v = True
     """
 
     # Decorators to check units on input arguments

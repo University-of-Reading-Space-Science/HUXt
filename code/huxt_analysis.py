@@ -8,6 +8,7 @@ import moviepy.editor as mpy
 from moviepy.video.io.bindings import mplfig_to_npimage
 import numpy as np
 import pandas as pd
+from numba import jit, types, generated_jit
 
 import huxt as H
 
@@ -330,6 +331,8 @@ def get_earth_timeseries(model):
     Compute the solar wind time series at Earth. Returns a pandas dataframe with the 
     solar wind speed time series at Earth interpolated from the model solution using the
     Earth ephemeris. Nearest neighbour interpolation in r, linear interpolation in longitude.
+    
+    Returns bpolarity if that has been computed post run
     """
     earth_pos = model.get_observer('Earth')
 
@@ -347,23 +350,46 @@ def get_earth_timeseries(model):
     lon = np.ones(model.nt_out)*np.nan
     rad = np.ones(model.nt_out)*np.nan
     speed = np.ones(model.nt_out)*np.nan
+    bpol = np.ones(model.nt_out)*np.nan
 
     for t in range(model.nt_out):
         time[t] = (model.time_init + model.time_out[t]).jd
 
-        # find the nearest R coord
-        id_r = np.argmin(np.abs(model.r.value - earth_pos.r[t].value))
-        rad[t] = model.r[id_r].value
-        lon[t] = lonheeq[t]
-        # then interpolate the values in longitude
+        #find the nearest longitude cell
+        model_lons = model.lon.value
         if model.nlon == 1:
-            speed[t] = model.v_grid[t, id_r, 0].value
+            model_lons = np.array([model_lons])
+        id_lon = np.argmin(np.abs(model_lons - lonheeq[t]))
+        
+        #check whether the Earth is within the model domain
+        if ( (earth_pos.r[t].value < model.r[0].value) or 
+             (earth_pos.r[t].value > model.r[-1].value) or
+             ( (abs(model_lons[id_lon] - lonheeq[t]) > model.dlon.value) and
+               (abs(model_lons[id_lon] - lonheeq[t])- 2*np.pi > model.dlon.value) 
+             ) ):
+            
+            bpol[t] = np.nan
+            speed[t] = np.nan
+            print('Outside model domain')
         else:
-            speed[t] = np.interp(lonheeq[t], model.lon.value, model.v_grid[t, id_r, :].value, period=2*np.pi)
+            # find the nearest R coord
+            id_r = np.argmin(np.abs(model.r.value - earth_pos.r[t].value))
+            rad[t] = model.r[id_r].value
+            lon[t] = lonheeq[t]
+            # then interpolate the values in longitude
+            if model.nlon == 1:
+                speed[t] = model.v_grid[t, id_r, 0].value
+                if hasattr(model, 'b_grid'):
+                    bpol[t] = model.b_grid[t, id_r, 0]
+            else:
+                speed[t] = np.interp(lonheeq[t], model.lon.value, model.v_grid[t, id_r, :].value, period=2*np.pi)
+                if hasattr(model, 'b_grid'):
+                    bpol[t] = np.interp(lonheeq[t], model.lon.value, model.b_grid[t, id_r, :], period=2*np.pi)
 
     time = Time(time, format='jd')
 
-    earth_time_series = pd.DataFrame(data={'time':time.datetime, 'r':rad, 'lon':lon, 'vsw':speed})
+    earth_time_series = pd.DataFrame(data={'time':time.datetime, 'r':rad, 
+                                           'lon':lon, 'vsw':speed, 'bpol':bpol})
     return earth_time_series
 
 
@@ -478,3 +504,570 @@ def animate_3d(model3d, lon=np.NaN*u.deg, tag=''):
     animation = mpy.VideoClip(make_frame_3d, duration=duration)
     animation.write_videofile(filepath, fps=24, codec='libx264')
     return
+
+
+def huxt_streamline(model, carr_lon_src):
+    """
+    A function to compute a streamline in the HUXt solution. 
+    Requires that the model was run with the "save_full_v" flag
+    
+    The logic follows as:
+    # Input an initial longitude to follow, lon
+    # Release a partical at lon
+    # Advect.
+    # Release a new particle when Omega*Dt > longitude grid resolution
+    # Advect all particles and update location.
+    # Repeat til end of simulation
+    
+    model: a huxt instance with a computed solution in
+    lon_src: the longitude you want to follow at t=0 in the model solution
+    """
+    
+    #check that the full model output is available
+    assert(model.save_full_v == True)
+    
+    #work out the source longitude at t=0 from the given Carrington longitude
+    lon_src = H._zerototwopi_((carr_lon_src - model.cr_lon_init))*u.rad
+    
+    #adjust the source longitude for the spin-up time
+    lon_src = H._zerototwopi_(lon_src.to(u.rad).value - 2*np.pi*model.buffertime.to(u.s) 
+                                  / model.rotation_period)
+    
+    # Get grid values
+    r_grid = model.r.copy().to(u.km).value
+    v_grid = model.v_grid_full.copy().value
+    lon_sim = model.lon.value
+    time_grid = model.model_time.value
+    dlon = model.dlon.value
+    T_rot = model.rotation_period.value 
+    
+    #check if it's a 1d solution
+    if model.nlon == 1:
+        lon_sim = np.array([lon_sim])
+    
+    
+    particle_r, particle_lons = trace_particles(r_grid, lon_sim, dlon,
+                                                time_grid, v_grid, T_rot, lon_src)
+    
+
+
+    # Set all particles stuck on the outer boundary to NaN.        
+    id_outer = particle_r > r_grid[-1] + 3*model.dr.to(u.km).value
+    particle_r[id_outer] = np.NaN
+    
+    
+    
+    
+    # Only return the longitudes with particles on
+    lon_grid = np.arange(dlon/2, 2*np.pi-dlon/2+0.01, dlon)
+    n_lon = len(particle_lons)
+    particle_r = particle_r[:, :n_lon]
+    
+    # Only return time steps for the output time (not the full time grid)
+    #find the common timesteps to within +/- 500 seconds
+    common, x_ind, y_ind  = np.intersect1d(np.rint(model.model_time/500),
+                                           np.rint(model.time_out/500),
+                                           return_indices=True)
+    particle_r = particle_r[x_ind,:]
+    # If you're getting a kernel restart, check that the length of particle_r is
+    # equal to nt. the tolerance of np.interect1d may need reducing if not.
+    assert(len(particle_r) == len(model.time_out))
+    
+    #add units back in
+    particle_r = (particle_r * u.km).to(u.solRad)
+    lon = lon_grid[particle_lons]
+    lon = lon *u.rad
+    
+    return particle_r, lon
+
+@jit(nopython=True)
+def trace_particles(r_grid, lon_sim, dlon, time_grid, v_grid, T_rot, lon_src):
+    
+    """
+    optimised function to track a single longitude through the HUXt solution
+    
+    used by huxt_streamline
+    """
+    
+    nt = len(time_grid)
+    #nlon = len(lon_grid)
+    
+    dt = time_grid[1]-time_grid[0]
+    lon_grid = np.arange(dlon/2, 2*np.pi-dlon/2+0.01, dlon)
+    nlon = len(lon_grid)
+    
+    id_lon = np.argmin(np.abs(lon_grid - lon_src))
+    
+    # work out how many rotations are present, including spin up
+    t_total = nt*dt
+    n_rots = int(np.floor(t_total/T_rot) + 1)
+    particle_r = np.NaN * np.zeros((nt, (nlon+1)*n_rots)) 
+    
+    # Initialise starting position of first particle
+    particle_r[0, 0] = r_grid[0]
+    particle_lons = [id_lon]
+    
+    lon_acc = 0 
+    omega = 2 * np.pi / T_rot
+    
+    # Loop through model time steps
+    for t_counter, t_out in enumerate(time_grid):
+        
+        # Loop through longitudes with particles on
+        for lon_counter, lon_p in enumerate(particle_lons):
+           
+            # Get the j index for creating a new particle if necessary.
+            lon_next = lon_counter + 1
+            
+            this_lon_present = False
+            if len(lon_sim)>1: #2d solution
+                if (np.abs(lon_sim - lon_grid[lon_p]) < 0.01).any():
+                    this_lon_present = True
+            else: #1d solution, single longiutde
+                if (np.abs(lon_sim - lon_grid[lon_p]) < 0.01):
+                    this_lon_present = True
+            
+            # check whether the longitude of the particle was simualted by HUXt
+            if this_lon_present: 
+
+                # Get the particles position
+                if t_counter == 0:
+                    r_p = r_grid[0]
+                else:
+                    r_p = particle_r[t_counter-1, lon_counter]
+                        
+                # get the model longitude that matches the grid longitude
+                id_mod = np.argmin(np.abs(lon_sim - lon_grid[lon_p]))
+                    
+                # interpolate the speed profile at the particles longitude and radius
+                v_p = np.interp(r_p, r_grid, v_grid[t_counter, :, id_mod])
+                # Advect particle position
+                r_n = r_p + dt*v_p
+                
+                # If particle still in model domain, save updated position, else, set at boundary.
+                if r_n <= r_grid[-1]:
+                    particle_r[t_counter, lon_counter] = r_n
+                else:
+                    particle_r[t_counter, lon_counter] = r_grid[-1]
+                
+                # Get the j index for creating a new particle if necessary.
+                lon_next = lon_counter + 1
+            else:
+                #print('uknown longitude')
+                particle_r[t_counter, lon_counter] = np.nan
+        
+        # Has initial longitude rotated into next longitude bin?
+        lon_acc = lon_acc + (omega * dt)
+        if lon_acc >= dlon:
+            # Add new particle 
+            # Get the new longitude index
+            id_lon = id_lon + 1
+            # Reset to zero if cross the 360-0 boundary
+            if id_lon > (nlon-1):
+                id_lon = 0 
+            # Update the longitude ids    
+            particle_lons.append(id_lon)
+            # Initialise the particle height at this time/longitude
+            particle_r[t_counter, lon_next] = r_grid[0]
+            # Reset the longitude accumulator
+            lon_acc = 0
+            
+        #add a particle at the innter boundary for plotting purposes
+        particle_r[t_counter,lon_counter+1] = r_grid[0]
+        
+        
+    return particle_r, particle_lons
+
+
+def trace_HCS(model, br_in):
+    
+    """
+    Function to trace HCS from given B(carrLon) and add tracks to model class
+    
+    used by add_bgrid
+    """
+    
+    #find the HCS crossings
+    Nlon = len(br_in)
+    HCS = np.zeros((Nlon,1))
+    for i in range(0, Nlon-1):
+        if (br_in[i] >= 0) & (br_in[i+1]<0):
+            #place the HCS crossing at 
+            HCS[i+1] = 1 #this will be neg to pos in time
+        elif (br_in[i] <= 0) & (br_in[i+1]>0):   
+            HCS[i+1] = -1 #this will be pos to neg in time
+            
+    #check the last value by wrapping arounf 0/2pi
+    if (br_in[Nlon-1] >= 0) & (br_in[0]<0):
+        #place the HCS crossing at 
+        HCS[0] = 1
+    elif (br_in[Nlon-1] <= 0) & (br_in[0]>0):   
+        HCS[0] = -1
+        
+    #track the streamlines from the given Carrington lontidues    
+    HCS_p2n_tracks = []
+    HCS_n2p_tracks = []
+    
+    dlon = model.dlon.value
+    lon_grid = np.arange(dlon/2, 2*np.pi-dlon/2+0.01, dlon)
+    
+    for i in range(0,Nlon):
+        if HCS[i] == 1:
+            carr_lon = lon_grid[i]*u.rad
+            r, l = huxt_streamline(model, carr_lon)
+            #HCS is placed at the r grid immedaitely before the polarity reversal. move it to the interface
+            #l = l + dlon/2
+            HCS_p2n_tracks.append((r,l))
+        elif HCS[i] == -1:
+            carr_lon = lon_grid[i]*u.rad
+            r, l = huxt_streamline(model, carr_lon)
+            #l = l + dlon/2
+            HCS_n2p_tracks.append((r,l))
+    
+    #add the HCS crossings to the model class        
+    model.HCS_n2p = HCS_n2p_tracks
+    model.HCS_p2n = HCS_p2n_tracks
+    
+    return 1
+
+def add_bgrid(model, br_in):
+    """
+    Input: Solved HUXt model class and Br at inner boundary in Carrington longitude
+    
+    First traces HCS postion and adds solutions to model class. Requires HUXt
+    to output the full v field (i.e. solved with save_full_v == True)
+    
+    Then generates the associated b_grid
+    
+    """
+    
+    #trace the HCS positions
+    trace_HCS(model, br_in)
+    
+    #create the full longitude grid
+    dlon = model.dlon.value
+    lon_grid = np.arange(dlon/2, 2*np.pi-dlon/2+0.01, dlon)*u.rad
+    
+    # Rotate the boundary condition, as required by cr_lon_init.    
+    lon_boundary = lon_grid#model.lon   
+    lon_shifted = H._zerototwopi_((lon_boundary - model.cr_lon_init).value)
+    id_sort = np.argsort(lon_shifted)
+    lon_shifted = lon_shifted[id_sort]
+    br_shifted = br_in[id_sort]
+    br_boundary = np.interp(lon_boundary.value, lon_shifted, br_shifted, period=np.pi*2)
+    
+    #combined list
+    HCS_tracks = model.HCS_p2n + model.HCS_n2p
+    HCS_r_list = []
+    HCS_l_list = []
+    HCS_p_list = []
+    for i in range(0,len(HCS_tracks)):
+        r,l =  HCS_tracks[i]
+        HCS_r_list.append(r.value)
+        HCS_l_list.append(l.value)
+        # set the polarity flag
+        if i<len(model.HCS_p2n):
+            HCS_p_list.append(1)
+        else:
+            HCS_p_list.append(-1)
+        
+        
+    r_values = model.r.value  
+    time = model.time_out.value 
+    all_lons = lon_grid.value
+    T_rot = model.rotation_period.value
+    
+    lon_values = model.lon.value 
+    if model.nlon == 1:
+        lon_values = np.array([lon_values])
+    
+    # work out how many rotations are present, including spin up
+    time_grid = model.model_time.value
+    nt = len(time_grid)
+    dt = time_grid[1]-time_grid[0]
+    t_total = nt*dt
+    n_rots = int(np.floor(t_total/T_rot) + 1)
+    
+    model.b_grid =  bgrid_from_hcs_tracks(time, HCS_r_list, HCS_l_list, HCS_p_list, 
+                                           br_boundary, all_lons, lon_values, r_values,  
+                                           T_rot, n_rots) 
+    
+    return 1
+               
+
+@jit(nopython=True)                 
+def bgrid_from_hcs_tracks(time, HCS_r_list, HCS_l_list, HCS_p_list,
+                          br_boundary, all_lons, lon_values, r_values, T_rot, n_rots):
+    
+    """
+    optimised function to create a b-polarity grid from HCS tracks
+    
+    used by 
+    """
+   
+    nHCS = len(HCS_r_list)
+    nt = len(time)
+    nr = len(r_values)
+    nlon = len(lon_values)
+    
+
+    
+    
+    #produce b_grid from HCS crossings
+    b_grid = np.ones((nt,nr,nlon))
+    for t in range(0,nt):
+        
+        #rotate the Br_boundary
+        rot_total = 2*np.pi * time[t] / T_rot
+        
+        #rectify between 0 and 2pi
+        a = -np.floor_divide(rot_total, 2*np.pi)
+        rot = rot_total + (a *  2*np.pi)
+        
+        #compute this rotated longitude grid
+        lon_shifted = all_lons + rot
+        #rectify between 0 and 2pi
+        a = -np.floor_divide(lon_shifted, 2*np.pi)
+        lon_shifted = lon_shifted + (a *  2*np.pi)
+    
+        id_sort = np.argsort(lon_shifted)
+        lon_shifted = lon_shifted[id_sort]
+        br_shifted = br_boundary[id_sort]
+        br_rot = np.interp(lon_values, lon_shifted, br_shifted)#, period=np.pi*2)
+
+        
+        for lon in range(0,nlon):
+            #use the footpoint polarity
+            b_grid[t,:,lon] = np.sign(br_rot[lon])
+            
+            #find which HCS are present at this longitude
+            HCS_thislon = np.ones((nHCS*n_rots,2)) * np.nan
+            HCS_counter = 0
+            for i in range(0,nHCS):
+                r = HCS_r_list[i]
+                l = HCS_l_list[i]
+                p = HCS_p_list[i]
+                #check if this HCS corsses the current longitude
+                #mask = (l == lon_values[lon])
+                mask = np.argwhere(l == lon_values[lon])
+                for j in range(0, mask.size):
+                    HCS_thislon[HCS_counter,0] = r[t,mask[j].item()]
+                    HCS_thislon[HCS_counter,1] = p
+                    #get rid of stuff at the outer bound
+                    if HCS_thislon[HCS_counter,0] >= r_values[-1]:
+                        HCS_thislon[HCS_counter,0] = np.nan
+                    HCS_counter = HCS_counter + 1
+
+    
+            #sort the HCS crossings into radial distance order
+            order = np.argsort(HCS_thislon[:,0])
+            HCS_thislon = HCS_thislon[order,:]
+            
+    
+            #if len(HCS_thislon_r) > 0:
+            innerR_index = 0
+            outerR_index = nr - 1
+            for j in range(0,nHCS*n_rots):
+                
+                if ~np.isnan(HCS_thislon[j,0]):
+                    #innerR = HCS_thislon[j]
+                    r_index = np.argmin(np.abs(HCS_thislon[j,0] - r_values))
+                    if HCS_thislon[j,1] > 0:
+                        b_grid[t, innerR_index:r_index, lon] = 1
+                        b_grid[t, r_index:outerR_index, lon] = -1
+                    else:
+                        b_grid[t, innerR_index:r_index, lon] = -1
+                        b_grid[t, r_index:outerR_index, lon] = 1
+                    #set this HCS as the new inner boundary
+                    innerR_index = r_index
+                    
+            # if there's no HCS at this long, use the previous polarity
+            # stops the polarity from flipping about due to small numerical errors at inner boundary
+            if np.isnan(HCS_thislon[:,0]).all():
+                if t > 0: #use the polarity from the previous timestep
+                    b_grid[t,:,lon] = b_grid[t-1,:,lon]
+                    
+                    
+                        
+    return b_grid
+
+
+@u.quantity_input(time=u.day)
+def plot_v_HCS(model, time):#,  save=False, tag='', fighandle=np.nan, axhandle=np.nan,
+         #minimalplot=False):
+    """
+    A wrapper for ha.plot which adds the traced HCS crossings to the velocity 
+    field    
+
+    """
+    fig, ax = plot(model, time)#,  save=save, tag=tag, fighandle=fighandle, 
+                      #axhandle=axhandle,  minimalplot=minimalplot)   
+    
+    id_t = np.argmin(np.abs(model.time_out - time))
+    #id_t_particle = np.argmin(np.abs(model.model_time -  model.time_out[id_t]))
+    for i in range(0, len(model.HCS_p2n)):
+        r,l =  model.HCS_p2n[i]
+        ax.plot(l, r[id_t, :], 'w')
+    for i in range(0, len(model.HCS_n2p)):
+        r,l =   model.HCS_n2p[i]
+        ax.plot(l, r[id_t, :], 'k') 
+        
+    return fig, ax
+
+
+@u.quantity_input(time=u.day)
+def plot_bpol(model, time, save=False, tag='', fighandle=np.nan, axhandle=np.nan,
+         minimalplot=False):
+    """
+    Make a contour plot on polar axis of the solar wind solution at a specific time.
+    :param model: An instance of the HUXt class with a completed solution.
+    :param time: Time to look up closet model time to (with an astropy.unit of time).
+    :param save: Boolean to determine if the figure is saved.
+    :param tag: String to append to the filename if saving the figure.
+    :param fighandle, axhandle: existing figure and axis handles if a subplot is to be made
+    :param minimalplot: removes colorbar, planets/spacecraft and labels
+    :return fig: Figure handle.
+    :return ax: Axes handle.
+    """
+
+    if (time < model.time_out.min()) | (time > (model.time_out.max())):
+        print("Error, input time outside span of model times. Defaulting to closest time")
+
+    id_t = np.argmin(np.abs(model.time_out - time))
+
+    # Get plotting data
+    lon_arr, dlon, nlon = H.longitude_grid()
+    lon, rad = np.meshgrid(lon_arr.value, model.r.value)
+    mymap = mpl.cm.PuOr
+    v_sub = model.b_grid[id_t, :, :].copy()
+    plotvmin = -1.1
+    plotvmax = 1.1
+    dv = 1
+    ylab = "Magnetic field polarity"
+    
+    # Insert into full array
+    if lon_arr.size != model.lon.size:
+        v = np.zeros((model.nr, nlon)) * np.NaN
+        if model.lon.size != 1:
+            for i, lo in enumerate(model.lon):
+                id_match = np.argwhere(lon_arr == lo)[0][0]
+                v[:, id_match] = v_sub[:, i]
+        else:
+            print('Warning: Trying to contour single radial solution will fail.')
+    else:
+        v = v_sub
+
+    # Pad out to fill the full 2pi of contouring
+    pad = lon[:, 0].reshape((lon.shape[0], 1)) + model.twopi
+    lon = np.concatenate((lon, pad), axis=1)
+    pad = rad[:, 0].reshape((rad.shape[0], 1))
+    rad = np.concatenate((rad, pad), axis=1)
+    pad = v[:, 0].reshape((v.shape[0], 1))
+    v = np.concatenate((v, pad), axis=1)
+
+    mymap.set_over('lightgrey')
+    mymap.set_under([0, 0, 0])
+    levels = np.arange(plotvmin, plotvmax + dv, dv)
+    
+    # if no fig and axis handles are given, create a new figure
+    if isinstance(fighandle, float):
+        fig, ax = plt.subplots(figsize=(10, 10), subplot_kw={"projection": "polar"})
+    else:
+        fig = fighandle
+        ax = axhandle
+        
+    cnt = ax.contourf(lon, rad, v, levels=levels, cmap=mymap, extend='both')
+
+    # Add on CME boundaries
+    cme_colors = ['r', 'c', 'm', 'y', 'deeppink', 'darkorange']
+    for j, cme in enumerate(model.cmes):
+        cid = np.mod(j, len(cme_colors))
+        cme_lons = cme.coords[id_t]['lon']
+        cme_r = cme.coords[id_t]['r'].to(u.solRad)
+        if np.any(np.isfinite(cme_r)):
+            # Pad out to close the profile.
+            cme_lons = np.append(cme_lons, cme_lons[0])
+            cme_r = np.append(cme_r, cme_r[0])
+            ax.plot(cme_lons, cme_r, '-', color=cme_colors[cid], linewidth=3)
+
+    ax.set_ylim(0, model.r.value.max())
+    ax.set_yticklabels([])
+    ax.set_xticklabels([])
+    
+    if not minimalplot:
+        # Add on observers 
+        for body, style in zip(['EARTH', 'VENUS', 'MERCURY', 'STA', 'STB'], ['co', 'mo', 'ko', 'rs', 'y^']):
+            obs = model.get_observer(body)
+            deltalon = 0.0*u.rad
+            if model.frame == 'sidereal':
+                earth_pos = model.get_observer('EARTH')
+                deltalon = earth_pos.lon_hae[id_t] - earth_pos.lon_hae[0]
+                
+            obslon = H._zerototwopi_(obs.lon[id_t] + deltalon)
+            ax.plot(obslon, obs.r[id_t], style, markersize=16, label=body)
+    
+        # Add on a legend.
+        fig.legend(ncol=5, loc='lower center', frameon=False, handletextpad=0.2, columnspacing=1.0)
+        
+        ax.patch.set_facecolor('slategrey')
+        fig.subplots_adjust(left=0.05, bottom=0.16, right=0.95, top=0.99)
+    
+        # Add color bar
+        pos = ax.get_position()
+        dw = 0.005
+        dh = 0.045
+        left = pos.x0 + dw
+        bottom = pos.y0 - dh
+        wid = pos.width - 2 * dw
+        cbaxes = fig.add_axes([left, bottom, wid, 0.03])
+        cbar1 = fig.colorbar(cnt, cax=cbaxes, orientation='horizontal')
+        cbar1.set_label(ylab)
+        cbar1.set_ticks(np.arange(plotvmin, plotvmax, 1))
+    
+        # Add label
+        label = "   Time: {:3.2f} days".format(model.time_out[id_t].to(u.day).value)
+        label = label + '\n ' + (model.time_init + time).strftime('%Y-%m-%d %H:%M')
+        fig.text(0.70, pos.y0, label, fontsize=16)
+        
+        label = "HUXt2D"
+        fig.text(0.175, pos.y0, label, fontsize=16)
+
+    if save:
+        cr_num = np.int32(model.cr_num.value)
+        filename = "HUXt_CR{:03d}_{}_frame_{:03d}.png".format(cr_num, tag, id_t)
+        filepath = os.path.join(model._figure_dir_, filename)
+        fig.savefig(filepath)
+
+    return fig, ax
+
+    
+def animate_hcs(model, tag):
+    """
+    Animate the model solution with HCS, and save as an MP4.
+    :param model: An instance of the HUXt class with a completed solution.
+    :param tag: String to append to the filename of the animation.
+    """
+
+    # Set the duration of the movie
+    # Scaled so a 5 day simulation with dt_scale=4 is a 10 second movie.
+    duration = model.simtime.value * (10 / 432000)
+    
+    def make_frame(t):
+        """
+        Produce the frame required by MoviePy.VideoClip.
+        :param t: time through the movie
+        """
+        # Get the time index closest to this fraction of movie duration
+        i = np.int32((model.nt_out - 1) * t / duration)
+        
+        fig, ax = plot_v_HCS(model, model.time_out[i])    
+        
+        frame = mplfig_to_npimage(fig)
+        plt.close('all')
+        return frame
+    
+    cr_num = np.int32(model.cr_num.value)
+    filename = "HUXt_CR{:03d}_{}_movie.mp4".format(cr_num, tag)
+    filepath = os.path.join(model._figure_dir_, filename)
+    animation = mpy.VideoClip(make_frame, duration=duration)
+    animation.write_videofile(filepath, fps=24, codec='libx264')
