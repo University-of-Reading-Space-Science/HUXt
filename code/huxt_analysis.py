@@ -20,7 +20,7 @@ mpl.rc("legend", fontsize=16)
 
 @u.quantity_input(time=u.day)
 def plot(model, time, save=False, tag='', fighandle=np.nan, axhandle=np.nan,
-         minimalplot=False):
+         minimalplot=False, fieldlines = [], plotHCS=True):
     """
     Make a contour plot on polar axis of the solar wind solution at a specific time.
     :param model: An instance of the HUXt class with a completed solution.
@@ -135,6 +135,21 @@ def plot(model, time, save=False, tag='', fighandle=np.nan, axhandle=np.nan,
         label = "HUXt2D"
         fig.text(0.175, pos.y0, label, fontsize=16)
 
+    
+        #plot any provided fieldlines
+        for i in range(0, len(fieldlines)):
+            r, lon = fieldlines[i]
+            ax.plot(lon, r[id_t, :], 'k') 
+        
+        #plot any HCS that have been traced
+        if plotHCS and (hasattr(model, 'HCS_p2n') or hasattr(model, 'HCS_n2p')):
+            for i in range(0, len(model.HCS_p2n)):
+                r,l =  model.HCS_p2n[i]
+                ax.plot(l, r[id_t, :], 'w')
+            for i in range(0, len(model.HCS_n2p)):
+                r,l =   model.HCS_n2p[i]
+                ax.plot(l, r[id_t, :], 'k') 
+
     if save:
         cr_num = np.int32(model.cr_num.value)
         filename = "HUXt_CR{:03d}_{}_frame_{:03d}.png".format(cr_num, tag, id_t)
@@ -144,7 +159,7 @@ def plot(model, time, save=False, tag='', fighandle=np.nan, axhandle=np.nan,
     return fig, ax
 
 
-def animate(model, tag):
+def animate(model, tag, fieldlines = [], plotHCS=True):
     """
     Animate the model solution, and save as an MP4.
     :param model: An instance of the HUXt class with a completed solution.
@@ -162,7 +177,8 @@ def animate(model, tag):
         """
         # Get the time index closest to this fraction of movie duration
         i = np.int32((model.nt_out - 1) * t / duration)
-        fig, ax = plot(model, model.time_out[i])
+        fig, ax = plot(model, model.time_out[i],
+                       fieldlines=fieldlines, plotHCS=plotHCS)
         frame = mplfig_to_npimage(fig)
         plt.close('all')
         return frame
@@ -892,32 +908,32 @@ def bgrid_from_hcs_tracks(time, HCS_r_list, HCS_l_list, HCS_p_list,
     return b_grid
 
 
-@u.quantity_input(time=u.day)
-def plot_v_HCS(model, time):#,  save=False, tag='', fighandle=np.nan, axhandle=np.nan,
-         #minimalplot=False):
-    """
-    A wrapper for ha.plot which adds the traced HCS crossings to the velocity 
-    field    
+# @u.quantity_input(time=u.day)
+# def plot_v_HCS(model, time):#,  save=False, tag='', fighandle=np.nan, axhandle=np.nan,
+#          #minimalplot=False):
+#     """
+#     A wrapper for ha.plot which adds the traced HCS crossings to the velocity 
+#     field    
 
-    """
-    fig, ax = plot(model, time)#,  save=save, tag=tag, fighandle=fighandle, 
-                      #axhandle=axhandle,  minimalplot=minimalplot)   
+#     """
+#     fig, ax = plot(model, time)#,  save=save, tag=tag, fighandle=fighandle, 
+#                       #axhandle=axhandle,  minimalplot=minimalplot)   
     
-    id_t = np.argmin(np.abs(model.time_out - time))
-    #id_t_particle = np.argmin(np.abs(model.model_time -  model.time_out[id_t]))
-    for i in range(0, len(model.HCS_p2n)):
-        r,l =  model.HCS_p2n[i]
-        ax.plot(l, r[id_t, :], 'w')
-    for i in range(0, len(model.HCS_n2p)):
-        r,l =   model.HCS_n2p[i]
-        ax.plot(l, r[id_t, :], 'k') 
+#     id_t = np.argmin(np.abs(model.time_out - time))
+#     #id_t_particle = np.argmin(np.abs(model.model_time -  model.time_out[id_t]))
+#     for i in range(0, len(model.HCS_p2n)):
+#         r,l =  model.HCS_p2n[i]
+#         ax.plot(l, r[id_t, :], 'w')
+#     for i in range(0, len(model.HCS_n2p)):
+#         r,l =   model.HCS_n2p[i]
+#         ax.plot(l, r[id_t, :], 'k') 
         
-    return fig, ax
+#     return fig, ax
 
 
 @u.quantity_input(time=u.day)
 def plot_bpol(model, time, save=False, tag='', fighandle=np.nan, axhandle=np.nan,
-         minimalplot=False):
+         minimalplot=False, fieldlines=[], plotHCS = True):
     """
     Make a contour plot on polar axis of the solar wind solution at a specific time.
     :param model: An instance of the HUXt class with a completed solution.
@@ -1031,6 +1047,20 @@ def plot_bpol(model, time, save=False, tag='', fighandle=np.nan, axhandle=np.nan
         
         label = "HUXt2D"
         fig.text(0.175, pos.y0, label, fontsize=16)
+        
+        #plot any provided fieldlines
+        for i in range(0, len(fieldlines)):
+            r, lon = fieldlines[i]
+            ax.plot(lon, r[id_t, :], 'k') 
+        
+        #plot any HCS that have been traced
+        if plotHCS and (hasattr(model, 'HCS_p2n') or hasattr(model, 'HCS_n2p')):
+            for i in range(0, len(model.HCS_p2n)):
+                r,l =  model.HCS_p2n[i]
+                ax.plot(l, r[id_t, :], 'w')
+            for i in range(0, len(model.HCS_n2p)):
+                r,l =   model.HCS_n2p[i]
+                ax.plot(l, r[id_t, :], 'k') 
 
     if save:
         cr_num = np.int32(model.cr_num.value)
@@ -1041,33 +1071,33 @@ def plot_bpol(model, time, save=False, tag='', fighandle=np.nan, axhandle=np.nan
     return fig, ax
 
     
-def animate_hcs(model, tag):
-    """
-    Animate the model solution with HCS, and save as an MP4.
-    :param model: An instance of the HUXt class with a completed solution.
-    :param tag: String to append to the filename of the animation.
-    """
+# def animate_hcs(model, tag):
+#     """
+#     Animate the model solution with HCS, and save as an MP4.
+#     :param model: An instance of the HUXt class with a completed solution.
+#     :param tag: String to append to the filename of the animation.
+#     """
 
-    # Set the duration of the movie
-    # Scaled so a 5 day simulation with dt_scale=4 is a 10 second movie.
-    duration = model.simtime.value * (10 / 432000)
+#     # Set the duration of the movie
+#     # Scaled so a 5 day simulation with dt_scale=4 is a 10 second movie.
+#     duration = model.simtime.value * (10 / 432000)
     
-    def make_frame(t):
-        """
-        Produce the frame required by MoviePy.VideoClip.
-        :param t: time through the movie
-        """
-        # Get the time index closest to this fraction of movie duration
-        i = np.int32((model.nt_out - 1) * t / duration)
+#     def make_frame(t):
+#         """
+#         Produce the frame required by MoviePy.VideoClip.
+#         :param t: time through the movie
+#         """
+#         # Get the time index closest to this fraction of movie duration
+#         i = np.int32((model.nt_out - 1) * t / duration)
         
-        fig, ax = plot_v_HCS(model, model.time_out[i])    
+#         fig, ax = plot_v_HCS(model, model.time_out[i])    
         
-        frame = mplfig_to_npimage(fig)
-        plt.close('all')
-        return frame
+#         frame = mplfig_to_npimage(fig)
+#         plt.close('all')
+#         return frame
     
-    cr_num = np.int32(model.cr_num.value)
-    filename = "HUXt_CR{:03d}_{}_movie.mp4".format(cr_num, tag)
-    filepath = os.path.join(model._figure_dir_, filename)
-    animation = mpy.VideoClip(make_frame, duration=duration)
-    animation.write_videofile(filepath, fps=24, codec='libx264')
+#     cr_num = np.int32(model.cr_num.value)
+#     filename = "HUXt_CR{:03d}_{}_movie.mp4".format(cr_num, tag)
+#     filepath = os.path.join(model._figure_dir_, filename)
+#     animation = mpy.VideoClip(make_frame, duration=duration)
+#     animation.write_videofile(filepath, fps=24, codec='libx264')
