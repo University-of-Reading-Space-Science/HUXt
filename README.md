@@ -15,7 +15,6 @@ Then the examples can be accessed through
 ```
 >>jupyter lab code/HUXt_example.ipynb
 ```
-Please note that after cloning or downloading ``HUXt``, users should update [``code/config.dat``](code/config.dat) so that ``root`` points to the local directory where HUXt is installed. Otherwise HUXt won't know the file locations for saving and loading figures and data.
 
 ## Usage
 Some examples of how to use HUXt can be found in [``HUXt_example.ipynb``](code/HUXt_example.ipynb).
