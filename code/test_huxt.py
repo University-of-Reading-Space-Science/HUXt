@@ -91,7 +91,7 @@ def test_time_dependent():
     # Check CME arrival time calculation
 
     # Get arrival stats of test CME
-    hit_test, t_arrive_test, t_transit_test, hit_lon_test, hit_id_test = cme_test.compute_arrival_at_body('Earth')
+    arrival_stats_test = cme_test.compute_arrival_at_body('Earth')
 
     # Load in reference CME arrival stats
     dirs = H._setup_dirs_()
@@ -99,19 +99,24 @@ def test_time_dependent():
     cme_ref = h5py.File(test_cme_path, 'r')
 
     hit_ref = cme_ref['hit'][()]
+    hit_id_ref = cme_ref['hit_id'][()]
     t_arrive_ref = Time(cme_ref['t_arrive'][()].decode("utf-8"), format='isot')
     t_transit_ref = cme_ref['t_transit'][()] * u.Unit(cme_ref['t_transit'].attrs['unit'])
-    hit_lon_ref = cme_ref['hit_lon'][()] * u.Unit(cme_ref['hit_lon'].attrs['unit'])
-    hit_id_ref = cme_ref['hit_id'][()]
+    lon_ref = cme_ref['lon'][()] * u.Unit(cme_ref['lon'].attrs['unit'])
+    r_ref = cme_ref['r'][()] * u.Unit(cme_ref['r'].attrs['unit'])
+    v_ref = cme_ref['v'][()] * u.Unit(cme_ref['v'].attrs['unit'])
 
     cme_ref.close()
-    
+
     # Compare test and ref CME arrival stats
-    assert hit_test == hit_ref
-    assert np.allclose(t_arrive_test.jd, t_arrive_ref.jd)
-    assert np.allclose(t_transit_test, t_transit_ref)
-    assert np.allclose(hit_lon_test, hit_lon_ref)
-    assert hit_id_test == hit_id_ref
+    assert arrival_stats_test['hit'] == hit_ref
+    assert arrival_stats_test['hit_id'] == hit_id_ref
+    assert np.allclose(arrival_stats_test['t_arrive'].jd, t_arrive_ref.jd)
+    assert np.allclose(arrival_stats_test['t_transit'], t_transit_ref)
+    assert np.allclose(arrival_stats_test['lon'], lon_ref)
+    assert np.allclose(arrival_stats_test['r'], r_ref)
+    assert np.allclose(arrival_stats_test['v'], v_ref)
+
 
     return
     
