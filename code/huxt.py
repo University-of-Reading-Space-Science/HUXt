@@ -187,13 +187,16 @@ class ConeCME:
         self.frame = copy.copy(model.frame)
         
         # Pull out the particle field for this CME
-        cme_field = model.cme_particles[cme_id, :, :, :]
+        cme_r_field = model.cme_particles_r[cme_id, :, :, :]
+        cme_v_field = model.cme_particles_v[cme_id, :, :, :]
         
         # Setup dictionary to track this CME
         self.coords = {j: {'time': np.array([]), 'model_time': np.array([]) * u.s,
                            'front_id': np.array([]) * u.dimensionless_unscaled,
-                           'lon': np.array([]) * model.lon.unit, 'r': np.array([]) * model.r.unit,
-                           'lat': np.array([]) * model.latitude.unit} for j in range(model.nt_out)}
+                           'lon': np.array([]) * model.lon.unit,
+                           'r': np.array([]) * model.r.unit,
+                           'lat': np.array([]) * model.latitude.unit,
+                           'v': np.array([]) * model.v_grid.unit } for j in range(model.nt_out)}
         
         # Loop through timesteps, save out coords to coords dict
         for j, t in enumerate(model.time_out):
@@ -201,8 +204,11 @@ class ConeCME:
             self.coords[j]['model_time'] = t
             self.coords[j]['time'] = model.time_init + t
 
-            cme_r_front = cme_field[j, 0, :]
-            cme_r_back = cme_field[j, 1, :]
+            cme_r_front = cme_r_field[j, 0, :]
+            cme_r_back = cme_r_field[j, 1, :]
+            
+            cme_v_front = cme_v_field[j, 0, :]
+            cme_v_back = cme_v_field[j, 1, :]
             
             if np.any(np.isfinite(cme_r_front)) | np.any(np.isfinite(cme_r_back)):       
                 # Get longitudes and center on CME
@@ -217,6 +223,7 @@ class ConeCME:
                         
                     lons = np.hstack([lon, lon])
                     cme_r = np.hstack([cme_r_front, cme_r_back])
+                    cme_v = np.hstack([cme_v_front, cme_v_back])
                     front_id = np.hstack([1.0, 0.0])
                 else:
                     # Correct the wrap arounds at +/-pi
@@ -230,25 +237,32 @@ class ConeCME:
                     cme_r_front = cme_r_front[id_sort_inc]
                     cme_r_back = cme_r_back[id_sort_dec]
                     
+                    cme_v_front = cme_v_front[id_sort_inc]
+                    cme_v_back = cme_v_back[id_sort_dec]
+                    
                     lon_front = lon[id_sort_inc]
                     lon_back = lon[id_sort_dec]
                     
                     # Only keep good values
                     id_good = np.isfinite(cme_r_front)
                     cme_r_front = cme_r_front[id_good]
+                    cme_v_front = cme_v_front[id_good]
                     lon_front = lon_front[id_good]
                     
                     id_good = np.isfinite(cme_r_back)
                     cme_r_back = cme_r_back[id_good]
+                    cme_v_back = cme_v_back[id_good]
                     lon_back = lon_back[id_good]
                                         
                     # Get one array of longitudes and radii from the front and back particles
                     lons = np.hstack([lon_front, lon_back])
                     cme_r = np.hstack([cme_r_front, cme_r_back])
+                    cme_v = np.hstack([cme_v_front, cme_v_back])
                     front_id = np.hstack([np.ones(cme_r_front.shape), np.zeros(cme_r_back.shape)])
                 
                 #Save to dict
                 self.coords[j]['r'] = (cme_r * u.km).to(u.solRad)
+                self.coords[j]['v'] = cme_v * (u.km/u.s)
                 self.coords[j]['lon'] = lons + self.longitude
                 self.coords[j]['front_id'] = front_id*u.dimensionless_unscaled
                 self.coords[j]['lat'] = model.latitude.copy()
@@ -259,6 +273,9 @@ class ConeCME:
         Compute the arrival of the CME at a solar system body. Available bodies are those accepted by the 
         observer class, Mercury, Venus, Earth, STA, and STB. Takes account of differences between synodic 
         and sidereal frames
+        :param body_name: A string body name as accepted by the Observer class, including Mercury, Venus, Earth, STA and STB
+        :returns arrival_stats: A dictionary of the arrival stats of the CME, with keys hit, hit_id, t_arrive, t_transit,
+                                lon, r and v.
         """
     
         # Get body ephemeris
@@ -288,6 +305,7 @@ class ConeCME:
         hit = False
         t_front = []
         r_front = []
+        v_front = []
         # Loop through coords at each timestep
         for i, coord in self.coords.items():
 
@@ -296,9 +314,11 @@ class ConeCME:
 
             # Get lon and radial coords of the CME front only.
             r_cme = coord['r']
+            v_cme = coord['v']
             lon_cme = coord['lon']
             front_id = coord['front_id'] == 1.0
             r_cme = r_cme[front_id]
+            v_cme = v_cme[front_id]
             lon_cme = lon_cme[front_id] - self.longitude
 
             # If there are any CME front coords, then work out pos.
@@ -308,9 +328,11 @@ class ConeCME:
                 if len(lon_cme) > 1:
                     # Lookup cme front radial coord along body longitude
                     r_interp = np.interp(arrive_lon[i], lon_cme, r_cme, left=np.NaN, right=np.NaN)
+                    v_interp = np.interp(arrive_lon[i], lon_cme, v_cme, left=np.NaN, right=np.NaN)
                     if np.isfinite(r_interp):
                         t_front.append(coord['time'].jd)
                         r_front.append(r_interp)
+                        v_front.append(v_interp.value)
                     else:
                         continue
                         
@@ -322,6 +344,7 @@ class ConeCME:
                     if np.isclose(arrive_lon[i], lon_cme, atol=1.5*u.deg):
                         t_front.append(coord['time'].jd)
                         r_front.append(r_cme[0])
+                        v_front.append(v_cme[0].value)
                     else:
                         continue
 
@@ -332,20 +355,28 @@ class ConeCME:
                     hit_lon = arrive_lon[i] + self.longitude
                     hit_lon = _zerototwopi_(hit_lon)*u.rad
                     hit_rad = arrive_rad[i]
+                    
                     # Interpolate the arrival time and transit time
                     # from radial coords before and after body radius
                     t_arrive = np.interp(arrive_rad[i], r_front, t_front)
                     t_transit = (t_arrive - t_front[0])*u.d
                     t_arrive = Time(t_arrive, format='jd')
+                    
+                    v_arrive = np.interp(arrive_rad[i], r_front, v_front)
+                    hit_v = v_arrive*u.km/u.s
                     break
                     
         if not hit:
+            hit_id = False
             t_arrive = Time("0000-01-01T00:00:00")
             t_transit = np.NaN*u.d
             hit_lon = np.NaN*u.deg
-            hit_id = False
+            hit_rad = np.NaN*u.solRad
+            hit_v = np.NaN*u.km/u.s
+            
+        arrival_stats = {'hit':hit, 'hit_id':hit_id, 't_arrive':t_arrive, 't_transit':t_transit, 'lon':hit_lon, 'r':hit_rad, 'v':hit_v}
 
-        return hit, t_arrive, t_transit, hit_lon, hit_id       
+        return arrival_stats     
         
         
 class HUXt:
@@ -737,7 +768,8 @@ class HUXt:
         # Solve the time series at each longitude
         # ======================================================================
         # Set up the test particle position field
-        self.cme_particles = np.zeros((n_cme, self.nt_out, 2, self.nlon)) * u.dimensionless_unscaled
+        self.cme_particles_r = np.zeros((n_cme, self.nt_out, 2, self.nlon)) * u.dimensionless_unscaled
+        self.cme_particles_v = np.zeros((n_cme, self.nt_out, 2, self.nlon)) * u.dimensionless_unscaled
             
         # Solve for the input time series
         for i in range(self.lon.size):
@@ -748,7 +780,7 @@ class HUXt:
                 
             #check whether the full grid needs saving
             if self.save_full_v:
-                v, cme_r_bounds, v_full = solve_radial_full(self.input_v_ts[:,i],
+                v, cme_r_bounds, cme_v_bounds, v_full = solve_radial_full(self.input_v_ts[:,i],
                                                self.input_iscme_ts[:,i],
                                                self.model_time, 
                                                self.rrel.value, lon_out,
@@ -756,14 +788,15 @@ class HUXt:
                 
                 self.v_grid_full[:, :, i] = v_full * self.kms
             else:
-                v, cme_r_bounds = solve_radial(self.input_v_ts[:,i],
+                v, cme_r_bounds, cme_v_bounds = solve_radial(self.input_v_ts[:,i],
                                                self.input_iscme_ts[:,i],
                                                self.model_time, 
                                                self.rrel.value, lon_out,
                                                self.model_params, n_cme)
             # Save the outputs
             self.v_grid[:, :, i] = v * self.kms
-            self.cme_particles[:, :, :, i] = cme_r_bounds * u.dimensionless_unscaled
+            self.cme_particles_r[:, :, :, i] = cme_r_bounds * u.dimensionless_unscaled
+            self.cme_particles_v[:, :, :, i] = cme_v_bounds * u.dimensionless_unscaled
             
         # Update CMEs positions by tracking through the solution.
         updated_cmes = []
@@ -831,7 +864,7 @@ class HUXt:
         # Loop over the attributes of model instance and save select keys/attributes.
         keys = ['cr_num', 'cr_lon_init', 'simtime', 'dt', 'v_max', 'r_accel', 'alpha',
                 'dt_scale', 'time_out', 'dt_out', 'r', 'dr', 'lon', 'dlon', 'r_grid', 'lon_grid',
-                'v_grid', 'latitude', 'v_boundary', '_v_boundary_init_', 'cme_particles', 'frame']
+                'v_grid', 'latitude', 'v_boundary', '_v_boundary_init_', 'cme_particles_r', 'cme_particles_v', 'frame']
         
         for k, v in self.__dict__.items():
 
@@ -1237,7 +1270,8 @@ def solve_radial(vinput, iscmeinput, model_time, rrel, lon, params,
    
     # Preallocate space for solutions
     v_grid = np.zeros((nt_out, nr)) 
-    cme_particles = np.zeros((n_cme, nt_out, 2))*np.nan
+    cme_particles_r = np.zeros((n_cme, nt_out, 2))*np.nan
+    cme_particles_v = np.zeros((n_cme, nt_out, 2))*np.nan
     
     # Check if CMEs need to be tracked.
     do_cme = 0
@@ -1253,6 +1287,7 @@ def solve_radial(vinput, iscmeinput, model_time, rrel, lon, params,
         if t == 0:
             v = np.ones(nr) * 400
             r_cmeparticles = np.ones((n_cme, 2))*np.nan
+            v_cmeparticles = np.ones((n_cme, 2))*np.nan
             
         # Update the inner boundary conditions
         v[0] = vinput[t]
@@ -1268,10 +1303,12 @@ def solve_radial(vinput, iscmeinput, model_time, rrel, lon, params,
                         # If the leading edge test particle doesn't exist, add it
                         if np.isnan(r_cmeparticles[thiscme, 0]):
                             r_cmeparticles[thiscme, 0] = r_boundary
+                            v_cmeparticles[thiscme, 0] = v[0]
                             
                         # Hold the CME trailing edge test particle at the inner boundary
                         # Until if condition breaks
                         r_cmeparticles[thiscme, 1] = r_boundary
+                        v_cmeparticles[thiscme, 1] = v[0]
 
         # Update all fields for the given longitude
         u_up = v[1:].copy()
@@ -1291,7 +1328,8 @@ def solve_radial(vinput, iscmeinput, model_time, rrel, lon, params,
                         v_test = np.interp(r_cmeparticles[n, bound] - dr/2, rgrid, v)
                         # Advance the test particle
                         r_cmeparticles[n, bound] = (r_cmeparticles[n, bound] + v_test * dt)
-                            
+                        v_cmeparticles[n, bound] = v_test
+                        
                 if r_cmeparticles[n, 0] > rgrid[-1]:
                     # If the leading edge is past the outer boundary, put it at the outer boundary
                     r_cmeparticles[n, 0] = rgrid[-1]
@@ -1306,11 +1344,13 @@ def solve_radial(vinput, iscmeinput, model_time, rrel, lon, params,
             if iter_count == dt_scale:
                 if t_out <= nt_out - 1:
                     v_grid[t_out, :] = v.copy()
-                    cme_particles[:, t_out, :] = r_cmeparticles.copy()
+                    cme_particles_r[:, t_out, :] = r_cmeparticles.copy()
+                    cme_particles_v[:, t_out, :] = v_cmeparticles.copy()
                     t_out = t_out + 1
                     iter_count = 0
     
-    return v_grid, cme_particles
+    return v_grid, cme_particles_r, cme_particles_v
+
 
 @jit(nopython=True)
 def solve_radial_full(vinput, iscmeinput, model_time, rrel, lon, params, 
@@ -1349,7 +1389,8 @@ def solve_radial_full(vinput, iscmeinput, model_time, rrel, lon, params,
     # Preallocate space for solutions
     v_grid = np.zeros((nt_out, nr)) 
     v_grid_full = np.zeros((len(model_time), nr)) 
-    cme_particles = np.zeros((n_cme, nt_out, 2))*np.nan
+    cme_particles_r = np.zeros((n_cme, nt_out, 2))*np.nan
+    cme_particles_v = np.zeros((n_cme, nt_out, 2))*np.nan
     
     # Check if CMEs need to be tracked.
     do_cme = 0
@@ -1365,6 +1406,7 @@ def solve_radial_full(vinput, iscmeinput, model_time, rrel, lon, params,
         if t == 0:
             v = np.ones(nr) * 400
             r_cmeparticles = np.ones((n_cme, 2))*np.nan
+            v_cmeparticles = np.ones((n_cme, 2))*np.nan
             
         # Update the inner boundary conditions
         v[0] = vinput[t]
@@ -1380,10 +1422,12 @@ def solve_radial_full(vinput, iscmeinput, model_time, rrel, lon, params,
                         # If the leading edge test particle doesn't exist, add it
                         if np.isnan(r_cmeparticles[thiscme, 0]):
                             r_cmeparticles[thiscme, 0] = r_boundary
+                            v_cmeparticles[thiscme, 0] = v[0]
                             
                         # Hold the CME trailing edge test particle at the inner boundary
                         # Until if condition breaks
                         r_cmeparticles[thiscme, 1] = r_boundary
+                        v_cmeparticles[thiscme, 1] = v[0]
 
         # Update all fields for the given longitude
         u_up = v[1:].copy()
@@ -1403,7 +1447,8 @@ def solve_radial_full(vinput, iscmeinput, model_time, rrel, lon, params,
                         v_test = np.interp(r_cmeparticles[n, bound] - dr/2, rgrid, v)
                         # Advance the test particle
                         r_cmeparticles[n, bound] = (r_cmeparticles[n, bound] + v_test * dt)
-                            
+                        v_cmeparticles[n, bound] = v_test
+                        
                 if r_cmeparticles[n, 0] > rgrid[-1]:
                     # If the leading edge is past the outer boundary, put it at the outer boundary
                     r_cmeparticles[n, 0] = rgrid[-1]
@@ -1418,13 +1463,15 @@ def solve_radial_full(vinput, iscmeinput, model_time, rrel, lon, params,
             if iter_count == dt_scale:
                 if t_out <= nt_out - 1:
                     v_grid[t_out, :] = v.copy()
-                    cme_particles[:, t_out, :] = r_cmeparticles.copy()
+                    cme_particles_r[:, t_out, :] = r_cmeparticles.copy()
+                    cme_particles_v[:, t_out, :] = v_cmeparticles.copy()
                     t_out = t_out + 1
                     iter_count = 0
                     
         v_grid_full[t, :] = v.copy()
         
-    return v_grid, cme_particles, v_grid_full
+    return v_grid, cme_particles_r, cme_particles_v, v_grid_full
+
 
 @jit(nopython=True)
 def add_cmes_to_input_series(vinput, model_time, lon, r_boundary, 
@@ -1471,6 +1518,7 @@ def add_cmes_to_input_series(vinput, model_time, lon, r_boundary,
                 
 
     return v, isincme
+
 
 @jit(nopython=True)
 def _upwind_step_(v_up, v_dn, dtdr, alpha, r_accel, rrel):
@@ -1606,7 +1654,8 @@ def load_HUXt_run(filepath):
         model.nlon = nlon
 
         model.v_grid = data['v_grid'][()] * u.Unit(data['v_boundary'].attrs['unit'])
-        model.cme_particles = data['cme_particles'][()] 
+        model.cme_particles_r = data['cme_particles_r'][()] 
+        model.cme_particles_v = data['cme_particles_v'][()] 
         
         # Create list of the ConeCMEs
         cme_list = []
@@ -1626,9 +1675,12 @@ def load_HUXt_run(filepath):
             # Now sort out coordinates.
             # Use the same dictionary structure as defined in ConeCME._track_
             coords_group = cme_data['coords']
-            coords_data = {j: {'time': np.array([]), 'model_time': np.array([]) * u.s,
-                               'lon': np.array([]) * model.lon.unit, 'r': np.array([]) * u.km,
-                               'lat': np.array([]) * u.rad}
+            coords_data = {j: {'time': np.array([]),
+                               'model_time': np.array([]) * u.s,
+                               'lon': np.array([]) * model.lon.unit,
+                               'r': np.array([]) * u.km,
+                               'lat': np.array([]) * u.rad,
+                               'v': np.array([])*u.km/u.s }
                            for j in range(len(coords_group))}
 
             for time_key, pos in coords_group.items():
@@ -1639,6 +1691,7 @@ def load_HUXt_run(filepath):
                 coords_data[t]['model_time'] = pos['model_time'][()] * u.Unit(pos['model_time'].attrs['unit'])
                 coords_data[t]['lon'] = pos['lon'][()] * u.Unit(pos['lon'].attrs['unit'])
                 coords_data[t]['r'] = pos['r'][()] * u.Unit(pos['r'].attrs['unit'])
+                coords_data[t]['v'] = pos['v'][()] * u.Unit(pos['v'].attrs['unit'])
                 coords_data[t]['lat'] = pos['lat'][()] * u.Unit(pos['lat'].attrs['unit'])
                 coords_data[t]['front_id'] = pos['front_id'][()] * u.Unit(pos['front_id'].attrs['unit'])
 

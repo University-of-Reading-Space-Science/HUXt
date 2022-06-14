@@ -13,6 +13,8 @@
 - Fixed `ConeCME.compute_arrival_at_body()` so that it also works with HUXt solutions for only one longitude coordinate. Now HUXt simulations along one, many, or all longitudes should return consistent CME arrival times. This requires a different approach to the method for multiple longitudes, and can result in small differences in the CME arrival time, of the order of the model timestep. However, this is much smaller than all other sources of uncertainty in this simulation and calculation.
 
 ## Additions
+- Now `ConeCME.compute_arrival_at_body()` returns the arrival statistics in a dictionary rather than returning a tuple of parameters.
+- Updated HUXt and ConeCME classes so that the flow speed at cme tracer particle coordinates is also stored, and the arrival speed is returned by `ConeCME.compute_arrival_at_body()`.
 - A small test suite is included in "test_huxt.py", which runs under pytest. Currently includes tests against a simple analytic solution for a uniform boundary and against a time-dependent solution. In the time-dependent solution test, the solar wind speed solution and tracked ConeCME are checked for consistency with a reference simulation.
 - Checks on ConeCME inputs to exclude ConeCMEs with no overlap with a HUXt domain.
 - New `huxt_inputs/import_cone2bc_parameters` and `huxt_inputs/ConeFile_to_ConeCME_list()`functions to create ConeCME instances from the Cone files used to input Cone CMEs into the Enlil solar wind model.
