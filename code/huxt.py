@@ -435,7 +435,7 @@ class HUXt:
                  simtime=5.0 * u.day, dt_scale=1.0, frame='synodic',
                  input_v_ts=np.NaN * (u.km/u.s),
                  input_iscme_ts=np.NaN,
-                 save_full_v = False):
+                 save_full_v = False, track_cmes=True):
         """
         Initialise the HUXt model instance.
 
@@ -582,6 +582,8 @@ class HUXt:
 
         # Empty dictionary for storing the coordinates of CME boundaries.
         self.cmes = []
+
+        self.track_cmes = track_cmes # If true, cmes are tracked, which costs a little extra computation time
 
         # Numpy array of model parameters for parsing to external functions that use numba
         self.model_params = np.array([self.dtdr.value, self.alpha.value, self.r_accel.value,
@@ -799,12 +801,13 @@ class HUXt:
             self.cme_particles_v[:, :, :, i] = cme_v_bounds * u.dimensionless_unscaled
             
         # Update CMEs positions by tracking through the solution.
-        updated_cmes = []
-        for cme_num, cme in enumerate(self.cmes):
-            cme._track_(self, cme_num)
-            updated_cmes.append(cme)
+        if self.track_cmes == True:
+            updated_cmes = []
+            for cme_num, cme in enumerate(self.cmes):
+                cme._track_(self, cme_num)
+                updated_cmes.append(cme)
 
-        self.cmes = updated_cmes
+            self.cmes = updated_cmes
 
         if save:
             if tag == '':
