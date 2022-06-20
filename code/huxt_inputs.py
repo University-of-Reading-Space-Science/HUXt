@@ -649,7 +649,7 @@ def import_cone2bc_parameters(filename):
 def ConeFile_to_ConeCME_list(model, filepath):
     """
     A function to produce a list of ConeCMEs for input to HUXt derived from a cone2bc.in file, as is used with
-    to input Cone CMEs into Enlil
+    to input Cone CMEs into Enlil. Assumes CME height of 21.5 rS
     Args:
         model: A HUXt instance.
         filepath: The path to the relevant cone2bc.in file.
@@ -673,6 +673,9 @@ def ConeFile_to_ConeCME_list(model, filepath):
 
         # Get full angular width, cone2bc specifies angular half width under rmajor
         wid = 2 * cme_val['rmajor'] * u.deg
+        
+        # Set the initial height to be 21.5 rS, the default for WSA
+        iheight = 21.5*u.solRad
 
         # Thickness must be computed from CME cone initial radius and the xcld parameter,
         # which specifies the relative elongation of the cloud, 1=spherical,
@@ -682,7 +685,8 @@ def ConeFile_to_ConeCME_list(model, filepath):
         # Thickness determined from xcld and radius
         thick = (1.0 - cme_val['xcld']) * radius
 
-        cme = H.ConeCME(t_launch=dt_cme, longitude=lon, latitude=lat, width=wid, v=speed, thickness=thick)
+        cme = H.ConeCME(t_launch=dt_cme, longitude=lon, latitude=lat, 
+                        width=wid, v=speed, thickness=thick, initial_height = iheight)
         cme_list.append(cme)
 
     return cme_list

@@ -144,7 +144,8 @@ class ConeCME:
     @u.quantity_input(thickness=u.solRad)
     def __init__(self, t_launch=0.0 * u.s, longitude=0.0 * u.deg, latitude=0.0 * u.deg, v=1000.0 * (u.km / u.s),
                  width=30.0 * u.deg,
-                 thickness=5.0 * u.solRad):
+                 thickness=5.0 * u.solRad,
+                 initial_height = 30*u.solRad):
         """
         Set up a Cone CME with specified parameters.
         :param t_launch: Time of Cone CME launch, in seconds after the start of the simulation.
@@ -153,6 +154,7 @@ class ConeCME:
         :param v: CME nose speed in km/s.
         :param width: Angular width of the CME, in degrees.
         :param thickness: Thickness of the CME cone, in solar radii
+        :param initial_height: Height (in solRad) that corresponds to the launch time
         """
         self.t_launch = t_launch  # Time of CME launch, after the start of the simulation
         lon = _zerototwopi_(longitude.to(u.rad).value) * u.rad
@@ -160,7 +162,7 @@ class ConeCME:
         self.latitude = latitude.to(u.rad)  # Latitude launch direction of the CME
         self.v = v  # CME nose speed
         self.width = width  # Angular width
-        self.initial_height = 30.0 * u.solRad  # Initial height of CME (should match inner boundary of HUXt)
+        self.initial_height = initial_height  # Initial height of CME (should match inner boundary of HUXt)
         self.radius = self.initial_height * np.tan(self.width / 2.0)  # Initial radius of CME
         self.thickness = thickness  # Extra CME thickness
         self.coords = {}
@@ -537,9 +539,9 @@ class HUXt:
         
         # Determine CR number, used for spacecraft/planetary positions
         if np.isnan(cr_num):
-            print('No initiation time specified. Defaulting to 1977-9-27')
-            self.cr_num = 1659 * u.dimensionless_unscaled
-            cr_lon_init = 0.8*u.rad
+            print('No initiation time specified. Defaulting to start of CR2000, 20/2/2003')
+            self.cr_num = 2000 * u.dimensionless_unscaled
+            cr_lon_init = 0*u.rad
         else:
             self.cr_num = cr_num * u.dimensionless_unscaled 
             
