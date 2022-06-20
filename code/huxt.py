@@ -435,7 +435,7 @@ class HUXt:
                  simtime=5.0 * u.day, dt_scale=1.0, frame='synodic',
                  input_v_ts=np.NaN * (u.km/u.s),
                  input_iscme_ts=np.NaN,
-                 save_full_v = False):
+                 save_full_v = False, track_cmes=True):
         """
         Initialise the HUXt model instance.
 
@@ -583,6 +583,8 @@ class HUXt:
         # Empty dictionary for storing the coordinates of CME boundaries.
         self.cmes = []
 
+        self.track_cmes = track_cmes # If true, cmes are tracked, which costs a little extra computation time
+
         # Numpy array of model parameters for parsing to external functions that use numba
         self.model_params = np.array([self.dtdr.value, self.alpha.value, self.r_accel.value,
                                       self.dt_scale.value, self.nt_out, self.nr, self.nlon,
@@ -656,7 +658,6 @@ class HUXt:
         # Quality control the CME list. Check:
         # Only ConeCMEs in list
         # Make sidereal correction if necessary
-        # That ConeCME has overlap with HUXt domain, exclude if not
         cme_list_checked = []
         for cme in input_cme_list:
             
@@ -673,36 +674,9 @@ class HUXt:
                     cme_hae = np.interp(cme.t_launch.value, dt_t0.value, dlon_t0)
                     # adjust the CME HEEQ longitude accordingly
                     cme.longitude = _zerototwopi_(cme.longitude + cme_hae) * u.rad
-                
-                # Check CME overlaps with HUXt domain
-                cme_params = cme.parameter_array()
-                cme_params[0] = 0.0  # Set launch time to zero for ease
-                # Test model longitudes at time when widest part of CME advecting through boundary
-                # This is (radius + thickness/2)/v_cme
-                dt = (cme_params[6] + cme_params[7]/2.0) / cme_params[4]
-                # Get model inner boundary and latitude for calcs, and list for test results
-                r_bound = self.r[0].to(u.km).value
-                lat = self.latitude.to(u.rad).value
-                cme_in_domain = []
-                
-                if self.lon.size == 1:
-                    lon = self.lon.to(u.rad).value
-                    is_in_domain = _is_in_cme_boundary_(r_bound, lon, lat, dt, cme_params)
-                    cme_in_domain.append(is_in_domain)
-                else:
-                    # Loop round longitudes to find intersections
-                    for lon in self.lon.to(u.rad).value:
-                        # Set time step and cme launch time to zero, to force check for longitude boundary intersection
-                        is_in_domain = _is_in_cme_boundary_(r_bound, lon, lat, dt, cme_params)
-                        cme_in_domain.append(is_in_domain)
 
-                # If there is any overlap, append the CME list.
-                if np.any(cme_in_domain):
-                    # add the CME to the list
-                    cme_list_checked.append(cme)
-                else:
-                    print("Warning: ConeCME has no overlap with HUXt domain and was excluded")
-
+                # add the CME to the list
+                cme_list_checked.append(cme)
             else:
                 print("Warning: cme_list contained objects other than ConeCME instances. These were excluded")
 
@@ -799,12 +773,13 @@ class HUXt:
             self.cme_particles_v[:, :, :, i] = cme_v_bounds * u.dimensionless_unscaled
             
         # Update CMEs positions by tracking through the solution.
-        updated_cmes = []
-        for cme_num, cme in enumerate(self.cmes):
-            cme._track_(self, cme_num)
-            updated_cmes.append(cme)
+        if self.track_cmes == True:
+            updated_cmes = []
+            for cme_num, cme in enumerate(self.cmes):
+                cme._track_(self, cme_num)
+                updated_cmes.append(cme)
 
-        self.cmes = updated_cmes
+            self.cmes = updated_cmes
 
         if save:
             if tag == '':

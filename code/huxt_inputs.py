@@ -502,7 +502,7 @@ def get_WSA_maps(filepath):
     vr_lat_edges = np.arange(-np.pi / 2, np.pi / 2 + 0.00001, dgrid)
     vr_lat_centres = (vr_lat_edges[1:] + vr_lat_edges[:-1]) / 2
 
-    br_long_edges = np.arange(0, -2 * np.pi + 0.00001, dgrid)
+    br_long_edges = np.arange(0, 2 * np.pi + 0.00001, dgrid)
     br_long_centres = (br_long_edges[1:] + br_long_edges[:-1]) / 2
 
     br_lat_edges = np.arange(-np.pi / 2, np.pi / 2 + 0.00001, dgrid)
@@ -542,6 +542,37 @@ def get_WSA_maps(filepath):
     theta = theta * u.rad
 
     return vr_map, vr_lats, vr_longs, br_map, br_lats, br_longs, phi, theta, cr_num
+
+
+def get_WSA_long_profile(filepath, lat=0.0 * u.deg):
+    """
+    Function to read and process WSA output to provide a longitude profile at a specified latitude
+    of the solar wind speed for use as boundary conditions in HUXt.
+
+    Args:
+        filepath: A complete path to the WSA data file
+        lat: Latitude at which to extract the longitudinal profile, measure up from equator. Float with units of deg
+
+    Returns:
+        vr_in: Solar wind speed as a function of Carrington longitude at solar equator.
+               Interpolated to the default HUXt longitudinal grid. np.array (NDIM = 1) in units of km/s
+    """
+    assert (lat >= -90.0 * u.deg)
+    assert (lat <= 90.0 * u.deg)
+    assert(os.path.isfile(filepath))
+
+    vr_wsa, lat_wsa, lon_wsa, br_map, br_lats, br_longs, phi, theta, cr_num = get_WSA_maps(filepath)
+
+    # Extract the value at the given latitude
+    vr = np.zeros(lon_wsa.shape)
+    for i in range(lon_wsa.size):
+        vr[i] = np.interp(lat.to(u.rad).value, lat_wsa.to(u.rad).value, vr_wsa[:, i].value)
+
+    # Now interpolate on to the HUXt longitudinal grid
+    lon, dlon, nlon = H.longitude_grid(lon_start=0.0 * u.rad, lon_stop=2 * np.pi * u.rad)
+    vr_in = np.interp(lon.value, lon_wsa.value, vr) * u.km / u.s
+
+    return vr_in
 
 
 def datetime2huxtinputs(dt):
