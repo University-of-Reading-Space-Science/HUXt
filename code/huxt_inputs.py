@@ -691,7 +691,18 @@ def ConeFile_to_ConeCME_list(model, filepath):
 
     return cme_list
 
+def ConeFile_to_ConeCME_list_time(filepath, time):
+    """
+    Simple wrapper for ConeFile_to_ConeCME_list so that dummy model is not needed
+    """
+    cr, cr_lon_init = datetime2huxtinputs(time)
+    dummymodel = H.HUXt(v_boundary=np.ones(128)*400* (u.km/u.s), simtime=1*u.day, 
+                   cr_num= cr, cr_lon_init = cr_lon_init,
+                   lon_out=0.0*u.deg, r_min =21.5*u.solRad)
 
+    cme_list = ConeFile_to_ConeCME_list(dummymodel, filepath)
+    return cme_list
+    
 def get_time_dependent_boundary(vgrid_Carr, time_grid, starttime, simtime,
                        r_min = 215*u.solRad, r_max = 1290*u.solRad,
                        dt_scale = 100, latitude = 0*u.deg, 

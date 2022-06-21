@@ -696,6 +696,11 @@ class HUXt:
         else:
             cme_params = np.NaN * np.zeros((1, 9))
             
+        # do a sanity check the CME initial height is the same as teh model inner boundary
+        if len(self.cmes) >0:
+            for cme in self.cmes:
+                assert(self.r[0] == cme.initial_height)
+                
         # ======================================================================
         # Generate ambient solar wind time series
         # ======================================================================
