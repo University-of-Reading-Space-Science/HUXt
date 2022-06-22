@@ -1,13 +1,14 @@
 import os
 import urllib
 import ssl
-
 import astropy.units as u
 from astropy.io import fits
 from astropy.time import Time
+import pandas as pd
 import numpy as np
 import httplib2
 from pyhdf.SD import SD, SDC
+import scipy as scipy
 from scipy.io import netcdf
 from scipy import interpolate
 from sunpy.coordinates import sun
@@ -426,6 +427,7 @@ def get_PFSS_maps(filepath):
     A function to load, read and process PFSSpy output to provide HUXt boundary
     conditions as lat-long maps, along with angle from equator for the maps.
     Maps returned in native resolution, not HUXt resolution.
+    Maps are not transformed - make sure the PFSS maps are Carrington maps
 
     Args:
         filepath: String, The filepath for the PFSSpy .nc file
@@ -465,6 +467,7 @@ def get_WSA_maps(filepath):
     to provide HUXt boundary conditions as lat-long maps, along with angle from
     equator for the maps.
     Maps returned in native resolution, not HUXt resolution.
+    Maps are transformed to Carrington maps
 
     Args:
         filepath: String, The filepath for the PFSSpy .nc file
@@ -688,6 +691,14 @@ def ConeFile_to_ConeCME_list(model, filepath):
         cme = H.ConeCME(t_launch=dt_cme, longitude=lon, latitude=lat, 
                         width=wid, v=speed, thickness=thick, initial_height = iheight)
         cme_list.append(cme)
+        
+    #sort the CME list into chronoloigcal order
+    launch_times = np.ones(len(cme_list))
+    for i, cme in enumerate(cme_list):
+        launch_times[i] = cme.t_launch.value
+    id_sort = np.argsort(launch_times)
+    cme_list = [cme_list[i] for i in id_sort]
+        
 
     return cme_list
 
@@ -702,6 +713,70 @@ def ConeFile_to_ConeCME_list_time(filepath, time):
 
     cme_list = ConeFile_to_ConeCME_list(dummymodel, filepath)
     return cme_list
+
+
+
+
+def get_CorTom_vr_map(filepath):
+    """
+    A function to load, read and process CorTom density output to 
+    provide HUXt V boundary conditions as lat-long maps, 
+    Maps returned in native resolution, not HUXt resolution.
+    Maps are not transformed - make sure the CorTom maps are Carrington maps
+
+    Args:
+        filepath: String, The filepath for the CorTom.txt file
+
+    Returns:
+        vr_map: np.array, Solar wind speed as a Carrington longitude-latitude map. In km/s
+        vr_lats: np.array, The latitudes for the Vr map, in radians from trhe equator
+        vr_longs: np.array, The Carrington longitudes for the Vr map, in radians
+        phi: meshgrid og longitudes
+        theta: mesh grid of latitudes
+
+    """
+    
+    columns = ['carrlong', 'carrlat', 'eden']
+    den_df=pd.DataFrame()
+    den_df = pd.read_csv(filepath,  skiprows=2, names=columns)
+    
+    #apply a 180-degree long shift
+    den_df['carrlong']=den_df['carrlong']+180.0;
+    den_df.loc[den_df['carrlong']>360.0,'carrlong']=den_df['carrlong']-360.0
+        
+    #create a regular grid
+    xvals=np.linspace(180.0/128, 360.0-180.0/128, num=128)
+    yvals=np.linspace(-90+180.0/128, 90-180.0/128, num=65)
+    
+    #create a mesh using these new positions
+    X, Y = np.meshgrid(xvals,yvals)
+    
+    #interpolate the data. probably easiest to just use 2d arrays here. Set ML as forecast and OP as reference
+    griddata = scipy.interpolate.griddata((den_df['carrlong'],den_df['carrlat']), den_df['eden'], (X, Y), method='linear')
+    griddata=np.flipud(griddata)
+    
+    #convert to V
+    #dmax=np.max(griddata)
+    dmax = 20000.0
+    dmin = 4000.0
+    
+    vmin = 300.0
+    vmax = 680.0
+    
+    vgrid = griddata.copy()
+    vgrid[np.where(vgrid<dmin)]=dmin
+    vgrid[np.where(vgrid>dmax)]=dmax
+    vgrid=np.abs(vgrid-dmax)
+    
+    vgrid = vmin + (vmax-vmin)*((vgrid)/(dmax-dmin)) 
+    vgrid = vgrid *u.km/u.s
+    phi = X *np.pi/180 *u.rad
+    theta = Y *np.pi/180 *u.rad
+    
+    return vgrid, phi[0,:], theta[:,0], phi, theta
+
+
+
     
 def get_time_dependent_boundary(vgrid_Carr, time_grid, starttime, simtime,
                        r_min = 215*u.solRad, r_max = 1290*u.solRad,
