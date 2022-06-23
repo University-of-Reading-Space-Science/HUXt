@@ -461,6 +461,68 @@ def get_PFSS_maps(filepath):
     return vr_map, vr_lats, vr_longs, br_map, br_lats, br_longs, phi, theta
 
 
+
+def get_CorTom_vr_map(filepath):
+    """
+    A function to load, read and process CorTom density output to 
+    provide HUXt V boundary conditions as lat-long maps, 
+    Maps returned in native resolution, not HUXt resolution.
+    Maps are not transformed - make sure the CorTom maps are Carrington maps
+
+    Args:
+        filepath: String, The filepath for the CorTom.txt file
+
+    Returns:
+        vr_map: np.array, Solar wind speed as a Carrington longitude-latitude map. In km/s
+        vr_lats: np.array, The latitudes for the Vr map, in radians from trhe equator
+        vr_longs: np.array, The Carrington longitudes for the Vr map, in radians
+        phi: meshgrid og longitudes
+        theta: mesh grid of latitudes
+
+    """
+    
+    columns = ['carrlong', 'carrlat', 'eden']
+    den_df=pd.DataFrame()
+    den_df = pd.read_csv(filepath,  skiprows=2, names=columns)
+    
+    #apply a 180-degree long shift
+    den_df['carrlong']=den_df['carrlong']+180.0;
+    den_df.loc[den_df['carrlong']>360.0,'carrlong']=den_df['carrlong']-360.0
+        
+    #create a regular grid
+    xvals=np.linspace(180.0/128, 360.0-180.0/128, num=128)
+    yvals=np.linspace(-90+180.0/128, 90-180.0/128, num=65)
+    
+    #create a mesh using these new positions
+    X, Y = np.meshgrid(xvals,yvals)
+    
+    #interpolate the data. probably easiest to just use 2d arrays here. Set ML as forecast and OP as reference
+    griddata = scipy.interpolate.griddata((den_df['carrlong'],den_df['carrlat']), den_df['eden'], (X, Y), method='linear')
+    griddata=np.flipud(griddata)
+    
+    #convert to V
+    #dmax=np.max(griddata)
+    dmax = 20000.0
+    dmin = 4000.0
+    
+    vmin = 300.0
+    vmax = 680.0
+    
+    vgrid = griddata.copy()
+    vgrid[np.where(vgrid<dmin)]=dmin
+    vgrid[np.where(vgrid>dmax)]=dmax
+    vgrid=np.abs(vgrid-dmax)
+    
+    vgrid = vmin + (vmax-vmin)*((vgrid)/(dmax-dmin)) 
+    vgrid = vgrid *u.km/u.s
+    phi = X *np.pi/180 *u.rad
+    theta = Y *np.pi/180 *u.rad
+    
+    return vgrid, phi[0,:], theta[:,0], phi, theta
+
+
+
+
 def get_WSA_maps(filepath):
     """
     A function to load, read and process WSA FITS maps from the UK Met Office
@@ -713,68 +775,6 @@ def ConeFile_to_ConeCME_list_time(filepath, time):
 
     cme_list = ConeFile_to_ConeCME_list(dummymodel, filepath)
     return cme_list
-
-
-
-
-def get_CorTom_vr_map(filepath):
-    """
-    A function to load, read and process CorTom density output to 
-    provide HUXt V boundary conditions as lat-long maps, 
-    Maps returned in native resolution, not HUXt resolution.
-    Maps are not transformed - make sure the CorTom maps are Carrington maps
-
-    Args:
-        filepath: String, The filepath for the CorTom.txt file
-
-    Returns:
-        vr_map: np.array, Solar wind speed as a Carrington longitude-latitude map. In km/s
-        vr_lats: np.array, The latitudes for the Vr map, in radians from trhe equator
-        vr_longs: np.array, The Carrington longitudes for the Vr map, in radians
-        phi: meshgrid og longitudes
-        theta: mesh grid of latitudes
-
-    """
-    
-    columns = ['carrlong', 'carrlat', 'eden']
-    den_df=pd.DataFrame()
-    den_df = pd.read_csv(filepath,  skiprows=2, names=columns)
-    
-    #apply a 180-degree long shift
-    den_df['carrlong']=den_df['carrlong']+180.0;
-    den_df.loc[den_df['carrlong']>360.0,'carrlong']=den_df['carrlong']-360.0
-        
-    #create a regular grid
-    xvals=np.linspace(180.0/128, 360.0-180.0/128, num=128)
-    yvals=np.linspace(-90+180.0/128, 90-180.0/128, num=65)
-    
-    #create a mesh using these new positions
-    X, Y = np.meshgrid(xvals,yvals)
-    
-    #interpolate the data. probably easiest to just use 2d arrays here. Set ML as forecast and OP as reference
-    griddata = scipy.interpolate.griddata((den_df['carrlong'],den_df['carrlat']), den_df['eden'], (X, Y), method='linear')
-    griddata=np.flipud(griddata)
-    
-    #convert to V
-    #dmax=np.max(griddata)
-    dmax = 20000.0
-    dmin = 4000.0
-    
-    vmin = 300.0
-    vmax = 680.0
-    
-    vgrid = griddata.copy()
-    vgrid[np.where(vgrid<dmin)]=dmin
-    vgrid[np.where(vgrid>dmax)]=dmax
-    vgrid=np.abs(vgrid-dmax)
-    
-    vgrid = vmin + (vmax-vmin)*((vgrid)/(dmax-dmin)) 
-    vgrid = vgrid *u.km/u.s
-    phi = X *np.pi/180 *u.rad
-    theta = Y *np.pi/180 *u.rad
-    
-    return vgrid, phi[0,:], theta[:,0], phi, theta
-
 
 
     

@@ -435,8 +435,9 @@ class HUXt:
                  r_min=30 * u.solRad, r_max=240 * u.solRad,
                  lon_out=np.NaN * u.rad, lon_start=np.NaN * u.rad, lon_stop=np.NaN * u.rad,
                  simtime=5.0 * u.day, dt_scale=1.0, frame='synodic',
-                 input_v_ts=np.NaN * (u.km/u.s),
+                 input_v_ts=np.nan * (u.km/u.s),
                  input_iscme_ts=np.NaN,
+                 input_t_ts=np.nan *u.s,
                  save_full_v = False, track_cmes=True):
         """
         Initialise the HUXt model instance.
@@ -455,6 +456,7 @@ class HUXt:
         :param frame: string determining the rotation frame for the model
         :param input_v_ts: Time series of inner boundary conditions. For initialising HUXt with, for example, 
                            in-situ observations from L1. If used as keyword input argument, overrides v_boundary input.
+        :param input_t_ts: Times of input_v_ts in seconds, including spin up.
         :param input_iscme_ts: Boolean mask time series indicating what time steps correspond to CMEs in input_v_ts.
                                If used as keyword input argument, overrides ConeCMEs past to huxt.sovle().
         :param save_full_v: Boolean flag to determine if full v field (including spin up) is saved for post processing.
@@ -527,6 +529,7 @@ class HUXt:
             self.input_v_ts_flag = False
         else:
             self.input_v_ts = input_v_ts
+            self.model_time = input_t_ts
             self.input_v_ts_flag = True
         
         # CME flag boundary
@@ -615,7 +618,7 @@ class HUXt:
         # Variables to store the input conditions.
         self.input_v_ts = np.nan * np.ones((model_time.size,nlon))
         
-        # Loop through model longitudes and solve each radial profile.
+        # Loop through model longitudes and compute boundary conditions at each radial profile.
         for i in range(self.lon.size):
 
             if self.lon.size == 1:
