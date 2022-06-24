@@ -462,7 +462,7 @@ def get_PFSS_maps(filepath):
 
 
 
-def get_CorTom_vr_map(filepath):
+def get_CorTom_vr_map(filepath, convert_from_density = False):
     """
     A function to load, read and process CorTom density output to 
     provide HUXt V boundary conditions as lat-long maps, 
@@ -471,6 +471,7 @@ def get_CorTom_vr_map(filepath):
 
     Args:
         filepath: String, The filepath for the CorTom.txt file
+        convert_from_desnity : Old files were density, not speed. Use this flag to convert
 
     Returns:
         vr_map: np.array, Solar wind speed as a Carrington longitude-latitude map. In km/s
@@ -499,21 +500,24 @@ def get_CorTom_vr_map(filepath):
     #interpolate the data. probably easiest to just use 2d arrays here. Set ML as forecast and OP as reference
     griddata = scipy.interpolate.griddata((den_df['carrlong'],den_df['carrlat']), den_df['eden'], (X, Y), method='linear')
     griddata=np.flipud(griddata)
-    
-    #convert to V
-    #dmax=np.max(griddata)
-    dmax = 20000.0
-    dmin = 4000.0
-    
-    vmin = 300.0
-    vmax = 680.0
-    
     vgrid = griddata.copy()
-    vgrid[np.where(vgrid<dmin)]=dmin
-    vgrid[np.where(vgrid>dmax)]=dmax
-    vgrid=np.abs(vgrid-dmax)
     
-    vgrid = vmin + (vmax-vmin)*((vgrid)/(dmax-dmin)) 
+    if convert_from_density:
+        #convert to V
+        #dmax=np.max(griddata)
+        dmax = 20000.0
+        dmin = 4000.0
+        
+        vmin = 300.0
+        vmax = 680.0
+        
+        
+        vgrid[np.where(vgrid<dmin)]=dmin
+        vgrid[np.where(vgrid>dmax)]=dmax
+        vgrid=np.abs(vgrid-dmax)
+        
+        vgrid = vmin + (vmax-vmin)*((vgrid)/(dmax-dmin)) 
+        
     vgrid = vgrid *u.km/u.s
     phi = X *np.pi/180 *u.rad
     theta = Y *np.pi/180 *u.rad
@@ -778,9 +782,9 @@ def ConeFile_to_ConeCME_list_time(filepath, time):
 
 
     
-def get_time_dependent_boundary(vgrid_Carr, time_grid, starttime, simtime,
+def set_time_dependent_boundary(vgrid_Carr, time_grid, starttime, simtime,
                        r_min = 215*u.solRad, r_max = 1290*u.solRad,
-                       dt_scale = 100, latitude = 0*u.deg, 
+                       dt_scale = 50, latitude = 0*u.deg, 
                        frame = 'sidereal',
                        lon_start = 0*u.rad, lon_stop = 2*np.pi *u.rad):
     
@@ -807,7 +811,7 @@ def get_time_dependent_boundary(vgrid_Carr, time_grid, starttime, simtime,
                    frame = frame)
     
     #extract the values from the model class
-    buffertime = model.buffertime
+    buffertime = model.buffertime #standard buffer time seems insufficient
     simtime = model.simtime
     frame = model.frame
     dt = model.dt
@@ -837,6 +841,8 @@ def get_time_dependent_boundary(vgrid_Carr, time_grid, starttime, simtime,
         
         #find the nearest time to the current model time
         t_input = np.argmin(abs(time_grid - mjd))
+        if model_time[t] < 0: #spin up, use initiation time
+            t_input = np.argmin(abs(time_grid - time_init.mjd))
         
         #shift the longitude to match the initial model time
         dlon_from_start = 2*np.pi * u.rad * model_time[t] / rotation_period
@@ -848,6 +854,7 @@ def get_time_dependent_boundary(vgrid_Carr, time_grid, starttime, simtime,
         
         #take the vlong slice at this value
         v_boundary = vgrid_Carr[:, t_input]
+        v_boundary = vgrid_Carr[:, t_input]
         v_b_shifted = v_boundary[id_sort]
         #interpolate back to the original grid
         v_boundary = np.interp(all_lons.value, lon_shifted, v_b_shifted, period=2*np.pi)
@@ -855,9 +862,19 @@ def get_time_dependent_boundary(vgrid_Carr, time_grid, starttime, simtime,
         
     #fill the nan values
     mask = np.isnan(input_ambient_ts)
-    input_ambient_ts[mask] = 400
+    input_ambient_ts[mask] = 400   
+    
+    #set up the model class with these data initialised
+    model = H.HUXt(simtime = simtime,
+                   cr_num=cr, cr_lon_init=cr_lon_init,
+                   r_min = r_min, r_max = r_max,
+                   dt_scale = dt_scale, latitude = 0*u.deg, 
+                   frame = frame,
+                   lon_start = lon_start, lon_stop = lon_stop,
+                   input_v_ts = input_ambient_ts,
+                   input_t_ts = model_time)
      
-    return model_time, input_ambient_ts
+    return model
 
 
 def _zerototwopi_(angles):
