@@ -12,6 +12,10 @@ import scipy as scipy
 from scipy.io import netcdf
 from scipy import interpolate
 from sunpy.coordinates import sun
+from sunpy.net import Fido
+from sunpy.net import attrs as a
+from sunpy.timeseries import TimeSeries
+import datetime
 
 import huxt as H
 
@@ -865,7 +869,8 @@ def set_time_dependent_boundary(vgrid_Carr, time_grid, starttime, simtime,
     input_ambient_ts[mask] = 400   
     
     #set up the model class with these data initialised
-    model = H.HUXt(simtime = simtime,
+    model = H.HUXt(v_boundary=np.ones((128))*400*u.km/u.s,
+                   simtime = simtime,
                    cr_num=cr, cr_lon_init=cr_lon_init,
                    r_min = r_min, r_max = r_max,
                    dt_scale = dt_scale, latitude = 0*u.deg, 
@@ -891,3 +896,138 @@ def _zerototwopi_(angles):
     a = -np.floor_divide(angles_out, twopi)
     angles_out = angles_out + (a * twopi)
     return angles_out
+
+
+
+
+def generate_vCarr_from_OMNI(runstart, runend, nlon_grid = 128, dt = 1*u.day):
+    """
+    a function to downaload OMNI data and generate V_carr and time_grid
+    for use with set_time_dependent_boundary
+
+    Parameters
+    ----------
+    runstart : datetime
+    runend : datetime
+    nlon_grid : Int, 128 by default
+    dt : time resolution, in days is 1*u.day.
+
+    Returns
+    -------
+    Time as mjd
+    Vcarr as function of Carr long and time
+
+    """
+
+    
+    #download an additional 28 days either side
+    starttime = runstart - datetime.timedelta(days = 28)
+    endtime =  runend + datetime.timedelta(days = 28)
+    
+    # Download the 1hr OMNI data from CDAweb
+    trange = a.Time(starttime, endtime)
+    dataset = a.cdaweb.Dataset('OMNI2_H0_MRG1HR')
+    result = Fido.search(trange, dataset)
+    downloaded_files = Fido.fetch(result)
+    # print(downloaded_files)
+    
+    # # Import the OMNI data
+    omni = TimeSeries(downloaded_files, concatenate=True)
+    data = omni.to_dataframe()
+    
+    # # Set invalid data points to NaN
+    id_bad = data['V']==9999.0
+    data.loc[id_bad, 'V']=np.NaN
+    
+    #create a datetime column
+    data['datetime'] = data.index.to_pydatetime()
+    
+    # # Plot the V time series
+    # #import matplotlib.pyplot as plt
+    # #plt.plot(data['V'])
+    # #print(data)
+
+    #compute the syndoic rotation period
+    daysec = 24 * 60 * 60 * u.s
+    synodic_period = 27.2753 * daysec  # Solar Synodic rotation period from Earth.
+    omega_synodic = 2*np.pi *u.rad / synodic_period
+    
+    
+    # #find the period of interest
+    mask = ((data['datetime'] > starttime) &
+            (data['datetime'] < endtime))
+    OMNI = data[mask]
+    OMNI = OMNI.reset_index()
+    OMNI['Time'] = Time(OMNI['datetime'])
+    
+    smjd=OMNI['Time'][0].mjd
+    fmjd=OMNI['Time'][len(OMNI)-1].mjd 
+    
+    
+    #interpolate through OMNI V datagaps
+    OMNI_int = OMNI.interpolate(method='linear', axis=0).ffill().bfill()
+    del OMNI
+    
+    #compute carrington longitudes
+    cr = np.ones(len(OMNI_int))
+    cr_lon_init = np.ones(len(OMNI_int))*u.rad
+    for i in range(0,len(OMNI_int)):
+        cr[i], cr_lon_init[i] = datetime2huxtinputs(OMNI_int['datetime'][i])
+    OMNI_int['Carr_lon'] = cr_lon_init
+    
+    #create an MJD column
+    def to_mjd(a):
+        return a.mjd
+    temp = list(map(to_mjd, OMNI_int['Time'].array))
+    OMNI_int['mjd'] = temp
+    
+    
+    #comupte teh longitudinal and time grids
+    dphi_grid = 360/nlon_grid
+    lon_grid = np.arange(dphi_grid/2, 360.1-dphi_grid/2, dphi_grid) * np.pi/180 * u.rad
+    dt = dt.to(u.day).value
+    time_grid = np.arange(smjd,fmjd+dt/2,dt)
+    
+    
+    
+    vgrid_Carr_recon_back = np.ones((nlon_grid,len(time_grid)))*np.nan
+    vgrid_Carr_recon_forward = np.ones((nlon_grid,len(time_grid)))*np.nan
+    vgrid_Carr_recon_both = np.ones((nlon_grid,len(time_grid)))*np.nan
+    for t in range(0,len(time_grid)):
+        #find nearest time and current Carrington longitude
+        t_id = np.argmin(np.abs(OMNI_int['mjd'] - time_grid[t]))
+        Elong = OMNI_int['Carr_lon'][t_id]*u.rad
+        
+        #get the Carrington longitude difference from current Earth pos
+        dlong_back = _zerototwopi_(lon_grid.value - Elong.value) *u.rad
+        dlong_forward = _zerototwopi_(Elong.value- lon_grid.value) *u.rad
+        
+        dt_back = (dlong_back / (omega_synodic)).to(u.day)
+        dt_forward = (dlong_forward / (omega_synodic)).to(u.day)
+        
+        vgrid_Carr_recon_back[:,t] = np.interp(time_grid[t] - dt_back.value, 
+                                     OMNI_int['mjd'], 
+                                     OMNI_int['V'], left = np.nan, right = np.nan)
+        vgrid_Carr_recon_forward[:,t] = np.interp(time_grid[t] + dt_forward.value, 
+                                     OMNI_int['mjd'], 
+                                     OMNI_int['V'], left = np.nan, right = np.nan)
+        vgrid_Carr_recon_both[:,t] = (dt_forward * vgrid_Carr_recon_back[:,t] +
+                                 dt_back * vgrid_Carr_recon_forward[:,t])/(dt_forward + dt_back)
+        
+    #cut out the requested time
+    mask = ((time_grid >= Time(runstart).mjd) & (time_grid <= Time(runend).mjd))
+    
+    
+    # # Plot OMNI-based reconstructions - Carr long
+    # import matplotlib.pyplot as plt
+    # fig_solutions_linear = plt.figure() 
+    # loc='upper left'
+    
+    
+    # plt.pcolormesh(time_grid[mask], lon_edges.value*180/np.pi, vgrid_Carr_recon_both[:,mask], 
+    #               shading='flat', edgecolor = 'face', norm=plt.Normalize(300,800))
+    # plt.title('Corotation: Smoothing in t')
+    # plt.ylabel('Carr long [deg]')
+    # #ax.get_xaxis().set_ticklabels([])
+    
+    return time_grid[mask], vgrid_Carr_recon_both[:,mask]
