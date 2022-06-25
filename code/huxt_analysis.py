@@ -8,7 +8,10 @@ import moviepy.editor as mpy
 from moviepy.video.io.bindings import mplfig_to_npimage
 import numpy as np
 import pandas as pd
-from numba import jit, types, generated_jit
+from numba import jit
+from sunpy.net import Fido
+from sunpy.net import attrs as a
+from sunpy.timeseries import TimeSeries
 
 import huxt as H
 
@@ -408,6 +411,76 @@ def get_earth_timeseries(model):
                                            'lon':lon, 'vsw':speed, 'bpol':bpol})
     return earth_time_series
 
+def plot_earth_timeseries(model, plot_OMNI = True):
+    """
+    A function to plot the HUXt Earth time series. With optino to download and
+    plot OMNI data.
+
+    Parameters
+    ----------
+    model : input model class
+    plot_OMNI: Flag for downloading and plotting OMNI data
+
+    Returns
+    -------
+    fig : figure handle
+    axs : ax handles
+
+    """
+    
+    huxt_ts = get_earth_timeseries(model)
+    
+    # 2-panel plot if the B polarity has been traced
+    if hasattr(model, 'b_grid'):
+        fig, axs = plt.subplots(2,1, figsize=(14, 7))
+        axs[1].plot(huxt_ts['time'], np.sign(huxt_ts['bpol']), 'k.', label='HUXt')
+        axs[1].set_ylabel('B polarity')
+    else:
+        fig, axs = plt.subplots(1,1, figsize=(14, 7))
+        axs = np.array([axs])
+        
+    axs[0].plot(huxt_ts['time'], huxt_ts['vsw'], 'k', label='HUXt')
+    axs[0].set_ylim(250,1000)
+    
+    
+    if plot_OMNI:
+        starttime = huxt_ts['time'][0]
+        endtime =   huxt_ts['time'][len(huxt_ts)-1]
+        
+        # Download the 1hr OMNI data from CDAweb
+        trange = a.Time(starttime, endtime)
+        dataset = a.cdaweb.Dataset('OMNI2_H0_MRG1HR')
+        result = Fido.search(trange, dataset)
+        downloaded_files = Fido.fetch(result)
+        # print(downloaded_files)
+        
+        # # Import the OMNI data
+        omni = TimeSeries(downloaded_files, concatenate=True)
+        data = omni.to_dataframe()
+        
+        # # Set invalid data points to NaN
+        id_bad = data['V']==9999.0
+        data.loc[id_bad, 'V']=np.NaN
+        
+        #create a datetime column
+        data['datetime'] = data.index.to_pydatetime()
+        
+        mask = (data['datetime'] >= starttime) & (data['datetime'] <= endtime)
+        plotdata = data[mask]
+        axs[0].plot(plotdata['datetime'], plotdata['V'], 'r', label='OMNI')
+        
+        if hasattr(model, 'b_grid'):
+            axs[1].plot(plotdata['datetime'], -np.sign(plotdata['BX_GSE'])*0.92, 
+                        'r.', label='OMNI')
+            axs[1].legend()
+            axs[1].set_xlim(starttime, endtime)
+            axs[1].set_ylim(-1.1, 1.1)
+            
+    axs[0].legend()
+    axs[0].set_ylabel('Solar Wind Speed (km/s)')
+    axs[0].set_xlim(starttime, endtime)
+    
+    return fig, axs
 
 @u.quantity_input(time=u.day)
 def plot_3d_meridional(model3d, time, lon=np.NaN*u.deg, save=False, tag=''):
