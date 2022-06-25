@@ -20,7 +20,7 @@ mpl.rc("legend", fontsize=16)
 
 @u.quantity_input(time=u.day)
 def plot(model, time, save=False, tag='', fighandle=np.nan, axhandle=np.nan,
-         minimalplot=False, fieldlines = [], plotHCS=True):
+         minimalplot=False, streaklines = [], plotHCS=True):
     """
     Make a contour plot on polar axis of the solar wind solution at a specific time.
     :param model: An instance of the HUXt class with a completed solution.
@@ -136,9 +136,9 @@ def plot(model, time, save=False, tag='', fighandle=np.nan, axhandle=np.nan,
         fig.text(0.175, pos.y0, label, fontsize=16)
 
     
-        #plot any provided fieldlines
-        for i in range(0, len(fieldlines)):
-            r, lon = fieldlines[i]
+        #plot any provided streaklines
+        for i in range(0, len(streaklines)):
+            r, lon = streaklines[i]
             ax.plot(lon, r[id_t, :], 'k') 
         
         #plot any HCS that have been traced
@@ -159,7 +159,7 @@ def plot(model, time, save=False, tag='', fighandle=np.nan, axhandle=np.nan,
     return fig, ax
 
 
-def animate(model, tag, fieldlines = [], plotHCS=True):
+def animate(model, tag, streaklines=[], plotHCS=True):
     """
     Animate the model solution, and save as an MP4.
     :param model: An instance of the HUXt class with a completed solution.
@@ -178,7 +178,7 @@ def animate(model, tag, fieldlines = [], plotHCS=True):
         # Get the time index closest to this fraction of movie duration
         i = np.int32((model.nt_out - 1) * t / duration)
         fig, ax = plot(model, model.time_out[i],
-                       fieldlines=fieldlines, plotHCS=plotHCS)
+                       streaklines=streaklines, plotHCS=plotHCS)
         frame = mplfig_to_npimage(fig)
         plt.close('all')
         return frame
@@ -522,9 +522,9 @@ def animate_3d(model3d, lon=np.NaN*u.deg, tag=''):
     return
 
 
-def huxt_streamline(model, carr_lon_src):
+def huxt_streakline(model, carr_lon_src):
     """
-    A function to compute a streamline in the HUXt solution. 
+    A function to compute a streakline in the HUXt solution. 
     Requires that the model was run with the "save_full_v" flag
     
     The logic follows as:
@@ -560,20 +560,14 @@ def huxt_streamline(model, carr_lon_src):
     #check if it's a 1d solution
     if model.nlon == 1:
         lon_sim = np.array([lon_sim])
-    
-    
+
     particle_r, particle_lons = trace_particles(r_grid, lon_sim, dlon,
                                                 time_grid, v_grid, T_rot, lon_src)
-    
-
 
     # Set all particles stuck on the outer boundary to NaN.        
     id_outer = particle_r > r_grid[-1] + 3*model.dr.to(u.km).value
     particle_r[id_outer] = np.NaN
-    
-    
-    
-    
+
     # Only return the longitudes with particles on
     lon_grid = np.arange(dlon/2, 2*np.pi-dlon/2+0.01, dlon)
     n_lon = len(particle_lons)
@@ -602,12 +596,11 @@ def trace_particles(r_grid, lon_sim, dlon, time_grid, v_grid, T_rot, lon_src):
     """
     optimised function to track a single longitude through the HUXt solution
     
-    used by huxt_streamline
+    used by huxt_streakline
     """
     
     nt = len(time_grid)
-    #nlon = len(lon_grid)
-    
+
     dt = time_grid[1]-time_grid[0]
     lon_grid = np.arange(dlon/2, 2*np.pi-dlon/2+0.01, dlon)
     nlon = len(lon_grid)
@@ -690,8 +683,7 @@ def trace_particles(r_grid, lon_sim, dlon, time_grid, v_grid, T_rot, lon_src):
             
         #add a particle at the innter boundary for plotting purposes
         particle_r[t_counter,lon_counter+1] = r_grid[0]
-        
-        
+
     return particle_r, particle_lons
 
 
@@ -720,7 +712,7 @@ def trace_HCS(model, br_in):
     elif (br_in[Nlon-1] <= 0) & (br_in[0]>0):   
         HCS[0] = -1
         
-    #track the streamlines from the given Carrington lontidues    
+    #track the streaklines from the given Carrington lontidues    
     HCS_p2n_tracks = []
     HCS_n2p_tracks = []
     
@@ -730,13 +722,13 @@ def trace_HCS(model, br_in):
     for i in range(0,Nlon):
         if HCS[i] == 1:
             carr_lon = lon_grid[i]*u.rad
-            r, l = huxt_streamline(model, carr_lon)
+            r, l = huxt_streakline(model, carr_lon)
             #HCS is placed at the r grid immedaitely before the polarity reversal. move it to the interface
             #l = l + dlon/2
             HCS_p2n_tracks.append((r,l))
         elif HCS[i] == -1:
             carr_lon = lon_grid[i]*u.rad
-            r, l = huxt_streamline(model, carr_lon)
+            r, l = huxt_streakline(model, carr_lon)
             #l = l + dlon/2
             HCS_n2p_tracks.append((r,l))
     
@@ -933,7 +925,7 @@ def bgrid_from_hcs_tracks(time, HCS_r_list, HCS_l_list, HCS_p_list,
 
 @u.quantity_input(time=u.day)
 def plot_bpol(model, time, save=False, tag='', fighandle=np.nan, axhandle=np.nan,
-         minimalplot=False, fieldlines=[], plotHCS = True):
+         minimalplot=False, streaklines=[], plotHCS = True):
     """
     Make a contour plot on polar axis of the solar wind solution at a specific time.
     :param model: An instance of the HUXt class with a completed solution.
@@ -1048,9 +1040,9 @@ def plot_bpol(model, time, save=False, tag='', fighandle=np.nan, axhandle=np.nan
         label = "HUXt2D"
         fig.text(0.175, pos.y0, label, fontsize=16)
         
-        #plot any provided fieldlines
-        for i in range(0, len(fieldlines)):
-            r, lon = fieldlines[i]
+        #plot any provided streak lines
+        for i in range(0, len(streaklines)):
+            r, lon = streaklines[i]
             ax.plot(lon, r[id_t, :], 'k') 
         
         #plot any HCS that have been traced
