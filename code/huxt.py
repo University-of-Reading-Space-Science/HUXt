@@ -441,7 +441,7 @@ class HUXt:
                  input_v_ts=np.nan * (u.km/u.s),
                  input_iscme_ts=np.NaN,
                  input_t_ts=np.nan *u.s,
-                 save_full_v = False, track_cmes=True):
+                 enable_field_tracer = False, track_cmes=True):
         """
         Initialise the HUXt model instance.
 
@@ -576,14 +576,24 @@ class HUXt:
         
         # Preallocate space for the output for the solar wind fields for the cme and ambient solution.
         self.v_grid = np.zeros((self.nt_out, self.nr, self.nlon)) * self.kms
+        
         # Preallocate space for the full output for the solar wind fields if required
-        self.save_full_v = save_full_v
-        if self.save_full_v:
+        self.enable_field_tracer = enable_field_tracer
+        if self.enable_field_tracer:
+            #set up variable for storing full v_grid
             buffersteps = np.fix(self.buffertime.to(u.s) / self.dt)
             buffertime = buffersteps * self.dt
             model_time = np.arange(-buffertime.value, (self.simtime.to('s') + self.dt).value, self.dt.value) * self.dt.unit
             self.v_grid_full = np.zeros((len(model_time), 
                                          self.nr, self.nlon)) * self.kms
+            
+            #set up the variable for the B grid
+            self.b_grid = np.zeros((self.nt_out, self.nr, self.nlon)) *np.nan
+            
+            #set up empty lists for the HCS crossings
+            self.HCS_n2p = []
+            self.HCS_p2n = []
+            
         
         # Mesh the spatial coordinates.
         self.lon_grid, self.r_grid = np.meshgrid(self.lon, self.r)
@@ -766,7 +776,7 @@ class HUXt:
                 lon_out = self.lon[i].value
                 
             #check whether the full grid needs saving
-            if self.save_full_v:
+            if self.enable_field_tracer:
                 v, cme_r_bounds, cme_v_bounds, v_full = solve_radial_full(self.input_v_ts[:,i],
                                                self.input_iscme_ts[:,i],
                                                self.model_time, 

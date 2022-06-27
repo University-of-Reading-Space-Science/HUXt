@@ -598,7 +598,7 @@ def animate_3d(model3d, lon=np.NaN*u.deg, tag=''):
 def huxt_streakline(model, carr_lon_src):
     """
     A function to compute a streakline in the HUXt solution. 
-    Requires that the model was run with the "save_full_v" flag
+    Requires that the model was run with the "enable_field_tracer" flag
     
     The logic follows as:
     # Input an initial longitude to follow, lon
@@ -613,7 +613,7 @@ def huxt_streakline(model, carr_lon_src):
     """
     
     #check that the full model output is available
-    assert(model.save_full_v == True)
+    assert(model.enable_field_tracer == True)
     
     #work out the source longitude at t=0 from the given Carrington longitude
     lon_src = H._zerototwopi_((carr_lon_src - model.cr_lon_init))*u.rad
@@ -816,7 +816,7 @@ def add_bgrid(model, br_in):
     Input: Solved HUXt model class and Br at inner boundary in Carrington longitude
     
     First traces HCS postion and adds solutions to model class. Requires HUXt
-    to output the full v field (i.e. solved with save_full_v == True)
+    to output the full v field (i.e. solved with enable_field_tracer == True)
     
     Then generates the associated b_grid
     
