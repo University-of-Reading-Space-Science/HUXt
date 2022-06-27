@@ -1039,7 +1039,8 @@ def radial_grid(r_min=30.0 * u.solRad, r_max=240. * u.solRad):
     r = np.arange(r_min.value, r_max.value + dr.value, dr.value)
     r = r * dr.unit
     nr = r.size
-    rrel = r - r[0]
+    # acceleration is scaled relative to 30rS
+    rrel = r - 30*u.solRad
     return r, dr, rrel, nr
 
 
