@@ -307,20 +307,20 @@ def get_MAS_vr_map(cr):
 @u.quantity_input(r_outer=u.solRad)
 @u.quantity_input(lon_outer=u.rad)
 @u.quantity_input(r_inner=u.solRad)
-def map_v_inwards(v_outer, r_outer, lon_outer, r_inner):
+def map_v_inwards(v_orig, r_orig, lon_orig, r_new):
     """
-    Function to map v from r_outer (in rs) to r_inner (in rs) accounting for 
+    Function to map v from r_orig (in rs) to r_inner (in rs) accounting for 
     residual acceleration, but neglecting stream interactions.
 
     Args:
-        v_outer: Solar wind speed at outer radial distance. Units of km/s.
-        r_outer: Radial distance at outer radial distance. Units of km.
-        lon_outer: Carrington longitude at outer distance. Units of rad
-        r_inner: Radial distance at inner radial distance. Units of km.
+        v_orig: Solar wind speed at original radial distance. Units of km/s.
+        r_orig: Radial distance at original radial distance. Units of km.
+        lon_orig: Carrington longitude at original distance. Units of rad
+        r_new: Radial distance at new radial distance. Units of km.
 
     Returns:
-        v_inner: Solar wind speed mapped from r_outer to r_inner. Units of km/s.
-        lon_inner: Carrington longitude at r_inner. Units of rad.
+        v_new: Solar wind speed mapped from r_orig to r_new. Units of km/s.
+        lon_new: Carrington longitude at r_new. Units of rad.
     """
 
     # Get the acceleration parameters
@@ -328,61 +328,54 @@ def map_v_inwards(v_outer, r_outer, lon_outer, r_inner):
     alpha = constants['alpha']  # Scale parameter for residual SW acceleration
     rH = constants['r_accel'].to(u.kilometer).value  # Spatial scale parameter for residual SW acceleration
     Tsyn = constants['synodic_period'].to(u.s).value
-    r_outer = r_outer.to(u.km).value
-    r_inner = r_inner.to(u.km).value
-    r_30 = 30 * u.solRad
-    r_30 = r_30.to(u.km).value
+    r_orig = r_orig.to(u.km).value
+    r_new = r_new.to(u.km).value
 
     # Compute the 30 rS speed
-    v30 = v_outer.value * (1 + alpha * (1 - np.exp((r_30 - r_outer) / rH)))
-
-    # Compute the speed at the new inner boundary height (using Vacc term, equation 5 in the paper)
-    v0 = v30 * (1 + alpha * (1 - np.exp((r_30 - r_inner) / rH)))
+    v0 = v_orig.value * (1 + alpha * (1 - np.exp((r_orig - r_new) / rH)))
 
     # Compute the transit time from the new to old inner boundary heights (i.e., integrate equations 3 and 4 wrt to r)
     A = v0 + alpha * v0
-    term1 = rH * np.log(A * np.exp(r_outer / rH) - alpha * v0 * np.exp(r_inner / rH)) / A
-    term2 = rH * np.log(A * np.exp(r_inner / rH) - alpha * v0 * np.exp(r_inner / rH)) / A
+    term1 = rH * np.log(A * np.exp(r_orig / rH) - alpha * v0 * np.exp(r_new / rH)) / A
+    term2 = rH * np.log(A * np.exp(r_new / rH) - alpha * v0 * np.exp(r_new / rH)) / A
     T_integral = term1 - term2
 
     # Work out the longitudinal shift
-    phi_new = H._zerototwopi_(lon_outer.value + (T_integral / Tsyn) * 2 * np.pi)
+    phi_new = H._zerototwopi_(lon_orig.value + (T_integral / Tsyn) * 2 * np.pi)
 
     return v0 * u.km / u.s, phi_new * u.rad
 
 
-@u.quantity_input(v_outer=u.km / u.s)
-@u.quantity_input(r_outer=u.solRad)
+@u.quantity_input(v_orig=u.km / u.s)
+@u.quantity_input(r_orig=u.solRad)
 @u.quantity_input(r_inner=u.solRad)
-def map_v_boundary_inwards(v_outer, r_outer, r_inner):
+def map_v_boundary_inwards(v_orig, r_orig, r_new):
     """
     Function to map a longitudinal V series from r_outer (in rs) to r_inner (in rs)
     accounting for residual acceleration, but neglecting stream interactions.
     Series return on HUXt longitudinal grid, not input grid
 
     Args:
-        v_outer: Solar wind speed at outer radial boundary. Units of km/s.
-        r_outer: Radial distance at outer radial boundary. Units of km.
-        r_inner: Radial distance at inner radial boundary. Units of km.
+        v_orig: Solar wind speed as function of long at outer radial boundary. Units of km/s.
+        r_orig: Radial distance at original radial boundary. Units of km.
+        r_new: Radial distance at new radial boundary. Units of km.
 
     Returns:
-        v_inner: Solar wind speed mapped from r_outer to r_inner. Units of km/s.
+        v_new: Solar wind speed as funciton of long mapped from r_orig to r_new. Units of km/s.
     """
 
-    if r_outer < r_inner:
-        raise ValueError("Warning: r_outer < r_inner. Mapping will not work.")
 
     # Compute the longitude grid from the length of the vouter input variable
     lon, dlon, nlon = H.longitude_grid()
 
     # Map each point in to a new speed and longitude
-    v0, phis_new = map_v_inwards(v_outer, r_outer, lon, r_inner)
+    v0, phis_new = map_v_inwards(v_orig, r_orig, lon, r_new)
 
     # Interpolate the mapped speeds back onto the regular Carr long grid,
     # making boundaries periodic
-    v_inner = np.interp(lon, phis_new, v0, period=2 * np.pi)
+    v_new = np.interp(lon, phis_new, v0, period=2 * np.pi)
 
-    return v_inner
+    return v_new
 
 
 @u.quantity_input(v_map=u.km / u.s)
@@ -390,40 +383,39 @@ def map_v_boundary_inwards(v_outer, r_outer, r_inner):
 @u.quantity_input(v_map_long=u.rad)
 @u.quantity_input(r_outer=u.solRad)
 @u.quantity_input(r_inner=u.solRad)
-def map_vmap_inwards(v_map, v_map_lat, v_map_long, r_outer, r_inner):
+def map_vmap_inwards(v_map, v_map_lat, v_map_long, r_orig, r_new):
     """
-    Function to map a V Carrington map from r_outer (in rs) to r_inner (in rs),
+    Function to map a V Carrington map from r_orig (in rs) to r_new (in rs),
     accounting for acceleration, but ignoring stream interaction
     Map returned on input coord system, not HUXT resolution.
 
     Args:
-        v_map: Solar wind speed Carrington map at outer radial boundary. np.array with units of km/s.
+        v_map: Solar wind speed Carrington map at original radial boundary. np.array with units of km/s.
         v_map_lat: Latitude (from equator) of v_map positions. np.array with units of radians
         v_map_long: Carrington longitude of v_map positions. np.array with units of radians
-        r_outer: Radial distance at outer radial boundary. np.array with units of km.
-        r_inner: Radial distance at inner radial boundary. np.array with units of km.
+        r_orig: Radial distance at original radial boundary. np.array with units of km.
+        r_new: Radial distance at new radial boundary. np.array with units of km.
 
     Returns:
-        v_map_inner: Solar wind speed map at r_inner. np.array with units of km/s.
+        v_map_new: Solar wind speed map at r_inner. np.array with units of km/s.
     """
 
-    if r_outer < r_inner:
-        raise ValueError("Warning: r_outer < r_inner. Mapping will not work.")
 
     # Check the dimensions
     assert (len(v_map_lat) == len(v_map[:, 1]))
     assert (len(v_map_long) == len(v_map[1, :]))
 
-    v_map_inner = np.ones((len(v_map_lat), len(v_map_long)))
+    v_map_new = np.ones((len(v_map_lat), len(v_map_long)))
     for ilat in range(0, len(v_map_lat)):
         # Map each point in to a new speed and longitude
-        v0, phis_new = map_v_inwards(v_map[ilat, :], r_outer, v_map_long, r_inner)
+        v0, phis_new = map_v_inwards(v_map[ilat, :], r_orig, v_map_long, r_new)
 
         # Interpolate the mapped speeds back onto the regular Carr long grid,
         # making boundaries periodic * u.km/u.s
-        v_map_inner[ilat, :] = np.interp(v_map_long.value, phis_new.value, v0.value, period=2 * np.pi)
+        v_map_new[ilat, :] = np.interp(v_map_long.value,
+                                       phis_new.value, v0.value, period=2 * np.pi)
 
-    return v_map_inner * u.km / u.s
+    return v_map_new * u.km / u.s
 
 
 def get_PFSS_maps(filepath):
@@ -526,7 +518,7 @@ def get_CorTom_vr_map(filepath, convert_from_density = False):
     phi = X *np.pi/180 *u.rad
     theta = Y *np.pi/180 *u.rad
     
-    return vgrid, phi[0,:], theta[:,0], phi, theta
+    return vgrid, theta[:,0], phi[0,:], phi, theta
 
 
 
