@@ -87,6 +87,10 @@ def plot(model, time, save=False, tag='', fighandle=np.nan, axhandle=np.nan,
         
     cnt = ax.contourf(lon, rad, v, levels=levels, cmap=mymap, extend='both')
 
+    # Set edge color of contours the same, for good rendering in PDFs
+    for c in cnt.collections:
+        c.set_edgecolor("face")
+
     # Add on CME boundaries
     cme_colors = ['r', 'c', 'm', 'y', 'deeppink', 'darkorange']
     for j, cme in enumerate(model.cmes):
@@ -186,7 +190,10 @@ def animate(model, tag, streaklines=None, plotHCS=True):
     def make_frame(t):
         """
         Produce the frame required by MoviePy.VideoClip.
+        Args:
             t: time through the movie
+        Returns:
+            frame: An image array for rendering to movie clip.
         """
         # Get the time index closest to this fraction of movie duration
         i = np.int32((model.nt_out - 1) * t / duration)
@@ -453,7 +460,7 @@ def plot_earth_timeseries(model, plot_omni=True):
         axs[1].plot(huxt_ts['time'], np.sign(huxt_ts['bpol']), 'k.', label='HUXt')
         axs[1].set_ylabel('B polarity')
     else:
-        fig, axs = plt.subplots(1, 1, figsize=(14, 7))
+        fig, axs = plt.subplots(1, 1, figsize=(14, 4))
         axs = np.array([axs])
         
     axs[0].plot(huxt_ts['time'], huxt_ts['vsw'], 'k', label='HUXt')
@@ -486,15 +493,22 @@ def plot_earth_timeseries(model, plot_omni=True):
         axs[0].plot(plotdata['datetime'], plotdata['V'], 'r', label='OMNI')
         
         if hasattr(model, 'b_grid'):
-            axs[1].plot(plotdata['datetime'], -np.sign(plotdata['BX_GSE'])*0.92, 
-                        'r.', label='OMNI')
-            axs[1].legend()
-            axs[1].set_xlim(starttime, endtime)
+            axs[1].plot(plotdata['datetime'], -np.sign(plotdata['BX_GSE'])*0.92, 'r.', label='OMNI')
             axs[1].set_ylim(-1.1, 1.1)
-            
-    axs[0].legend()
+
+    for a in axs:
+        a.set_xlim(starttime, endtime)
+        a.legend()
+
     axs[0].set_ylabel('Solar Wind Speed (km/s)')
-    axs[0].set_xlim(starttime, endtime)
+
+    if axs.size == 1:
+        axs[0].set_xlabel('Date')
+    elif axs.size == 2:
+        axs[0].set_xticklabels([])
+        axs[1].set_xlabel('Date')
+
+    fig.subplots_adjust(left=0.07, bottom=0.08, right=0.99, top=0.97, hspace=0.05)
     
     return fig, axs
 
@@ -727,9 +741,6 @@ def trace_particles(r_grid, lon_sim, dlon, time_grid, v_grid, T_rot, lon_src):
     
     lon_acc = 0 
     omega = 2 * np.pi / T_rot
-
-    lon_counter = None
-    lon_next = None
 
     # Loop through model time steps
     for t_counter, t_out in enumerate(time_grid):
