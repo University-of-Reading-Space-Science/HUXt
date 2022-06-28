@@ -12,12 +12,12 @@ def test_analytic_solution():
     """
     Test HUXt against the analytic solution for a stationary and uniform inner boundary condition
     """
-    
-    
-    #Form longitudinal boundary conditions - background wind of 350 km/s.
+
+    # Form longitudinal boundary conditions - background wind of 350 km/s.
     v_boundary = np.ones(128) * 350 * (u.km/u.s)
 
-    # Setup HUXt to do a 1 day simulation, with model output every 8 timesteps (roughly an hour time step), looking at 0 longitude
+    # Setup HUXt to do a 1 day simulation, with model output every 8 timesteps (roughly an hour time step),
+    # looking at 0 longitude
     model = H.HUXt(v_boundary=v_boundary, lon_out=0.0*u.deg, simtime=5*u.day, dt_scale=8)
 
     # Solve these conditions, with no ConeCMEs added.
@@ -26,7 +26,7 @@ def test_analytic_solution():
     
     # Compute analytical solution from equation 5 in Owens et al 2020
     const = H.huxt_constants()
-    alpha  = const['alpha']
+    alpha = const['alpha']
     rh = const['r_accel']
 
     v0 = model.v_boundary[0]
@@ -58,7 +58,7 @@ def test_time_dependent():
     cme = H.ConeCME(t_launch=0.5*u.day, longitude=0.0*u.deg, width=30*u.deg, v=1000*(u.km/u.s), thickness=5*u.solRad)
     cme_list = [cme]
 
-    #  Setup HUXt to do a 5 day simulation, with model output every 4 timesteps (roughly half and hour time step)
+    #  Setup HUXt to do a 5-day simulation, with model output every 4 timesteps (roughly half and hour time step)
     model_test = H.HUXt(v_boundary=v_boundary, cr_num=2080, cr_lon_init=180*u.deg, simtime=5*u.day, dt_scale=4)
 
     model_test.solve(cme_list)
@@ -85,7 +85,7 @@ def test_time_dependent():
         test_cme_coords.append(np.allclose(vt['lat'].value, vr['lat'].value))
         test_cme_coords.append(np.allclose(vt['r'].value, vr['r'].value))
 
-    # CME test particle coordiantes match
+    # CME test particle coordinates match
     assert np.all(test_cme_coords)
 
     # Check CME arrival time calculation
@@ -116,7 +116,6 @@ def test_time_dependent():
     assert np.allclose(arrival_stats_test['lon'], lon_ref)
     assert np.allclose(arrival_stats_test['r'], r_ref)
     assert np.allclose(arrival_stats_test['v'], v_ref)
-
 
     return
     
