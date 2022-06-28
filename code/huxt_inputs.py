@@ -454,7 +454,7 @@ def get_PFSS_maps(filepath):
     vr_longs = phi[0, :]
     br_longs = vr_longs
 
-    return vr_map, vr_lats, vr_longs, br_map, br_lats, br_longs, phi, theta
+    return vr_map, vr_longs, vr_lats,  br_map, br_longs, br_lats
 
 
 def get_CorTom_vr_map(filepath, convert_from_density=False):
@@ -513,8 +513,10 @@ def get_CorTom_vr_map(filepath, convert_from_density=False):
     vgrid = vgrid * u.km/u.s
     phi = X * np.pi/180 * u.rad
     theta = Y * np.pi/180 * u.rad
-    
-    return vgrid, theta[:, 0], phi[0, :], phi, theta
+
+    lons = phi[0, :]
+    lats = theta[:, 0]
+    return vgrid, lons, lats
 
 
 def get_WSA_maps(filepath):
@@ -591,16 +593,7 @@ def get_WSA_maps(filepath):
 
     vr_map = vr_map * u.km / u.s
 
-    # create the mesh grid
-    phi = np.empty(vr_map_fits.shape)
-    theta = np.empty(vr_map_fits.shape)
-    for nlat in range(0, len(vr_lat_centres)):
-        theta[nlat, :] = vr_lats[nlat]
-        phi[nlat, :] = vr_longs
-    phi = phi * u.rad
-    theta = theta * u.rad
-
-    return vr_map, vr_lats, vr_longs, br_map, br_lats, br_longs, phi, theta, cr_num
+    return vr_map, vr_longs, vr_lats, br_map, br_longs, br_lats, cr_num
 
 
 def get_WSA_long_profile(filepath, lat=0.0 * u.deg):

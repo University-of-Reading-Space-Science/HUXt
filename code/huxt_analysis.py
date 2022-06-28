@@ -10,7 +10,7 @@ import numpy as np
 import pandas as pd
 from numba import jit
 from sunpy.net import Fido
-from sunpy.net import attrs as a
+from sunpy.net import attrs
 from sunpy.timeseries import TimeSeries
 
 import huxt as H
@@ -26,14 +26,17 @@ def plot(model, time, save=False, tag='', fighandle=np.nan, axhandle=np.nan,
          minimalplot=False, streaklines=[], plotHCS=True):
     """
     Make a contour plot on polar axis of the solar wind solution at a specific time.
-    :param model: An instance of the HUXt class with a completed solution.
-    :param time: Time to look up closet model time to (with an astropy.unit of time).
-    :param save: Boolean to determine if the figure is saved.
-    :param tag: String to append to the filename if saving the figure.
-    :param fighandle, axhandle: existing figure and axis handles if a subplot is to be made
-    :param minimalplot: removes colorbar, planets/spacecraft and labels
-    :return fig: Figure handle.
-    :return ax: Axes handle.
+    Args:
+        model: An instance of the HUXt class with a completed solution.
+        time: Time to look up closet model time to (with an astropy.unit of time).
+        save: Boolean to determine if the figure is saved.
+        tag: String to append to the filename if saving the figure.
+        fighandle: existing figure handle if a subplot is to be made.
+        axhandle: existing axis handle if a subplot is to be made.
+        minimalplot: Boolean, if True removes colorbar, planets, spacecraft, and labels.
+    Returns:
+        fig: Figure handle.
+        ax: Axes handle.
     """
 
     if (time < model.time_out.min()) | (time > (model.time_out.max())):
@@ -164,10 +167,13 @@ def plot(model, time, save=False, tag='', fighandle=np.nan, axhandle=np.nan,
 def animate(model, tag, streaklines=None, plotHCS=True):
     """
     Animate the model solution, and save as an MP4.
-    :param model: An instance of the HUXt class with a completed solution.
-    :param tag: String to append to the filename of the animation.
-    :param streaklines: A list of streaklines to plot
-    :param plotHCS: Boolean flag on whether to plot the heliospheric current sheet location.
+    Args:
+        model: An instance of the HUXt class with a completed solution.
+        tag: String to append to the filename of the animation.
+        streaklines: A list of streaklines to plot.
+        plotHCS: Boolean flag on whether to plot the heliospheric current sheet location.
+    Returns:
+        None
     """
 
     # Set the duration of the movie
@@ -180,7 +186,7 @@ def animate(model, tag, streaklines=None, plotHCS=True):
     def make_frame(t):
         """
         Produce the frame required by MoviePy.VideoClip.
-        :param t: time through the movie
+            t: time through the movie
         """
         # Get the time index closest to this fraction of movie duration
         i = np.int32((model.nt_out - 1) * t / duration)
@@ -201,13 +207,15 @@ def animate(model, tag, streaklines=None, plotHCS=True):
 def plot_radial(model, time, lon, save=False, tag=''):
     """
     Plot the radial solar wind profile at model time closest to specified time.
-    :param model: An instance of the HUXt class with a completed solution.
-    :param time: Time (in seconds) to find the closest model time step to.
-    :param lon: The model longitude of the selected radial to plot.
-    :param save: Boolean to determine if the figure is saved.
-    :param tag: String to append to the filename if saving the figure.
-    :return: fig: Figure handle
-    :return: ax: Axes handle
+    Args:
+        model: An instance of the HUXt class with a completed solution.
+        time: Time (in seconds) to find the closest model time step to.
+        lon: The model longitude of the selected radial to plot.
+        save: Boolean to determine if the figure is saved.
+        tag: String to append to the filename if saving the figure.
+    Returns:
+        fig: Figure handle
+        ax: Axes handle
     """
 
     if (time < model.time_out.min()) | (time > (model.time_out.max())):
@@ -288,13 +296,15 @@ def plot_radial(model, time, lon, save=False, tag=''):
 def plot_timeseries(model, radius, lon, save=False, tag=''):
     """
     Plot the solar wind model timeseries at model radius and longitude closest to those specified.
-    :param model: An instance of the HUXt class with a completed solution.
-    :param radius: Radius to find the closest model radius to.
-    :param lon: Longitude to find the closest model longitude to.
-    :param save: Boolean to determine if the figure is saved.
-    :param tag: String to append to the filename if saving the figure.
-    :return: fig: Figure handle
-    :return: ax: Axes handle
+    Args:
+        model: An instance of the HUXt class with a completed solution.
+        radius: Radius to find the closest model radius to.
+        lon: Longitude to find the closest model longitude to.
+        save: Boolean to determine if the figure is saved.
+        tag: String to append to the filename if saving the figure.
+    Returns:
+        fig: Figure handle
+        ax: Axes handle
     """
 
     if (radius < model.r.min()) | (radius > (model.r.max())):
@@ -354,12 +364,17 @@ def get_earth_timeseries(model):
     Compute the solar wind time series at Earth. Returns a pandas dataframe with the 
     solar wind speed time series at Earth interpolated from the model solution using the
     Earth ephemeris. Nearest neighbour interpolation in r, linear interpolation in longitude.
+    Args:
+        model: A HUXt instance with a solution generated by HUXt.solve().
     
-    Returns bpolarity if that has been computed post run
+    Returns:
+         earth_time_series: A pandas dataframe giving time series of solar wind speed, and if it exists in the HUXt
+                            solution, the magnetic field polarity, at Earth.
     """
     earth_pos = model.get_observer('Earth')
 
     # adjust the HEEQ coordinates if the sidereal frame has been used
+    lonheeq = None
     if model.frame == 'sidereal':
         deltalon = earth_pos.lon_hae - earth_pos.lon_hae[0]
         lonheeq = H._zerototwopi_(earth_pos.lon.value + deltalon.value)
@@ -416,20 +431,17 @@ def get_earth_timeseries(model):
     return earth_time_series
 
 
-def plot_earth_timeseries(model, plot_OMNI=True):
+def plot_earth_timeseries(model, plot_omni=True):
     """
-    A function to plot the HUXt Earth time series. With optino to download and
+    A function to plot the HUXt Earth time series. With option to download and
     plot OMNI data.
+    Args:
+        model : input model class
+        plot_omni: Boolean, if True downloads and plots OMNI data
 
-    Parameters
-    ----------
-    model : input model class
-    plot_OMNI: Flag for downloading and plotting OMNI data
-
-    Returns
-    -------
-    fig : figure handle
-    axs : ax handles
+    Returns:
+        fig : Figure handle
+        axs : Axes handles
 
     """
     
@@ -447,16 +459,16 @@ def plot_earth_timeseries(model, plot_OMNI=True):
     axs[0].plot(huxt_ts['time'], huxt_ts['vsw'], 'k', label='HUXt')
     axs[0].set_ylim(250, 1000)
 
-    if plot_OMNI:
-        starttime = huxt_ts['time'][0]
-        endtime = huxt_ts['time'][len(huxt_ts)-1]
-        
+    starttime = huxt_ts['time'][0]
+    endtime = huxt_ts['time'][len(huxt_ts) - 1]
+
+    if plot_omni:
+
         # Download the 1hr OMNI data from CDAweb
-        trange = a.Time(starttime, endtime)
-        dataset = a.cdaweb.Dataset('OMNI2_H0_MRG1HR')
+        trange = attrs.Time(starttime, endtime)
+        dataset = attrs.cdaweb.Dataset('OMNI2_H0_MRG1HR')
         result = Fido.search(trange, dataset)
         downloaded_files = Fido.fetch(result)
-        # print(downloaded_files)
         
         # Import the OMNI data
         omni = TimeSeries(downloaded_files, concatenate=True)
@@ -488,15 +500,18 @@ def plot_earth_timeseries(model, plot_OMNI=True):
 
 
 @u.quantity_input(time=u.day)
-def plot_3d_meridional(model3d, time, lon=np.NaN*u.deg, save=False, tag=''):
+def plot3d_lat_at_fixed_lon(model3d, time, lon=np.NaN*u.deg, save=False, tag=''):
     """
     Make a contour plot on polar axis of the solar wind solution at a specific time.
-    :param model: An instance of the HUXt class with a completed solution.
-    :param time: Time to look up closet model time to (with an astropy.unit of time).
-    :param save: Boolean to determine if the figure is saved.
-    :param tag: String to append to the filename if saving the figure.
-    :return fig: Figure handle.
-    :return ax: Axes handle.
+    Args:
+        model3d: An instance of the HUXt3d class with a completed solution.
+        time: Time to look up closet model time to (with an astropy.unit of time).
+        lon: The longitude along which to render the azimuthal slice
+        save: Boolean to determine if the figure is saved.
+        tag: String to append to the filename if saving the figure.
+    Returns:
+        fig: Figure handle.
+        ax: Axes handle.
     """
     # get the metadata from one of the individual HUXt elements
     model = model3d.HUXtlat[0]
@@ -525,8 +540,8 @@ def plot_3d_meridional(model3d, time, lon=np.NaN*u.deg, save=False, tag=''):
         dv = 19
         ylab = 'Solar Wind Speed (km/s)'
         mercut[:, n] = model.v_grid[id_t, :, id_lon]
-        mymap = mpl.cm.viridis
-        
+
+    mymap = mpl.cm.viridis
     mymap.set_over('lightgrey')
     mymap.set_under([0, 0, 0])
     levels = np.arange(ymin, ymax + dv, dv)
@@ -571,8 +586,12 @@ def plot_3d_meridional(model3d, time, lon=np.NaN*u.deg, save=False, tag=''):
 def animate_3d(model3d, lon=np.NaN*u.deg, tag=''):
     """
     Animate the model solution, and save as an MP4.
-    :param field: String, either 'cme', or 'ambient', specifying which solution to animate.
-    :param tag: String to append to the filename of the animation.
+    Args:
+        model3d: An instance of HUXt3d
+        lon: The longitude along which to render the latitudinal slice.
+        tag: String to append to the filename of the animation.
+    Returns:
+        None
     """
 
     # Set the duration of the movie
@@ -583,7 +602,7 @@ def animate_3d(model3d, lon=np.NaN*u.deg, tag=''):
     def make_frame_3d(t):
         """
         Produce the frame required by MoviePy.VideoClip.
-        :param t: time through the movie
+            t: time through the movie
         """
         # Get the time index closest to this fraction of movie duration
         i = np.int32((model.nt_out - 1) * t / duration)
@@ -602,19 +621,22 @@ def animate_3d(model3d, lon=np.NaN*u.deg, tag=''):
 
 def huxt_streakline(model, carr_lon_src):
     """
-    A function to compute a streakline in the HUXt solution. 
-    Requires that the model was run with the "enable_field_tracer" flag
+    A function to compute a streakline in the HUXt solution. Requires that the model was run with the
+     "enable_field_tracer" flag set True.
     
-    The logic follows as:
-    # Input an initial longitude to follow, lon
-    # Release a particle at lon
-    # Advect.
-    # Release a new particle when Omega*Dt > longitude grid resolution
-    # Advect all particles and update location.
-    # Repeat til end of simulation
-    
-    model: a huxt instance with a computed solution in
-    lon_src: the longitude you want to follow at t=0 in the model solution
+    The outline of the algorithm is:
+        - Input an initial longitude to follow, lon
+        - Release a particle at lon
+        - Advect.
+        - Release a new particle when Omega*Dt > longitude grid resolution
+        - Advect all particles and update location.
+        - Repeat til end of simulation
+    Args:
+        model: a HUXt instance with a computed solution from HUXt.solve()
+        carr_lon_src: the longitude you want to follow at t=0 in the model solution
+    Returns:
+        particle_r: An array of radial positions of particles on a streakline, as a function of time and longitude
+        lon: The carrington longitudes corresponding to the streakline initiated from carr_lon_src at first time step.
     """
     
     # check that the full model output is available
@@ -670,11 +692,20 @@ def huxt_streakline(model, carr_lon_src):
 
 @jit(nopython=True)
 def trace_particles(r_grid, lon_sim, dlon, time_grid, v_grid, T_rot, lon_src):
-    
     """
-    optimised function to track a single longitude through the HUXt solution
-    
-    used by huxt_streakline
+    Optimised function to track a single longitude through the HUXt solution. Used by huxt_streakline.
+
+    Args:
+        r_grid: Unitless array of radial grid coordinates from HUXt.r, in km.
+        lon_sim: Unitless array of longitudinal grid coordinates from HUXt.lon, in radians.
+        dlon: Unitless value of radial grid step from HUXt.dr, in km.
+        time_grid: Unitless array of time steps from HUXt.model_time, in seconds.
+        v_grid: Unitless array of solar wind speed solution from HUXt.v_grid, in km/s.
+        T_rot: Rotation rate of HUXt inner boundary, from HUXt.rotation_rate, in seconds.
+        lon_src: The initial longitude of the streakline at time_grid[0], in radians.
+    Returns:
+        particle_r: Radial positions of particles on the streakline as a function of time and longitude.
+        particle_lons: The longitudes of particles on the streakline.
     """
     
     nt = len(time_grid)
@@ -766,11 +797,14 @@ def trace_particles(r_grid, lon_sim, dlon, time_grid, v_grid, T_rot, lon_src):
 
 
 def trace_HCS(model, br_in):
-    
     """
-    Function to trace HCS from given B(carrLon) and add tracks to model class
+    Function to trace HCS from given B(carrLon) and add tracks to model class. Used by add_bgrid
+    Args:
+        model: A HUXt instance.
+        br_in: The radial magnetic field at the model inner boundary, as a function of Carrington longitude.
+    Returns:
     
-    used by add_bgrid
+
     """
     
     # find the HCS crossings
@@ -801,30 +835,29 @@ def trace_HCS(model, br_in):
         if HCS[i] == 1:
             carr_lon = lon_grid[i]*u.rad
             r, l = huxt_streakline(model, carr_lon)
-            # HCS is placed at the r grid immediately before the polarity reversal. move it to the interface
-            # l = l + dlon/2
+            # HCS is placed at the r grid immediately before the polarity reversal.
             HCS_p2n_tracks.append((r, l))
         elif HCS[i] == -1:
             carr_lon = lon_grid[i]*u.rad
             r, l = huxt_streakline(model, carr_lon)
-            # l = l + dlon/2
             HCS_n2p_tracks.append((r, l))
     
     # add the HCS crossings to the model class
     model.HCS_n2p = HCS_n2p_tracks
     model.HCS_p2n = HCS_p2n_tracks
     
-    return 1
+    return
 
 
 def add_bgrid(model, br_in):
     """
-    Input: Solved HUXt model class and Br at inner boundary in Carrington longitude
-    
-    First traces HCS postion and adds solutions to model class. Requires HUXt
-    to output the full v field (i.e. solved with enable_field_tracer == True)
-    
-    Then generates the associated b_grid
+    This function traces the position of hte heliospheric current sheet and updates the HUXt.b_grid attribute of a
+    HUXt instance. Requires HUXt solution to contain the full spin-up data and so to be initialised with
+    enable_field_tracer = True)
+    Args:
+        model: A HUXt instance (configured with enable_field_tracer=True).
+        br_in: The radial magnetic field at the model inner boundary, as a function of Carrington longitude.
+    Returns:
     
     """
     
@@ -877,7 +910,7 @@ def add_bgrid(model, br_in):
     model.b_grid = bgrid_from_hcs_tracks(time, HCS_r_list, HCS_l_list, HCS_p_list, br_boundary, all_lons, lon_values,
                                          r_values, T_rot, n_rots)
     
-    return 1
+    return
                
 
 @jit(nopython=True)                 
@@ -974,16 +1007,18 @@ def plot_bpol(model, time, save=False, tag='', fighandle=np.nan, axhandle=np.nan
               plotHCS=True):
     """
     Make a contour plot on polar axis of the solar wind solution at a specific time.
-    :param model: An instance of the HUXt class with a completed solution.
-    :param time: Time to look up closet model time to (with an astropy.unit of time).
-    :param save: Boolean to determine if the figure is saved.
-    :param tag: String to append to the filename if saving the figure.
-    :param fighandle, axhandle: existing figure and axis handles if a subplot is to be made
-    :param minimalplot: removes colorbar, planets/spacecraft and labels
-    :param streaklines: A list of streaklines to plot over the HUXt solution.
-    :param plotHCS: Boolean to determine if the heliospheric current sheet locations are plotted.
-    :return fig: Figure handle.
-    :return ax: Axes handle.
+    Args:
+        model: An instance of the HUXt class with a completed solution.
+        time: Time to look up closet model time to (with an astropy.unit of time).
+        save: Boolean to determine if the figure is saved.
+        tag: String to append to the filename if saving the figure.
+        fighandle, axhandle: existing figure and axis handles if a subplot is to be made
+        minimalplot: removes colorbar, planets/spacecraft and labels
+        streaklines: A list of streaklines to plot over the HUXt solution.
+        plotHCS: Boolean to determine if the heliospheric current sheet locations are plotted.
+    Returns:
+        fig: Figure handle.
+        ax: Axes handle.
     """
 
     if (time < model.time_out.min()) | (time > (model.time_out.max())):
