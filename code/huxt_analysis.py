@@ -23,7 +23,7 @@ mpl.rc("legend", fontsize=16)
 
 @u.quantity_input(time=u.day)
 def plot(model, time, save=False, tag='', fighandle=np.nan, axhandle=np.nan,
-         minimalplot=False, streaklines=[], plotHCS=True):
+         minimalplot=False, streaklines=None, plotHCS=True):
     """
     Make a contour plot on polar axis of the solar wind solution at a specific time.
     Args:
@@ -31,9 +31,12 @@ def plot(model, time, save=False, tag='', fighandle=np.nan, axhandle=np.nan,
         time: Time to look up closet model time to (with an astropy.unit of time).
         save: Boolean to determine if the figure is saved.
         tag: String to append to the filename if saving the figure.
-        fighandle: existing figure handle if a subplot is to be made.
-        axhandle: existing axis handle if a subplot is to be made.
+        fighandle: Figure handle for placing plot in existing figure.
+        axhandle: Axes handle for placing plot in existing axes.
         minimalplot: Boolean, if True removes colorbar, planets, spacecraft, and labels.
+        streaklines: A list of tuples of radial and longitudinal coordinates of streaklines returned by
+                     huxt_streakline. See example 16 in huxt_examples.ipynb.
+        plotHCS: Boolean, if True plots heliospheric current sheet coordinates
     Returns:
         fig: Figure handle.
         ax: Axes handle.
@@ -146,10 +149,11 @@ def plot(model, time, save=False, tag='', fighandle=np.nan, axhandle=np.nan,
         fig.text(0.175, pos.y0, label, fontsize=16)
 
         # plot any provided streaklines
-        for i in range(0, len(streaklines)):
-            r, lon = streaklines[i]
-            ax.plot(lon, r[id_t, :], 'k') 
-        
+        if streaklines is not None:
+            for i in range(0, len(streaklines)):
+                r, lon = streaklines[i]
+                ax.plot(lon, r[id_t, :], 'k')
+
         # plot any HCS that have been traced
         if plotHCS and (hasattr(model, 'HCS_p2n') or hasattr(model, 'HCS_n2p')):
             for i in range(0, len(model.HCS_p2n)):
@@ -286,7 +290,7 @@ def plot_radial(model, time, lon, save=False, tag=''):
 
     # Add label
     time_label = " Time: {:3.2f} days".format(time_out)
-    lon_label = " Lon: {:3.2f}$^\circ$".format(lon_out)
+    lon_label = " Lon: {:3.2f}$^\\circ$".format(lon_out)
     label = "HUXt" + time_label + lon_label
     ax.set_title(label, fontsize=20)
     
@@ -350,7 +354,7 @@ def plot_timeseries(model, radius, lon, save=False, tag=''):
 
     # Add label
     radius_label = " Radius: {:3.2f}".format(r_out) + "$R_{sun}$ "
-    lon_label = " Longitude: {:3.2f}".format(lon_out) + "$^\circ$"
+    lon_label = " Longitude: {:3.2f}".format(lon_out) + "$^\\circ$"
     label = "HUXt" + radius_label + lon_label
     ax.set_title(label, fontsize=20)
 
@@ -514,13 +518,14 @@ def plot_earth_timeseries(model, plot_omni=True):
 
 
 @u.quantity_input(time=u.day)
-def plot3d_lat_at_fixed_lon(model3d, time, lon=np.NaN*u.deg, save=False, tag=''):
+def plot3d_radial_lat_slice(model3d, time, lon=np.NaN*u.deg, save=False, tag=''):
     """
-    Make a contour plot on polar axis of the solar wind solution at a specific time.
+    Make a contour plot on polar axis of a radial-latitudinal plane of the solar wind solution at a fixed time and
+    longitude.
     Args:
         model3d: An instance of the HUXt3d class with a completed solution.
         time: Time to look up closet model time to (with an astropy.unit of time).
-        lon: The longitude along which to render the azimuthal slice
+        lon: The longitude along which to render the radial-latitude plane.
         save: Boolean to determine if the figure is saved.
         tag: String to append to the filename if saving the figure.
     Returns:
@@ -539,10 +544,10 @@ def plot3d_lat_at_fixed_lon(model3d, time, lon=np.NaN*u.deg, save=False, tag='')
     # get the requested longitude
     if model.lon.size == 1:
         id_lon = 0
-        lon_out = model.lon.value
+        lon_out = model.lon.to(u.deg)
     else:
         id_lon = np.argmin(np.abs(model.lon - lon))
-        lon_out = model.lon[id_lon].to(u.deg).value
+        lon_out = model.lon[id_lon].to(u.deg)
         
     # loop over latitudes and extract the radial profiles
     mercut = np.ones((len(model.r), model3d.nlat))
@@ -562,6 +567,10 @@ def plot3d_lat_at_fixed_lon(model3d, time, lon=np.NaN*u.deg, save=False, tag='')
 
     fig, ax = plt.subplots(figsize=(10, 10), subplot_kw={"projection": "polar"})
     cnt = ax.contourf(model3d.lat.to(u.rad), model.r, mercut, levels=levels, cmap=mymap, extend='both')
+
+    # Set edge color of contours the same, for good rendering in PDFs
+    for c in cnt.collections:
+        c.set_edgecolor("face")
 
     ax.set_ylim(0, model.r.value.max())
     ax.set_yticklabels([])
@@ -583,7 +592,7 @@ def plot3d_lat_at_fixed_lon(model3d, time, lon=np.NaN*u.deg, save=False, tag='')
 
     # Add label
     label = "Time: {:3.2f} days".format(time_out)
-    label = label + "; Lon: {:3.2f} degrees".format(lon.to(u.deg).value)
+    label = label + "; Lon: {:3.2f} $^\\circ$".format(lon_out.value)
     fig.text(0.675, pos.y0, label, fontsize=16)
     label = "HUXt3D"
     fig.text(0.175, pos.y0, label, fontsize=16)       
@@ -620,7 +629,7 @@ def animate_3d(model3d, lon=np.NaN*u.deg, tag=''):
         """
         # Get the time index closest to this fraction of movie duration
         i = np.int32((model.nt_out - 1) * t / duration)
-        fig, ax = plot_3d_meridional(model3d, model.time_out[i], lon)
+        fig, ax = plot3d_radial_lat_slice(model3d, model.time_out[i], lon)
         frame = mplfig_to_npimage(fig)
         plt.close('all')
         return frame
@@ -847,13 +856,13 @@ def trace_HCS(model, br_in):
     for i in range(0, Nlon):
         if HCS[i] == 1:
             carr_lon = lon_grid[i]*u.rad
-            r, l = huxt_streakline(model, carr_lon)
+            r, lons = huxt_streakline(model, carr_lon)
             # HCS is placed at the r grid immediately before the polarity reversal.
-            HCS_p2n_tracks.append((r, l))
+            HCS_p2n_tracks.append((r, lons))
         elif HCS[i] == -1:
             carr_lon = lon_grid[i]*u.rad
-            r, l = huxt_streakline(model, carr_lon)
-            HCS_n2p_tracks.append((r, l))
+            r, lons = huxt_streakline(model, carr_lon)
+            HCS_n2p_tracks.append((r, lons))
     
     # add the HCS crossings to the model class
     model.HCS_n2p = HCS_n2p_tracks
@@ -896,9 +905,9 @@ def add_bgrid(model, br_in):
     HCS_l_list = []
     HCS_p_list = []
     for i in range(0, len(HCS_tracks)):
-        r, l = HCS_tracks[i]
+        r, lons = HCS_tracks[i]
         HCS_r_list.append(r.value)
-        HCS_l_list.append(l.value)
+        HCS_l_list.append(lons.value)
         # set the polarity flag
         if i < len(model.HCS_p2n):
             HCS_p_list.append(1)
@@ -983,11 +992,11 @@ def bgrid_from_hcs_tracks(time, HCS_r_list, HCS_l_list, HCS_p_list, br_boundary,
             HCS_counter = 0
             for i in range(0, nHCS):
                 r = HCS_r_list[i]
-                l = HCS_l_list[i]
+                lons = HCS_l_list[i]
                 p = HCS_p_list[i]
                 # check if this HCS corsses the current longitude
                 # mask = (l == lon_values[lon])
-                mask = np.argwhere(l == lon_values[lon])
+                mask = np.argwhere(lons == lon_values[lon])
                 for j in range(0, mask.size):
                     HCS_thislon[HCS_counter, 0] = r[t, mask[j].item()]
                     HCS_thislon[HCS_counter, 1] = p
@@ -1000,13 +1009,11 @@ def bgrid_from_hcs_tracks(time, HCS_r_list, HCS_l_list, HCS_p_list, br_boundary,
             order = np.argsort(HCS_thislon[:, 0])
             HCS_thislon = HCS_thislon[order, :]
 
-            #if len(HCS_thislon_r) > 0:
             innerR_index = 0
             outerR_index = nr - 1
             for j in range(0, nHCS*n_rots):
                 
                 if ~np.isnan(HCS_thislon[j, 0]):
-                    #innerR = HCS_thislon[j]
                     r_index = np.argmin(np.abs(HCS_thislon[j, 0] - r_values))
                     if HCS_thislon[j, 1] > 0:
                         b_grid[t, innerR_index:r_index, lon] = 1
@@ -1027,7 +1034,7 @@ def bgrid_from_hcs_tracks(time, HCS_r_list, HCS_l_list, HCS_p_list, br_boundary,
 
 
 @u.quantity_input(time=u.day)
-def plot_bpol(model, time, save=False, tag='', fighandle=np.nan, axhandle=np.nan, minimalplot=False, streaklines=[],
+def plot_bpol(model, time, save=False, tag='', fighandle=np.nan, axhandle=np.nan, minimalplot=False, streaklines=None,
               plotHCS=True):
     """
     Make a contour plot on polar axis of the solar wind solution at a specific time.
@@ -1036,7 +1043,8 @@ def plot_bpol(model, time, save=False, tag='', fighandle=np.nan, axhandle=np.nan
         time: Time to look up closet model time to (with an astropy.unit of time).
         save: Boolean to determine if the figure is saved.
         tag: String to append to the filename if saving the figure.
-        fighandle, axhandle: existing figure and axis handles if a subplot is to be made
+        fighandle: Figure handle for placing plot in a figure that already exists.
+        axhandle: Axes handle for placing plot in axes that already exists.
         minimalplot: removes colorbar, planets/spacecraft and labels
         streaklines: A list of streaklines to plot over the HUXt solution.
         plotHCS: Boolean to determine if the heliospheric current sheet locations are plotted.
@@ -1093,6 +1101,10 @@ def plot_bpol(model, time, save=False, tag='', fighandle=np.nan, axhandle=np.nan
         
     cnt = ax.contourf(lon, rad, v, levels=levels, cmap=mymap, extend='both')
 
+    # Set edge color of contours the same, for good rendering in PDFs
+    for c in cnt.collections:
+        c.set_edgecolor("face")
+
     # Add on CME boundaries
     cme_colors = ['r', 'c', 'm', 'y', 'deeppink', 'darkorange']
     for j, cme in enumerate(model.cmes):
@@ -1148,18 +1160,19 @@ def plot_bpol(model, time, save=False, tag='', fighandle=np.nan, axhandle=np.nan
         fig.text(0.175, pos.y0, label, fontsize=16)
         
         # plot any provided streak lines
-        for i in range(0, len(streaklines)):
-            r, lon = streaklines[i]
-            ax.plot(lon, r[id_t, :], 'k') 
-        
+        if streaklines is not None:
+            for i in range(0, len(streaklines)):
+                r, lon = streaklines[i]
+                ax.plot(lon, r[id_t, :], 'k')
+
         # plot any HCS that have been traced
         if plotHCS and (hasattr(model, 'HCS_p2n') or hasattr(model, 'HCS_n2p')):
             for i in range(0, len(model.HCS_p2n)):
-                r, l = model.HCS_p2n[i]
-                ax.plot(l, r[id_t, :], 'w')
+                r, lons = model.HCS_p2n[i]
+                ax.plot(lons, r[id_t, :], 'w')
             for i in range(0, len(model.HCS_n2p)):
-                r, l = model.HCS_n2p[i]
-                ax.plot(l, r[id_t, :], 'k') 
+                r, lons = model.HCS_n2p[i]
+                ax.plot(lons, r[id_t, :], 'k')
 
     if save:
         cr_num = np.int32(model.cr_num.value)
