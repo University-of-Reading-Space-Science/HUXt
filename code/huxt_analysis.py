@@ -727,7 +727,10 @@ def trace_particles(r_grid, lon_sim, dlon, time_grid, v_grid, T_rot, lon_src):
     
     lon_acc = 0 
     omega = 2 * np.pi / T_rot
-    
+
+    lon_counter = None
+    lon_next = None
+
     # Loop through model time steps
     for t_counter, t_out in enumerate(time_grid):
         
@@ -771,7 +774,6 @@ def trace_particles(r_grid, lon_sim, dlon, time_grid, v_grid, T_rot, lon_src):
                 # Get the j index for creating a new particle if necessary.
                 lon_next = lon_counter + 1
             else:
-                # print('uknown longitude')
                 particle_r[t_counter, lon_counter] = np.nan
         
         # Has initial longitude rotated into next longitude bin?
@@ -798,13 +800,13 @@ def trace_particles(r_grid, lon_sim, dlon, time_grid, v_grid, T_rot, lon_src):
 
 def trace_HCS(model, br_in):
     """
-    Function to trace HCS from given B(carrLon) and add tracks to model class. Used by add_bgrid
+    Function to trace HCS from given B(carrLon) and updates the HUXt.HCS_n2p and HUXt.HCS_p2n attributes.
+    Used by add_bgrid function.
     Args:
         model: A HUXt instance.
         br_in: The radial magnetic field at the model inner boundary, as a function of Carrington longitude.
     Returns:
-    
-
+        None
     """
     
     # find the HCS crossings
@@ -858,6 +860,7 @@ def add_bgrid(model, br_in):
         model: A HUXt instance (configured with enable_field_tracer=True).
         br_in: The radial magnetic field at the model inner boundary, as a function of Carrington longitude.
     Returns:
+        None
     
     """
     
@@ -914,15 +917,25 @@ def add_bgrid(model, br_in):
                
 
 @jit(nopython=True)                 
-def bgrid_from_hcs_tracks(time, HCS_r_list, HCS_l_list, HCS_p_list,
-                          br_boundary, all_lons, lon_values, r_values, T_rot, n_rots):
-    
+def bgrid_from_hcs_tracks(time, HCS_r_list, HCS_l_list, HCS_p_list, br_boundary, all_lons, lon_values, r_values, T_rot,
+                          n_rots):
     """
-    optimised function to create a b-polarity grid from HCS tracks
-    
-    used by 
+    Optimised function to create a b-polarity grid from streaklines of the heliospheric current sheet (HCS).
+    Args:
+        time:
+        HCS_r_list: List of radial coordinates of the streaklines corresponding to the HCS
+        HCS_l_list: List of longitudinal coordinates of the streaklines corresponding to the HCS
+        HCS_p_list: List of the HCS polarity at a streaklines
+        br_boundary: The radial heliospheric magnetic field component at the HUXt inner boundary
+        all_lons: Unitless gridded longitude coordinates from HUXt.lon_grid
+        lon_values: Unitless longitudinal grid coordinates from HUXt.lon
+        r_values: Unitless radial grid coordiantes from HUXt.r
+        T_rot: Unitless rotation rate in seconds from HUXt.rotation_period
+        n_rots: Number of rotations in the solution.
+
+    Returns:
+        b_grid: Array tracing the polarity of the radial heliospheric magnetic field component.
     """
-   
     nHCS = len(HCS_r_list)
     nt = len(time)
     nr = len(r_values)
