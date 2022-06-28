@@ -1,21 +1,21 @@
+import datetime
 import os
 import urllib
 import ssl
+
 import astropy.units as u
 from astropy.io import fits
 from astropy.time import Time
-import pandas as pd
-import numpy as np
 import httplib2
+import numpy as np
+import pandas as pd
 from pyhdf.SD import SD, SDC
-import scipy as scipy
 from scipy.io import netcdf
 from scipy import interpolate
 from sunpy.coordinates import sun
 from sunpy.net import Fido
-from sunpy.net import attrs as a
+from sunpy.net import attrs
 from sunpy.timeseries import TimeSeries
-import datetime
 
 import huxt as H
 
@@ -87,6 +87,7 @@ def get_MAS_boundary_conditions(cr=np.NaN, observatory='', runtype='', runnumber
         # Search MHDweb for a HelioMAS run, in order of preference
         h = httplib2.Http(disable_ssl_certificate_validation=False)
         foundfile = False
+        urlbase = None
         for res in masres_order:
             for masob in observatories_order:
                 for masrun in runtype_order:
@@ -491,7 +492,7 @@ def get_CorTom_vr_map(filepath, convert_from_density=False):
     X, Y = np.meshgrid(xvals, yvals)
     
     # interpolate the data. probably easiest to just use 2d arrays here. Set ML as forecast and OP as reference
-    griddata = scipy.interpolate.griddata((den_df['carrlong'], den_df['carrlat']), den_df['eden'], (X, Y), method='linear')
+    griddata = interpolate.griddata((den_df['carrlong'], den_df['carrlat']), den_df['eden'], (X, Y), method='linear')
     griddata = np.flipud(griddata)
     vgrid = griddata.copy()
     
@@ -781,6 +782,13 @@ def set_time_dependent_boundary(vgrid_Carr, time_grid, starttime, simtime, r_min
     :param time_grid: time steps (in MJD) of vgrid_Carr
     :param starttime: The datetime object giving the start of the HUXt run
     :param simtime: The duration fo the HUXt run (in u.day)
+    :param r_min: Specify the inner boundary radius of HUXt, defaults to 1 AU
+    :param r_max: Specify the outer boundary radius of HUXt, defaults to 6 AU
+    :param dt_scale: The output timestep of HUXt in terms of multiples of the intrinsic timestep.
+    :param latitude: The latitude (from equator) to run HUXt along
+    :param frame: String, "synodic" or "sidereal", specifying the rotating frame of reference
+    :param lon_start: Longitude of one edge of the longitudinal domain of HUXt
+    :param lon_stop: Longitude of the other edge of the longitudinal domain of HUXt
     """
     
     # work out the start time in terms of cr number and cr_lon_init
@@ -806,6 +814,7 @@ def set_time_dependent_boundary(vgrid_Carr, time_grid, starttime, simtime, r_min
     time_init = model.time_init
     
     constants = H.huxt_constants()
+    rotation_period = None
     if frame == 'synodic':
         rotation_period = constants['synodic_period']
     elif frame == 'sidereal':    
@@ -853,7 +862,7 @@ def set_time_dependent_boundary(vgrid_Carr, time_grid, starttime, simtime, r_min
                    simtime=simtime,
                    cr_num=cr, cr_lon_init=cr_lon_init,
                    r_min=r_min, r_max=r_max,
-                   dt_scale=dt_scale, latitude=0*u.deg,
+                   dt_scale=dt_scale, latitude=latitude,
                    frame=frame,
                    lon_start=lon_start, lon_stop=lon_stop,
                    input_v_ts=input_ambient_ts,
@@ -902,13 +911,12 @@ def generate_vCarr_from_OMNI(runstart, runend, nlon_grid=128, dt=1*u.day):
     endtime = runend + datetime.timedelta(days=28)
     
     # Download the 1hr OMNI data from CDAweb
-    trange = a.Time(starttime, endtime)
-    dataset = a.cdaweb.Dataset('OMNI2_H0_MRG1HR')
+    trange = attrs.Time(starttime, endtime)
+    dataset = attrs.cdaweb.Dataset('OMNI2_H0_MRG1HR')
     result = Fido.search(trange, dataset)
     downloaded_files = Fido.fetch(result)
-    # print(downloaded_files)
-    
-    # # Import the OMNI data
+
+    # Import the OMNI data
     omni = TimeSeries(downloaded_files, concatenate=True)
     data = omni.to_dataframe()
     
@@ -927,29 +935,31 @@ def generate_vCarr_from_OMNI(runstart, runend, nlon_grid=128, dt=1*u.day):
     # find the period of interest
     mask = ((data['datetime'] > starttime) &
             (data['datetime'] < endtime))
-    OMNI = data[mask]
-    OMNI = OMNI.reset_index()
-    OMNI['Time'] = Time(OMNI['datetime'])
+    omni = data[mask]
+    omni = omni.reset_index()
+    omni['Time'] = Time(omni['datetime'])
     
-    smjd = OMNI['Time'][0].mjd
-    fmjd = OMNI['Time'][len(OMNI)-1].mjd
+    smjd = omni['Time'][0].mjd
+    fmjd = omni['Time'][len(omni) - 1].mjd
 
     # interpolate through OMNI V data gaps
-    OMNI_int = OMNI.interpolate(method='linear', axis=0).ffill().bfill()
-    del OMNI
+    omni_int = omni.interpolate(method='linear', axis=0).ffill().bfill()
+    del omni
     
     # compute carrington longitudes
-    cr = np.ones(len(OMNI_int))
-    cr_lon_init = np.ones(len(OMNI_int))*u.rad
-    for i in range(0, len(OMNI_int)):
-        cr[i], cr_lon_init[i] = datetime2huxtinputs(OMNI_int['datetime'][i])
-    OMNI_int['Carr_lon'] = cr_lon_init
+    cr = np.ones(len(omni_int))
+    cr_lon_init = np.ones(len(omni_int))*u.rad
+    for i in range(0, len(omni_int)):
+        cr[i], cr_lon_init[i] = datetime2huxtinputs(omni_int['datetime'][i])
+
+    omni_int['Carr_lon'] = cr_lon_init
     
     # create an MJD column
     def to_mjd(a):
         return a.mjd
-    temp = list(map(to_mjd, OMNI_int['Time'].array))
-    OMNI_int['mjd'] = temp
+
+    temp = list(map(to_mjd, omni_int['Time'].array))
+    omni_int['mjd'] = temp
 
     # compute the longitudinal and time grids
     dphi_grid = 360/nlon_grid
@@ -957,32 +967,33 @@ def generate_vCarr_from_OMNI(runstart, runend, nlon_grid=128, dt=1*u.day):
     dt = dt.to(u.day).value
     time_grid = np.arange(smjd, fmjd + dt/2, dt)
 
-    vgrid_Carr_recon_back = np.ones((nlon_grid, len(time_grid))) * np.nan
-    vgrid_Carr_recon_forward = np.ones((nlon_grid, len(time_grid))) * np.nan
-    vgrid_Carr_recon_both = np.ones((nlon_grid, len(time_grid))) * np.nan
+    vgrid_carr_recon_back = np.ones((nlon_grid, len(time_grid))) * np.nan
+    vgrid_carr_recon_forward = np.ones((nlon_grid, len(time_grid))) * np.nan
+    vgrid_carr_recon_both = np.ones((nlon_grid, len(time_grid))) * np.nan
 
     for t in range(0, len(time_grid)):
         # find nearest time and current Carrington longitude
-        t_id = np.argmin(np.abs(OMNI_int['mjd'] - time_grid[t]))
-        Elong = OMNI_int['Carr_lon'][t_id] * u.rad
+        t_id = np.argmin(np.abs(omni_int['mjd'] - time_grid[t]))
+        Elong = omni_int['Carr_lon'][t_id] * u.rad
         
         # get the Carrington longitude difference from current Earth pos
         dlong_back = _zerototwopi_(lon_grid.value - Elong.value) * u.rad
         dlong_forward = _zerototwopi_(Elong.value - lon_grid.value) * u.rad
         
-        dt_back = (dlong_back / (omega_synodic)).to(u.day)
-        dt_forward = (dlong_forward / (omega_synodic)).to(u.day)
+        dt_back = (dlong_back / omega_synodic).to(u.day)
+        dt_forward = (dlong_forward / omega_synodic).to(u.day)
         
-        vgrid_Carr_recon_back[:, t] = np.interp(time_grid[t] - dt_back.value, OMNI_int['mjd'], OMNI_int['V'],
+        vgrid_carr_recon_back[:, t] = np.interp(time_grid[t] - dt_back.value, omni_int['mjd'], omni_int['V'],
                                                 left=np.nan, right=np.nan)
 
-        vgrid_Carr_recon_forward[:, t] = np.interp(time_grid[t] + dt_forward.value, OMNI_int['mjd'], OMNI_int['V'],
+        vgrid_carr_recon_forward[:, t] = np.interp(time_grid[t] + dt_forward.value, omni_int['mjd'], omni_int['V'],
                                                    left=np.nan, right=np.nan)
 
-        vgrid_Carr_recon_both[:, t] = (dt_forward * vgrid_Carr_recon_back[:, t] +
-                                       dt_back * vgrid_Carr_recon_forward[:, t])/(dt_forward + dt_back)
+        numerator = (dt_forward * vgrid_carr_recon_back[:, t] + dt_back * vgrid_carr_recon_forward[:, t])
+        denominator = dt_forward + dt_back
+        vgrid_carr_recon_both[:, t] = numerator / denominator
         
     # cut out the requested time
     mask = ((time_grid >= Time(runstart).mjd) & (time_grid <= Time(runend).mjd))
 
-    return time_grid[mask], vgrid_Carr_recon_both[:, mask]
+    return time_grid[mask], vgrid_carr_recon_both[:, mask]
