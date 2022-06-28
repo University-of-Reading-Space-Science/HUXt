@@ -38,8 +38,8 @@ class Observer:
 
     def __init__(self, body, times):
         """
-        :param body: String indicating which body to look up the positions of .
-        :param times: A list/array of Astropy Times to interpolate the coordinate of the selected body.
+            body: String indicating which body to look up the positions of .
+            times: A list/array of Astropy Times to interpolate the coordinate of the selected body.
         """
         bodies = ["EARTH", "VENUS", "MERCURY", "STA", "STB"]
         if body.upper() in bodies:
@@ -150,13 +150,16 @@ class ConeCME:
                  initial_height=30*u.solRad):
         """
         Set up a Cone CME with specified parameters.
-        :param t_launch: Time of Cone CME launch, in seconds after the start of the simulation.
-        :param longitude: HEEQ Longitude of the CME launch direction, in radians.
-        :param latitude: HEEQ latitude of the CME launch direction, in radians.
-        :param v: CME nose speed in km/s.
-        :param width: Angular width of the CME, in degrees.
-        :param thickness: Thickness of the CME cone, in solar radii
-        :param initial_height: Height (in solRad) that corresponds to the launch time
+        Args:
+            t_launch: Time of Cone CME launch, in seconds after the start of the simulation.
+            longitude: HEEQ Longitude of the CME launch direction, in radians.
+            latitude: HEEQ latitude of the CME launch direction, in radians.
+            v: CME nose speed in km/s.
+            width: Angular width of the CME, in degrees.
+            thickness: Thickness of the CME cone, in solar radii
+            initial_height: Height (in solRad) that corresponds to the launch time
+        Returns:
+            None
         """
         self.t_launch = t_launch  # Time of CME launch, after the start of the simulation
         lon = _zerototwopi_(longitude.to(u.rad).value) * u.rad
@@ -175,6 +178,8 @@ class ConeCME:
         """
         Returns a numpy array of CME parameters. This is used in the numba optimised solvers that don't play nicely
         with classes.
+        Returns:
+            None
         """
         cme_parameters = [self.t_launch.to('s').value, self.longitude.to('rad').value, self.latitude.to('rad').value,
                           self.width.to('rad').value, self.v.value, self.initial_height.to('km').value,
@@ -183,9 +188,13 @@ class ConeCME:
 
     def _track_(self, model, cme_id):
         """
-        Tracks the perimeter of each ConeCME through the HUXt solution in model.
-        :param model: An HUXt instance, solving for multiple longitudes, with solutions for the CME and ambient fields.
-        :return: updates the ConeCME.coords dictionary of CME coordinates.
+        Tracks the perimeter of each ConeCME through the HUXt solution in model. Updates the ConeCME.coords dictionary
+        of CME coordinates.
+        Args:
+            model: An HUXt instance with solution containing ConeCMEs
+            cme_id: ID number of the CME to link the ConeCME object with the CME tracer particle fields.
+        Returns:
+             None
         """
         # Keep track of synodic or sidereal
         self.frame = copy.copy(model.frame)
@@ -277,10 +286,11 @@ class ConeCME:
         Compute the arrival of the CME at a solar system body. Available bodies are those accepted by the 
         observer class, Mercury, Venus, Earth, STA, and STB. Takes account of differences between synodic 
         and sidereal frames
-        :param body_name: A string body name as accepted by the Observer class, including Mercury, Venus,
-                        Earth, STA and STB
-        :returns arrival_stats: A dictionary of the arrival stats of the CME, with keys hit, hit_id, t_arrive,
-                               t_transit, lon, r and v.
+        Args:
+            body_name: String body name as accepted by the Observer class, including Mercury, Venus, Earth, STA and STB.
+        Returns:
+             arrival_stats: A dictionary of the arrival stats of the CME, with keys hit, hit_id, t_arrive, t_transit,
+                            lon, r and v.
         """
     
         # Get body ephemeris
@@ -446,24 +456,24 @@ class HUXt:
         """
         Initialise the HUXt model instance.
 
-        :param v_boundary: Inner solar wind speed boundary condition. Must be an array of size 128 with units of km/s.
-        :param cr_num: Integer Carrington rotation number. Used to determine the planetary and spacecraft positions
-        :param cr_lon_init: Carrington longitude of Earth at model initialisation, in degrees.
-        :param latitude: Helio latitude (from equator) of HUXt plane, in degrees
-        :param lon_out: A specific single longitude (relative to Earth) to compute HUXt solution along, in degrees
-        :param lon_start: The first longitude (in a clockwise sense) of the longitude range to solve HUXt over.
-        :param lon_stop: The last longitude (in a clockwise sense) of the longitude range to solve HUXt over.
-        :param r_min: The radial inner boundary distance of HUXt.
-        :param r_max: The radial outer boundary distance of HUXt.
-        :param simtime: Duration of the simulation window, in days.
-        :param dt_scale: Integer scaling number to set the model output time step relative to the models CFL time.
-        :param frame: string determining the rotation frame for the model
-        :param input_v_ts: Time series of inner boundary conditions. For initialising HUXt with, for example, 
+            v_boundary: Inner solar wind speed boundary condition. Must be an array of size 128 with units of km/s.
+            cr_num: Integer Carrington rotation number. Used to determine the planetary and spacecraft positions
+            cr_lon_init: Carrington longitude of Earth at model initialisation, in degrees.
+            latitude: Helio latitude (from equator) of HUXt plane, in degrees
+            lon_out: A specific single longitude (relative to Earth) to compute HUXt solution along, in degrees
+            lon_start: The first longitude (in a clockwise sense) of the longitude range to solve HUXt over.
+            lon_stop: The last longitude (in a clockwise sense) of the longitude range to solve HUXt over.
+            r_min: The radial inner boundary distance of HUXt.
+            r_max: The radial outer boundary distance of HUXt.
+            simtime: Duration of the simulation window, in days.
+            dt_scale: Integer scaling number to set the model output time step relative to the models CFL time.
+            frame: string determining the rotation frame for the model
+            input_v_ts: Time series of inner boundary conditions. For initialising HUXt with, for example, 
                            in-situ observations from L1. If used as keyword input argument, overrides v_boundary input.
-        :param input_t_ts: Times of input_v_ts in seconds, including spin up.
-        :param input_iscme_ts: Boolean mask time series indicating what time steps correspond to CMEs in input_v_ts.
+            input_t_ts: Times of input_v_ts in seconds, including spin up.
+            input_iscme_ts: Boolean mask time series indicating what time steps correspond to CMEs in input_v_ts.
                                If used as keyword input argument, overrides ConeCMEs past to huxt.sovle().
-        :param save_full_v: Boolean flag to determine if full v field (including spin up) is saved for post-processing.
+            save_full_v: Boolean flag to determine if full v field (including spin up) is saved for post-processing.
         """
 
         # some constants and units
@@ -612,6 +622,8 @@ class HUXt:
     def ts_from_vlong(self):
         """
         Generate the input ambient time series from the v_boundary (lon) values
+        Returns:
+            None
         """
 
         buffersteps = np.fix(self.buffertime.to(u.s) / self.dt)
@@ -655,13 +667,13 @@ class HUXt:
 
     def solve(self, cme_list, save=False, tag=''):
         """
-        Solve HUXt for the provided longitudinal boundary conditions and cme list
-
-        :param cme_list: A list of ConeCME instances to use in solving HUXt
-        :param save: Boolean, if True saves model output to HDF5 file
-        :param tag: String, appended to the filename of saved solution.
-
+        Solve HUXt for the provided longitudinal boundary conditions and cme list. Updates the HUXt.v_grid
+        Args:
+            cme_list: A list of ConeCME instances to use in solving HUXt
+            save: Boolean, if True saves model output to HDF5 file
+            tag: String, appended to the filename of saved solution.
         Returns:
+            None
         """
        
         # ======================================================================
@@ -767,11 +779,7 @@ class HUXt:
             
         # Solve for the input time series
         for i in range(self.lon.size):
-            if self.lon.size == 1:
-                lon_out = self.lon.value
-            else:
-                lon_out = self.lon[i].value
-                
+
             # check whether the full grid needs saving
             if self.enable_field_tracer:
                 v, cme_r_bounds, cme_v_bounds, v_full = solve_radial_full(self.input_v_ts[:, i],
@@ -812,9 +820,10 @@ class HUXt:
     def save(self, tag=''):
         """
         Save all model fields output to a HDF5 file.
-
-        :param tag: identifying string to append to the filename
-        :return out_filepath: Full path to the saved file.
+        Args:
+            tag: identifying string to append to the filename
+        Returns:
+             out_filepath: Full path to the saved file.
         """
         # Open up hdf5 data file for the HI flow stats
         filename = "HUXt_CR{:03d}_{}.hdf5".format(np.int32(self.cr_num.value), tag)
@@ -891,7 +900,10 @@ class HUXt:
         """
         Returns an instance of the Observer class, giving the HEEQ and Carrington coordinates at each model timestep.
         This is only well-defined if the model was initialised with a Carrington rotation number.
-        :param body: String specifying which body to look up. Valid bodies are Earth, Venus, Mercury, STA, and STB.
+        Args:
+            body: String specifying which body to look up. Valid bodies are Earth, Venus, Mercury, STA, and STB.
+        Returns:
+            obs: An Observer instance for body at times from HUXt.time_init + HUXt.time_out
         """
         times = self.time_init + self.time_out
         obs = Observer(body, times)
@@ -930,23 +942,23 @@ class HUXt3d:
         """
         Initialise the HUXt3D instance.
 
-        :param v_map: Inner solar wind speed boundary Carrington map. Must have units of km/s.
-        :param v_map_lat: List of latitude positions for v_map, in radians
-        :param v_map_long: List of Carrington longitudes for v_map, in radians
-        :param br_map: Inner Br boundary Carrington map. Must have no units.
-        :param br_map_lat: List of latitude positions for br_map, in radians
-        :param br_map_long: List of Carrington longitudes for br_map, in radians
-        :param latitude_max: Maximum helio latitude (from equator) of HUXt plane, in degrees
-        :param latitude_min: Maximum helio latitude (from equator) of HUXt plane, in degrees
-        :param cr_num: Integer Carrington rotation number. Used to determine the planetary and spacecraft positions
-        :param cr_lon_init: Carrington longitude of Earth at model initialisation, in degrees.
-        :param lon_out: A specific single longitude (relative to Earth_ to compute HUXt solution along, in degrees
-        :param lon_start: The first longitude (in a clockwise sense) of the longitude range to solve HUXt over.
-        :param lon_stop: The last longitude (in a clockwise sense) of the longitude range to solve HUXt over.
-        :param r_min: The radial inner boundary distance of HUXt.
-        :param r_max: The radial outer boundary distance of HUXt.
-        :param simtime: Duration of the simulation window, in days.
-        :param dt_scale: Integer scaling number to set the model output time step relative to the models CFL time.
+            v_map: Inner solar wind speed boundary Carrington map. Must have units of km/s.
+            v_map_lat: List of latitude positions for v_map, in radians
+            v_map_long: List of Carrington longitudes for v_map, in radians
+            br_map: Inner Br boundary Carrington map. Must have no units.
+            br_map_lat: List of latitude positions for br_map, in radians
+            br_map_long: List of Carrington longitudes for br_map, in radians
+            latitude_max: Maximum helio latitude (from equator) of HUXt plane, in degrees
+            latitude_min: Maximum helio latitude (from equator) of HUXt plane, in degrees
+            cr_num: Integer Carrington rotation number. Used to determine the planetary and spacecraft positions
+            cr_lon_init: Carrington longitude of Earth at model initialisation, in degrees.
+            lon_out: A specific single longitude (relative to Earth_ to compute HUXt solution along, in degrees
+            lon_start: The first longitude (in a clockwise sense) of the longitude range to solve HUXt over.
+            lon_stop: The last longitude (in a clockwise sense) of the longitude range to solve HUXt over.
+            r_min: The radial inner boundary distance of HUXt.
+            r_max: The radial outer boundary distance of HUXt.
+            simtime: Duration of the simulation window, in days.
+            dt_scale: Integer scaling number to set the model output time step relative to the models CFL time.
         """
                  
         # Define latitude grid
@@ -982,6 +994,13 @@ class HUXt3d:
         return
     
     def solve(self, cme_list):
+        """
+        Compute solution of HUXt3d instance.
+        Args:
+            cme_list: A list of ConeCME objects to solve
+        Returns:
+            None
+        """
         for model in self.HUXtlat:
             model.solve(cme_list)
         
@@ -990,7 +1009,9 @@ class HUXt3d:
 
 def huxt_constants():
     """
-    Return some constants used in all HUXt model classes
+    Function to generate a dictionary of useful constants.
+    Returns:
+        constants: A dictionary of constants that configure HUXt
     """
     nlong = 128  # Number of longitude bins for a full longitude grid [128]
     dr = 1.5 * u.solRad  # Radial grid step. With v_max, this sets the model time step [1.5*u.solRad]
@@ -1019,7 +1040,6 @@ def huxt_constants():
 def radial_grid(r_min=30.0 * u.solRad, r_max=240. * u.solRad):
     """
     Define the radial grid of the HUXt model. Step size is fixed, but inner and outer boundary may be specified.
-
     Args:
         r_min: The heliocentric distance of the inner radial boundary.
         r_max: The heliocentric distance of the outer radial boundary.
@@ -1058,7 +1078,6 @@ def radial_grid(r_min=30.0 * u.solRad, r_max=240. * u.solRad):
 def longitude_grid(lon_out=np.NaN * u.rad, lon_start=np.NaN * u.rad, lon_stop=np.NaN * u.rad):
     """
     Define the longitude grid of the HUXt model.
-
     Args:
         lon_out: A single output longitude.
         lon_start: The first longitude (in a clockwise sense) of a longitude range, in radians.
@@ -1126,7 +1145,6 @@ def longitude_grid(lon_out=np.NaN * u.rad, lon_start=np.NaN * u.rad, lon_stop=np
 def latitude_grid(latitude_min=np.nan, latitude_max=np.nan):
     """
     Define the latitude grid of the HUXt model. This is constant in sine latitude
-
     Args:
         latitude_min: The maximum latitude above the equator, in radians
         latitude_max: The minimum latitude below the equator, in radians
@@ -1159,9 +1177,12 @@ def latitude_grid(latitude_min=np.nan, latitude_max=np.nan):
 def time_grid(simtime, dt_scale):
     """
     Define the model timestep and time grid based on CFL condition and specified simulation time.
-
-    :param simtime: The length of the simulation
-    :param dt_scale: An integer specifying how frequently model timesteps should be saved to output.
+    Args:
+        simtime: The length of the simulation
+        dt_scale: An integer specifying how frequently model timesteps should be saved to output.
+    Returns:
+        time_grid_dict: A dictionary containing arrays of the models intrinsic time steps and the requsted output
+                        timesteps.
     """
     constants = huxt_constants()
     v_max = constants['v_max']
@@ -1185,6 +1206,8 @@ def time_grid(simtime, dt_scale):
 def _setup_dirs_():
     """
     Function to pull out the directories of boundary conditions, ephemeris, and to save figures and output data.
+    Returns:
+        dirs: A dictionary of full paths to HUXt directories of code, data, figures, and relevant files.
     """
     
     # Get path of huxt.py, and work out root dir of HUXt repository
@@ -1220,9 +1243,10 @@ def _setup_dirs_():
 def _zerototwopi_(angles):
     """
     Function to constrain angles to the 0 - 2pi domain.
-
-    :param angles: a numpy array of angles
-    :return: a numpy array of angles
+    Args:
+        angles: a numpy array of angles
+    Returns:
+        angles_out: a numpy array of angles in the 0 - 2pi domain.
     """
     twopi = 2.0 * np.pi
     angles_out = angles
@@ -1237,16 +1261,17 @@ def solve_radial(vinput, iscmeinput, model_time, rrel, params, n_cme):
     Solve the radial profile as a function of time (including spinup), and
     return radial profile at specified output timesteps.
     Tracks CME frotns as test particles
-    
-    :param vinput: Timeseries of inner boundary solar wind speeds
-    :param iscmeinput: Timeseries of in/out of a CME at the inner boundary
-    :param model_time: Array of model timesteps
-    :param rrel: Array of model radial coordinates relative to inner boundary coordinate
-    :param params: Array of HUXt parameters
-    :param n_cme: Number of CMEs in the whole model run (not nec this longitude)
-
+    Args:
+        vinput: Timeseries of inner boundary solar wind speeds.
+        iscmeinput: Timeseries of in/out of a CME at the inner boundary.
+        model_time: Array of model timesteps.
+        rrel: Array of model radial coordinates relative to inner boundary coordinate.
+        params: Array of HUXt parameters.
+        n_cme: Number of CMEs in the whole model run (not nec this longitude).
     Returns:
-
+        v_grid: Array of radial solar wind speed profile as function of time.
+        cme_particles_r: Array of CME tracer particle positions as function of time.
+        cme_particles_v: Array of CME tracer particle speeds as a function of time.
     """
     
     # Main model loop
@@ -1353,16 +1378,18 @@ def solve_radial_full(vinput, iscmeinput, model_time, rrel, params, n_cme):
     Solve the radial profile as a function of time (including spinup), and
     return radial profile at specified output timesteps.
     Tracks CME frotns as test particles
-    
-    :param vinput: Timeseries of inner boundary solar wind speeds
-    :param iscmeinput: Timeseries of in/out of a CME at the inner boundary
-    :param model_time: Array of model timesteps
-    :param rrel: Array of model radial coordinates relative to inner boundary coordinate
-    :param params: Array of HUXt parameters
-    :param n_cme: Number of CMEs in the whole model run (not nec this longitude)
-
+    Args:
+        vinput: Timeseries of inner boundary solar wind speeds
+        iscmeinput: Timeseries of in/out of a CME at the inner boundary
+        model_time: Array of model timesteps
+        rrel: Array of model radial coordinates relative to inner boundary coordinate
+        params: Array of HUXt parameters
+        n_cme: Number of CMEs in the whole model run (not nec this longitude)
     Returns:
-
+        v_grid: Array of radial solar wind speed profile as function of time.
+        cme_particles_r: Array of CME tracer particle positions as function of time.
+        cme_particles_v: Array of CME tracer particle speeds as a function of time.
+        v_grid: Array of radial solar wind speed profile as function of time, including the spin-up period
     """
     
     # Main model loop
@@ -1470,20 +1497,17 @@ def solve_radial_full(vinput, iscmeinput, model_time, rrel, params, n_cme):
 def add_cmes_to_input_series(vinput, model_time, lon, r_boundary, cme_params, latitude):
     """
     Add CMEs to the model input time series
-    
-    :param vinput: Timeseries of inner boundary solar wind speeds
-    :param model_time: Array of model timesteps
-    :param lon: The longitude of this radial
-    :param r_boundary: The HUXt inner boundary in rS
-    :param cme_params: Array of ConeCME parameters to include in the solution. 
-                        1 Row for each CME, with columns as
-                       required by _is_in_cone_cme_boundary_
-    :param latitude: Latitude (from equator) of the HUXt plane
-
+    Args:
+        vinput: Timeseries of inner boundary solar wind speeds
+        model_time: Array of model timesteps
+        lon: The longitude of this radial
+        r_boundary: The HUXt inner boundary in rS
+        cme_params: Array of ConeCME parameters to include in the solution. One row for each CME, with columns as
+                    required by _is_in_cone_cme_boundary_
+        latitude: Latitude (from equator) of the HUXt plane
     Returns: 
-        v [vinput with CME speeds added]
-        isincme [time series of CME occurrence at inner boundary]
-
+        v: vinput with CME speeds added
+        isincme: Boolean time series of CME occurrence at inner boundary
     """
     
     n_cme = cme_params.shape[0]
@@ -1515,13 +1539,15 @@ def add_cmes_to_input_series(vinput, model_time, lon, r_boundary, cme_params, la
 def _upwind_step_(v_up, v_dn, dtdr, alpha, r_accel, rrel):
     """
     Compute the next step in the upwind scheme of Burgers equation with added acceleration of the solar wind.
-    :param v_up: A numpy array of the upwind radial values. Units of km/s.
-    :param v_dn: A numpy array of the downwind radial values. Units of km/s.
-    :param dtdr: Ratio of HUXts time step and radial grid step. Units of s/km.
-    :param alpha: Scale parameter for residual Solar wind acceleration.
-    :param r_accel: Spatial scale parameter of residual solar wind acceleration. Units of km.
-    :param rrel: The model radial grid relative to the radial inner boundary coordinate. Units of km.
-    :return: The upwind values at the next time step, numpy array with units of km/s.
+    Args:
+        v_up: A numpy array of the upwind radial values. Units of km/s.
+        v_dn: A numpy array of the downwind radial values. Units of km/s.
+        dtdr: Ratio of HUXts time step and radial grid step. Units of s/km.
+        alpha: Scale parameter for residual Solar wind acceleration.
+        r_accel: Spatial scale parameter of residual solar wind acceleration. Units of km.
+        rrel: The model radial grid relative to the radial inner boundary coordinate. Units of km.
+    Returns:
+         v_up_next: The upwind values at the next time step, numpy array with units of km/s.
     """
    
     # Arguments for computing the acceleration factor
@@ -1544,12 +1570,14 @@ def _upwind_step_(v_up, v_dn, dtdr, alpha, r_accel, rrel):
 def _is_in_cme_boundary_(r_boundary, lon, lat, time, cme_params):
     """
     Check whether a given lat, lon point on the inner boundary is within a given CME.
-    :param r_boundary: Height of model inner boundary.
-    :param lon: A HEEQ latitude, in radians.
-    :param lat: A HEEQ longitude, in radians.
-    :param time: Model time step, in seconds
-    :param cme_params: An array containing the cme parameters
-    :return: True/False
+    Args:
+        r_boundary: Height of model inner boundary.
+        lon: A HEEQ latitude, in radians.
+        lat: A HEEQ longitude, in radians.
+        time: Model time step, in seconds
+        cme_params: An array containing the cme parameters
+    Returns:
+         isincme: Boolean, True if coordinate is on or inside the CME domain.
     """
     isincme = False
 
@@ -1606,10 +1634,11 @@ def load_HUXt_run(filepath):
     """
     Load in data from a saved HUXt run. If Br fields are not saved, pads with
     NaN to avoid conflicts with other HUXt routines.
-
-    :param filepath: The full path to a HDF5 file containing the output from HUXt.save()
-    :return: cme_list: A list of instances of ConeCME
-    :return: model: An instance of HUXt containing loaded results.
+    Args:
+        filepath: The full path to a HDF5 file containing the output from HUXt.save()
+    Returns:
+        cme_list: A list of instances of ConeCME
+        model: An instance of HUXt containing loaded results.
     """
     if os.path.isfile(filepath):
 
