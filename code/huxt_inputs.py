@@ -237,7 +237,6 @@ def get_MAS_br_long_profile(cr, lat=0.0 * u.deg):
         lat: Latitude at which to extract the longitudinal profile, measure up from equator. Float with units of deg
 
     Returns:
-
         br_in: Br as a function of Carrington longitude at solar equator.
                Interpolated to HUXt longitudinal resolution. np.array (NDIM = 1)
     """
@@ -430,10 +429,10 @@ def get_PFSS_maps(filepath):
 
     Returns:
         vr_map: np.array, Solar wind speed as a Carrington longitude-latitude map. In km/s
-        vr_lats: np.array, The latitudes for the Vr map, in radians from trhe equator
+        vr_lats: np.array, The latitudes for the Vr map, in radians from the equator
         vr_longs: np.array, The Carrington longitudes for the Vr map, in radians
         br_map:  np.array, Br as a Carrington longitude-latitude map. Dimensionless
-        br_lats: np.array, The latitudes for the Br map, in radians from trhe equator
+        br_lats: np.array, The latitudes for the Br map, in radians from the equator
         br_longs: np.array, The Carrington longitudes for the Br map, in radians
 
     """
@@ -754,6 +753,11 @@ def ConeFile_to_ConeCME_list(model, filepath):
 def ConeFile_to_ConeCME_list_time(filepath, time):
     """
     Simple wrapper for ConeFile_to_ConeCME_list so that dummy model is not needed
+    Args:
+        filepath: Full filepath to a ConeFile of Cone CME parameters
+        time: The UTC time to initialise HUXt with.
+    Returns:
+        cme_list: A list of ConeCME objects that correspond CMEs in a ConeFile
     """
     cr, cr_lon_init = datetime2huxtinputs(time)
     dummymodel = H.HUXt(v_boundary=np.ones(128) * 400 * (u.km/u.s), simtime=1*u.day, cr_num=cr, cr_lon_init=cr_lon_init,
@@ -771,17 +775,20 @@ def set_time_dependent_boundary(vgrid_Carr, time_grid, starttime, simtime, r_min
     A function to compute an explicitly time dependent inner boundary condition for HUXt,
     rather than due to synodic/sidereal rotation of static coronal strucutre.    
 
-    :param vgrid_Carr: input solar wind speed as a function of Carrington longitude and time
-    :param time_grid: time steps (in MJD) of vgrid_Carr
-    :param starttime: The datetime object giving the start of the HUXt run
-    :param simtime: The duration fo the HUXt run (in u.day)
-    :param r_min: Specify the inner boundary radius of HUXt, defaults to 1 AU
-    :param r_max: Specify the outer boundary radius of HUXt, defaults to 6 AU
-    :param dt_scale: The output timestep of HUXt in terms of multiples of the intrinsic timestep.
-    :param latitude: The latitude (from equator) to run HUXt along
-    :param frame: String, "synodic" or "sidereal", specifying the rotating frame of reference
-    :param lon_start: Longitude of one edge of the longitudinal domain of HUXt
-    :param lon_stop: Longitude of the other edge of the longitudinal domain of HUXt
+    Args:
+        vgrid_Carr: input solar wind speed as a function of Carrington longitude and time
+        time_grid: time steps (in MJD) of vgrid_Carr
+        starttime: The datetime object giving the start of the HUXt run
+        simtime: The duration fo the HUXt run (in u.day)
+        r_min: Specify the inner boundary radius of HUXt, defaults to 1 AU
+        r_max: Specify the outer boundary radius of HUXt, defaults to 6 AU
+        dt_scale: The output timestep of HUXt in terms of multiples of the intrinsic timestep.
+        latitude: The latitude (from equator) to run HUXt along
+        frame: String, "synodic" or "sidereal", specifying the rotating frame of reference
+        lon_start: Longitude of one edge of the longitudinal domain of HUXt
+        lon_stop: Longitude of the other edge of the longitudinal domain of HUXt
+    returns:
+        model: A HUXt instance initialised with the fully time dependent boundary conditions.
     """
     
     # work out the start time in terms of cr number and cr_lon_init
@@ -882,21 +889,17 @@ def _zerototwopi_(angles):
 
 def generate_vCarr_from_OMNI(runstart, runend, nlon_grid=128, dt=1*u.day):
     """
-    a function to download OMNI data and generate V_carr and time_grid
+    A function to download OMNI data and generate V_carr and time_grid
     for use with set_time_dependent_boundary
 
-    Parameters
-    ----------
-    runstart : datetime
-    runend : datetime
-    nlon_grid : Int, 128 by default
-    dt : time resolution, in days is 1*u.day.
-
-    Returns
-    -------
-    Time as mjd
-    Vcarr as function of Carr long and time
-
+    Args:
+        runstart: Start time as a datetime
+        runend: End time as a datetime
+        nlon_grid: Int, 128 by default
+        dt: time resolution, in days is 1*u.day.
+    Returns:
+        Time: Array of times as Julian dates
+        Vcarr: Array of solar wind speeds mapped as a function of Carr long and time
     """
 
     # download an additional 28 days either side
