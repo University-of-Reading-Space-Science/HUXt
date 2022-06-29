@@ -111,8 +111,15 @@ def plot(model, time, save=False, tag='', fighandle=np.nan, axhandle=np.nan,
     ax.set_xticklabels([])
     
     if not minimalplot:
+        # determine which bodies should be plotted
+        plot_observers = zip(['EARTH', 'VENUS', 'MERCURY', 'STA', 'STB'],
+                             ['co', 'mo', 'ko', 'rs', 'y^'])
+        if model.r[0] > 200 *u.solRad:
+            plot_observers = zip(['EARTH', 'MARS', 'JUPITER', 'SATURN'],
+                                 ['co', 'mo', 'ko', 'rs'])
+        
         # Add on observers 
-        for body, style in zip(['EARTH', 'VENUS', 'MERCURY', 'STA', 'STB'], ['co', 'mo', 'ko', 'rs', 'y^']):
+        for body, style in plot_observers:
             obs = model.get_observer(body)
             deltalon = 0.0*u.rad
             if model.frame == 'sidereal':

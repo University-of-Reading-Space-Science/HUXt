@@ -429,7 +429,7 @@ class HUXt:
         r_accel: Scale parameter determining the residual solar wind acceleration.
         r: Radial grid (in km).
         r_grid: Array of radial coordinates meshed with the longitudinal coordinates (in km).
-        rrel: Radial grid relative to first grid point (in km).
+        rrel: Radial grid relative to 30rS (in km).
         rotation_period:  rotation period (in seconds), either synodic or sidereal
         simtime: Simulation time (in seconds).
         time: Array of model time steps, including spin up (in seconds).
@@ -1268,7 +1268,7 @@ def solve_radial(vinput, iscmeinput, model_time, rrel, params, n_cme):
         vinput: Timeseries of inner boundary solar wind speeds.
         iscmeinput: Timeseries of in/out of a CME at the inner boundary.
         model_time: Array of model timesteps.
-        rrel: Array of model radial coordinates relative to inner boundary coordinate.
+        rrel: Array of model radial coordinates relative to 30rS.
         params: Array of HUXt parameters.
         n_cme: Number of CMEs in the whole model run (not nec this longitude).
     Returns:
@@ -1287,7 +1287,7 @@ def solve_radial(vinput, iscmeinput, model_time, rrel, params, n_cme):
     r_boundary = params[7]
     
     # Compute the radial grid for the test particles
-    rgrid = rrel*695700.0 + r_boundary  # Can't use astropy.units because numba
+    rgrid = (rrel - rrel[0])*695700.0 + r_boundary  # Can't use astropy.units because numba
     dr = rgrid[1]-rgrid[0]
     dt = dtdr*dr
    
@@ -1349,6 +1349,7 @@ def solve_radial(vinput, iscmeinput, model_time, rrel, params, n_cme):
                     if np.isnan(r_cmeparticles[n, bound]) == False:
                         # Linearly interpolate the speed
                         v_test = np.interp(r_cmeparticles[n, bound] - dr/2, rgrid, v)
+
                         # Advance the test particle
                         r_cmeparticles[n, bound] = (r_cmeparticles[n, bound] + v_test * dt)
                         v_cmeparticles[n, bound] = v_test
@@ -1385,7 +1386,7 @@ def solve_radial_full(vinput, iscmeinput, model_time, rrel, params, n_cme):
         vinput: Timeseries of inner boundary solar wind speeds
         iscmeinput: Timeseries of in/out of a CME at the inner boundary
         model_time: Array of model timesteps
-        rrel: Array of model radial coordinates relative to inner boundary coordinate
+        rrel: Array of model radial coordinates relative to 30rS
         params: Array of HUXt parameters
         n_cme: Number of CMEs in the whole model run (not nec this longitude)
     Returns:
@@ -1405,7 +1406,7 @@ def solve_radial_full(vinput, iscmeinput, model_time, rrel, params, n_cme):
     r_boundary = params[7]
     
     # Compute the radial grid for the test particles
-    rgrid = rrel*695700.0 + r_boundary  # Can't use astropy.units because numba
+    rgrid = (rrel - rrel[0])*695700.0 + r_boundary  # Can't use astropy.units because numba
     dr = rgrid[1]-rgrid[0]
     dt = dtdr*dr
    
