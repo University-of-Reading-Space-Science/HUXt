@@ -476,23 +476,22 @@ def get_CorTom_vr_map(filepath, convert_from_density=False):
 
     """
     
-    columns = ['carrlong', 'carrlat', 'eden']
+    columns = ['carrlong', 'carrlat', 'vsw']
     den_df = pd.read_csv(filepath,  skiprows=2, names=columns)
     
     # apply a 180-degree long shift
-    den_df['carrlong'] = den_df['carrlong'] + 180.0
-    den_df.loc[den_df['carrlong'] > 360.0, 'carrlong'] = den_df['carrlong'] - 360.0
+    #den_df['carrlong'] = den_df['carrlong'] #+ 180.0
+    #den_df.loc[den_df['carrlong'] > 360.0, 'carrlong'] = den_df['carrlong'] - 360.0
         
     # create a regular grid
-    xvals = np.linspace(180.0/128, 360.0-180.0/128, num=128)
-    yvals = np.linspace(-90+180.0/128, 90-180.0/128, num=65)
+    xvals = np.linspace(180.0/128, 360.0-180.0/128, num=360)
+    yvals = np.linspace(-90+180.0/128, 90-180.0/128, num=180)
     
     # create a mesh using these new positions
     X, Y = np.meshgrid(xvals, yvals)
     
     # interpolate the data. probably easiest to just use 2d arrays here. Set ML as forecast and OP as reference
-    griddata = interpolate.griddata((den_df['carrlong'], den_df['carrlat']), den_df['eden'], (X, Y), method='linear')
-    griddata = np.flipud(griddata)
+    griddata = interpolate.griddata((den_df['carrlong'], den_df['carrlat']), den_df['vsw'], (X, Y), method='linear')
     vgrid = griddata.copy()
     
     if convert_from_density:

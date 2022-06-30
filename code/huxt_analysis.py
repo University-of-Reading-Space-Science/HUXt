@@ -113,10 +113,11 @@ def plot(model, time, save=False, tag='', fighandle=np.nan, axhandle=np.nan,
     if not minimalplot:
         # determine which bodies should be plotted
         plot_observers = zip(['EARTH', 'VENUS', 'MERCURY', 'STA', 'STB'],
-                             ['co', 'mo', 'ko', 'rs', 'y^'])
+                             ['ko', 'mo', 'co', 'rs', 'y^'])
         if model.r[0] > 200 *u.solRad:
             plot_observers = zip(['EARTH', 'MARS', 'JUPITER', 'SATURN'],
-                                 ['co', 'mo', 'ko', 'rs'])
+                                 ['ko', 'mo', 'ro', 'cs'])
+    
         
         # Add on observers 
         for body, style in plot_observers:
@@ -587,8 +588,6 @@ def plot3d_radial_lat_slice(model3d, time, lon=np.NaN*u.deg, save=False, tag='')
         # Get latitudes 
         lats = model3d.lat
         
-
-        
         cme_r_front = np.ones(model3d.nlat)*np.nan
         cme_r_back = np.ones(model3d.nlat)*np.nan
         for ilat in range(0, model3d.nlat):
@@ -628,7 +627,33 @@ def plot3d_radial_lat_slice(model3d, time, lon=np.NaN*u.deg, save=False, tag='')
             ax.plot(lats.to(u.rad), (cme_r*u.km).to(u.solRad), color=cme_colors[n], linewidth=3)
 
 
-
+    # determine which bodies should be plotted
+    plot_observers = zip(['EARTH', 'VENUS', 'MERCURY', 'STA', 'STB'],
+                         ['ko', 'mo', 'co', 'rs', 'y^'])
+    if model.r[0] > 200 *u.solRad:
+        plot_observers = zip(['EARTH', 'MARS', 'JUPITER', 'SATURN'],
+                             ['ko', 'mo', 'ro', 'cs'])
+    
+    # Add on observers 
+    for body, style in plot_observers:
+        obs = model.get_observer(body)
+        deltalon = 0.0*u.rad
+        
+        #adjust body longitude for the frame
+        if model.frame == 'sidereal':
+            earth_pos = model.get_observer('EARTH')
+            deltalon = earth_pos.lon_hae[id_t] - earth_pos.lon_hae[0]  
+        bodylon = H._zerototwopi_(obs.lon[id_t] + deltalon)*u.rad
+        #plot bodies that are close to being in the plane
+        if abs(bodylon - lon_out) < model.dlon *2:
+            ax.plot(obs.lat[id_t], obs.r[id_t], style, markersize=16, label=body)
+    
+    # Add on a legend.
+    fig.legend(ncol=5, loc='lower center', frameon=False, handletextpad=0.2, columnspacing=1.0)
+    
+    ax.patch.set_facecolor('slategrey')
+    fig.subplots_adjust(left=0.05, bottom=0.16, right=0.95, top=0.99)
+         
     ax.set_ylim(0, model.r.value.max())
     ax.set_yticklabels([])
     ax.set_xticklabels([])
