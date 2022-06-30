@@ -301,7 +301,7 @@ def get_MAS_vr_map(cr):
     vr_map = np.fliplr(vr_map)
     vr_longs = MAS_vr_Xa
 
-    return vr_map.T, vr_lats, vr_longs
+    return vr_map.T, vr_longs, vr_lats
 
 
 @u.quantity_input(v_outer=u.km / u.s)

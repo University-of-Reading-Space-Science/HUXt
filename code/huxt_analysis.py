@@ -329,7 +329,7 @@ def plot_timeseries(model, radius, lon, save=False, tag=''):
         print("Error, specified radius outside of model radial grid")
 
     if model.lon.size != 1:
-        if (lon < model.lon.min()) | (lon > (model.lon.max())):
+        if (lon < model.lon.min() - model.dlon) | (lon > model.lon.max() + model.dlon):
             print("Error, input lon outside range of model longitudes. Defaulting to closest longitude")
             id_lon = np.argmin(np.abs(model.lon - lon))
             lon = model.lon[id_lon]
@@ -539,6 +539,11 @@ def plot3d_radial_lat_slice(model3d, time, lon=np.NaN*u.deg, save=False, tag='')
         fig: Figure handle.
         ax: Axes handle.
     """
+    plotvmin = 200
+    plotvmax = 810
+    dv = 10
+    ylab = "Solar Wind Speed (km/s)"
+    
     # get the metadata from one of the individual HUXt elements
     model = model3d.HUXtlat[0]
     
@@ -546,7 +551,6 @@ def plot3d_radial_lat_slice(model3d, time, lon=np.NaN*u.deg, save=False, tag='')
         print("Error, input time outside span of model times. Defaulting to closest time")
 
     id_t = np.argmin(np.abs(model.time_out - time))
-    time_out = model.time_out[id_t].to(u.day).value
     
     # get the requested longitude
     if model.lon.size == 1:
@@ -558,19 +562,14 @@ def plot3d_radial_lat_slice(model3d, time, lon=np.NaN*u.deg, save=False, tag='')
         
     # loop over latitudes and extract the radial profiles
     mercut = np.ones((len(model.r), model3d.nlat))
-    ymax = 0.0
     for n in range(0, model3d.nlat):
         model = model3d.HUXtlat[n]
-        ymin = 200
-        ymax = 810
-        dv = 19
-        ylab = 'Solar Wind Speed (km/s)'
         mercut[:, n] = model.v_grid[id_t, :, id_lon]
-
+    
     mymap = mpl.cm.viridis
     mymap.set_over('lightgrey')
     mymap.set_under([0, 0, 0])
-    levels = np.arange(ymin, ymax + dv, dv)
+    levels = np.arange(plotvmin, plotvmax + dv, dv)
 
     fig, ax = plt.subplots(figsize=(10, 10), subplot_kw={"projection": "polar"})
     cnt = ax.contourf(model3d.lat.to(u.rad), model.r, mercut, levels=levels, cmap=mymap, extend='both')
@@ -578,12 +577,64 @@ def plot3d_radial_lat_slice(model3d, time, lon=np.NaN*u.deg, save=False, tag='')
     # Set edge color of contours the same, for good rendering in PDFs
     for c in cnt.collections:
         c.set_edgecolor("face")
+             
+     
+        
+    # Trace the CME boundaries
+    cme_colors = ['r', 'c', 'm', 'y', 'deeppink', 'darkorange']
+    for n in range(0, len(model.cmes)):
+
+        # Get latitudes 
+        lats = model3d.lat
+        
+
+        
+        cme_r_front = np.ones(model3d.nlat)*np.nan
+        cme_r_back = np.ones(model3d.nlat)*np.nan
+        for ilat in range(0, model3d.nlat):
+            model = model3d.HUXtlat[ilat]
+            
+            cme_r_front[ilat] = model.cme_particles_r[n,id_t,0,id_lon]
+            cme_r_back[ilat] = model.cme_particles_r[n,id_t,1,id_lon]
+        
+            #ax.plot(model.latitude.to(u.rad), (r_front*u.km).to(u.solRad), 'o', color=cme_colors[n], linewidth=3)
+            #ax.plot(model.latitude.to(u.rad), (r_back*u.km).to(u.solRad), 'o', color=cme_colors[n], linewidth=3)
+        #trim the nans
+        # Find indices that sort the longitudes, to make a wraparound of lons
+        id_sort_inc = np.argsort(lats)
+        id_sort_dec = np.flipud(id_sort_inc)
+        
+        cme_r_front = cme_r_front[id_sort_inc]
+        cme_r_back = cme_r_back[id_sort_dec]
+        
+        
+        lat_front = lats[id_sort_inc]
+        lat_back = lats[id_sort_dec]
+        
+        # Only keep good values
+        id_good = np.isfinite(cme_r_front)
+        if id_good.any():
+            cme_r_front = cme_r_front[id_good]
+            lat_front = lat_front[id_good]
+            
+            id_good = np.isfinite(cme_r_back)
+            cme_r_back = cme_r_back[id_good]
+            lat_back = lat_back[id_good]
+            
+            # Get one array of longitudes and radii from the front and back particles
+            lats = np.hstack([lat_front, lat_back, lat_front[0]])
+            cme_r = np.hstack([cme_r_front, cme_r_back, cme_r_front[0]])
+        
+            ax.plot(lats.to(u.rad), (cme_r*u.km).to(u.solRad), color=cme_colors[n], linewidth=3)
+
+
 
     ax.set_ylim(0, model.r.value.max())
     ax.set_yticklabels([])
     ax.set_xticklabels([])
     ax.patch.set_facecolor('slategrey')
     fig.subplots_adjust(left=0.05, bottom=0.16, right=0.95, top=0.99)
+
 
     # Add color bar
     pos = ax.get_position()
@@ -595,14 +646,15 @@ def plot3d_radial_lat_slice(model3d, time, lon=np.NaN*u.deg, save=False, tag='')
     cbaxes = fig.add_axes([left, bottom, wid, 0.03])
     cbar1 = fig.colorbar(cnt, cax=cbaxes, orientation='horizontal')
     cbar1.set_label(ylab)
-    cbar1.set_ticks(np.arange(ymin, ymax, dv*20))
-
+    cbar1.set_ticks(np.arange(plotvmin, plotvmax, dv*10))
+    
     # Add label
-    label = "Time: {:3.2f} days".format(time_out)
-    label = label + "; Lon: {:3.2f} $^\\circ$".format(lon_out.value)
-    fig.text(0.675, pos.y0, label, fontsize=16)
-    label = "HUXt3D"
-    fig.text(0.175, pos.y0, label, fontsize=16)       
+    label = "   Time: {:3.2f} days".format(model.time_out[id_t].to(u.day).value)
+    label = label + '\n ' + (model.time_init + time).strftime('%Y-%m-%d %H:%M')
+    fig.text(0.70, pos.y0, label, fontsize=16)
+    
+    label = "HUXt3D \nLong: {:3.1f} deg".format(lon_out.to(u.deg).value)
+    fig.text(0.175, pos.y0, label, fontsize=16)
 
     if save:
         cr_num = np.int32(model.cr_num.value)
