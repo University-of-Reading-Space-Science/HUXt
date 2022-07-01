@@ -153,7 +153,7 @@ def plot(model, time, save=False, tag='', fighandle=np.nan, axhandle=np.nan,
         label = label + '\n ' + (model.time_init + time).strftime('%Y-%m-%d %H:%M')
         fig.text(0.70, pos.y0, label, fontsize=16)
         
-        label = "HUXt2D"
+        label = "HUXt2D \nLat: {:3.0f} deg".format(model.latitude.to(u.deg).value)
         fig.text(0.175, pos.y0, label, fontsize=16)
 
         # plot any provided streaklines
