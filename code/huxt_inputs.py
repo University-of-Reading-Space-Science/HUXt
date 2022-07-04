@@ -1008,13 +1008,8 @@ def generate_vCarr_from_OMNI(runstart, runend, nlon_grid=128, dt=1*u.day):
         cr[i], cr_lon_init[i] = datetime2huxtinputs(omni_int['datetime'][i])
 
     omni_int['Carr_lon'] = cr_lon_init
-    
-    # create an MJD column
-    def to_mjd(a):
-        return a.mjd
 
-    temp = list(map(to_mjd, omni_int['Time'].array))
-    omni_int['mjd'] = temp
+    omni_int['mjd'] = [t.mjd for t in omni_int['Time'].array]
 
     # compute the longitudinal and time grids
     dphi_grid = 360/nlon_grid
