@@ -526,7 +526,7 @@ def get_WSA_maps(filepath):
     Maps are transformed to Carrington maps
 
     Args:
-        filepath: String, The filepath for the PFSSpy .nc file
+        filepath: String, The filepath for the WSA file
 
     Returns:
         vr_map: Solar wind speed as a Carrington longitude-latitude map. np.array in units of km/s.
@@ -657,11 +657,11 @@ def get_PFSS_long_profile(filepath, lat=0.0 * u.deg):
 
 def get_CorTom_long_profile(filepath, lat=0.0 * u.deg):
     """
-    Function to read and process PFSS output to provide a longitude profile at a specified latitude
-    of the solar wind speed for use as boundary conditions in HUXt.
+    Function to read and process CorTom (Coronal Tomography) output to provide a longitude profile at a specified
+    latitude of the solar wind speed for use as boundary conditions in HUXt.
 
     Args:
-        filepath: A complete path to the PFSS data file
+        filepath: A complete path to the CorTom data file
         lat: Latitude at which to extract the longitudinal profile, measure up from equator. Float with units of deg
 
     Returns:
