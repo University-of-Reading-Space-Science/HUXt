@@ -163,13 +163,12 @@ def plot(model, time, save=False, tag='', fighandle=np.nan, axhandle=np.nan,
                 ax.plot(lon, r[id_t, :], 'k')
 
         # plot any HCS that have been traced
-        if plotHCS and (hasattr(model, 'HCS_p2n') or hasattr(model, 'HCS_n2p')):
-            for i in range(0, len(model.HCS_p2n)):
-                r, lons = model.HCS_p2n[i]
-                ax.plot(lons, r[id_t, :], 'w')
-            for i in range(0, len(model.HCS_n2p)):
-                r, lons = model.HCS_n2p[i]
-                ax.plot(lons, r[id_t, :], 'k')
+        if plotHCS and hasattr(model, 'b_grid'):
+            for i in range(0, len(model.hcs_particles_r[:, 0,0,0])):
+                r = model.hcs_particles_r[i,id_t,0,:]*u.km.to(u.solRad) 
+                lons = model.lon
+                ax.plot(lons, r, 'w.')
+
 
     if save:
         cr_num = np.int32(model.cr_num.value)
@@ -1248,13 +1247,11 @@ def plot_bpol(model, time, save=False, tag='', fighandle=np.nan, axhandle=np.nan
                 ax.plot(lon, r[id_t, :], 'k')
 
         # plot any HCS that have been traced
-        if plotHCS and (hasattr(model, 'HCS_p2n') or hasattr(model, 'HCS_n2p')):
-            for i in range(0, len(model.HCS_p2n)):
-                r, lons = model.HCS_p2n[i]
-                ax.plot(lons, r[id_t, :], 'w')
-            for i in range(0, len(model.HCS_n2p)):
-                r, lons = model.HCS_n2p[i]
-                ax.plot(lons, r[id_t, :], 'k')
+        if plotHCS and hasattr(model, 'b_grid'):
+            for i in range(0, len(model.hcs_particles_r[:, 0,0,0])):
+                r = model.hcs_particles_r[i,id_t,0,:]*u.km.to(u.solRad) 
+                lons = model.lon
+                ax.plot(lons, r, 'k.')
 
     if save:
         cr_num = np.int32(model.cr_num.value)
