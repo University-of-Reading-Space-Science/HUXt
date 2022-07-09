@@ -657,8 +657,9 @@ class HUXt:
         bufferlon = self.twopi * buffertime / self.rotation_period
 
         # Variables to store the input conditions.
-        self.input_v_ts = np.nan * np.ones((model_time.size, nlon))
-        self.input_b_ts = np.nan * np.ones((model_time.size, nlon))
+        self.input_v_ts = np.nan * np.ones((model_time.size, nlon))  
+        if self.track_b:
+            self.input_b_ts = np.nan * np.ones((model_time.size, nlon))
         
         # Loop through model longitudes and compute boundary conditions at each radial profile.
         for i in range(self.lon.size):
@@ -689,6 +690,7 @@ class HUXt:
                 binput = np.flipud(binit)
                 # Store the input series
                 self.input_b_ts[:, i] = binput
+                
             
         return
 
@@ -825,8 +827,14 @@ class HUXt:
         
         # Solve for the input time series
         for i in range(self.lon.size):
+            if self.track_b:
+                bslice = self.input_b_ts[:, i]
+            else:
+                bslice = self.input_v_ts[:, i]*np.nan
+            
+            #actually run the HUXt solver
             v, cme_r_bounds, cme_v_bounds, hcs_r = solve_radial(self.input_v_ts[:, i],
-                                                         self.input_b_ts[:, i],
+                                                         bslice,
                                                          self.input_iscme_ts[:, i],
                                                          self.model_time,
                                                          self.rrel.value,
