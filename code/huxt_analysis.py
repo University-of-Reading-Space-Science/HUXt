@@ -23,7 +23,7 @@ mpl.rc("legend", fontsize=16)
 
 @u.quantity_input(time=u.day)
 def plot(model, time, save=False, tag='', fighandle=np.nan, axhandle=np.nan,
-         minimalplot=False, streaklines=None, plotHCS=True):
+         minimalplot=False,  plotHCS=True):
     """
     Make a contour plot on polar axis of the solar wind solution at a specific time.
     Args:
@@ -34,8 +34,6 @@ def plot(model, time, save=False, tag='', fighandle=np.nan, axhandle=np.nan,
         fighandle: Figure handle for placing plot in existing figure.
         axhandle: Axes handle for placing plot in existing axes.
         minimalplot: Boolean, if True removes colorbar, planets, spacecraft, and labels.
-        streaklines: A list of tuples of radial and longitudinal coordinates of streaklines returned by
-                     huxt_streakline. See example 16 in huxt_examples.ipynb.
         plotHCS: Boolean, if True plots heliospheric current sheet coordinates
     Returns:
         fig: Figure handle.
@@ -156,11 +154,19 @@ def plot(model, time, save=False, tag='', fighandle=np.nan, axhandle=np.nan,
         label = "HUXt2D \nLat: {:3.0f} deg".format(model.latitude.to(u.deg).value)
         fig.text(0.175, pos.y0, label, fontsize=16)
 
-        # plot any provided streaklines
-        if streaklines is not None:
-            for i in range(0, len(streaklines)):
-                r, lon = streaklines[i]
-                ax.plot(lon, r[id_t, :], 'k')
+        # plot any tracked streaklines
+        if model.track_streak:
+            nstreak = len(model.streak_particles_r[0,:,0,0])
+            for istreak in range(0, nstreak):
+                #construct the streakline from multiple rotations
+                nrot = len(model.streak_particles_r[0,0,:,0])
+                streak_r = []
+                streak_lon = []
+                for irot in range(0,nrot):
+                    streak_lon = streak_lon + model.lon.value.tolist()
+                    streak_r = streak_r + (model.streak_particles_r[id_t,istreak,irot,:]* u.km.to(u.solRad)).value.tolist()
+                    
+                ax.plot(streak_lon, streak_r, 'k')
 
         # plot any HCS that have been traced
         if plotHCS and hasattr(model, 'b_grid'):
@@ -208,8 +214,7 @@ def animate(model, tag, streaklines=None, plotHCS=True):
         """
         # Get the time index closest to this fraction of movie duration
         i = np.int32((model.nt_out - 1) * t / duration)
-        fig, ax = plot(model, model.time_out[i],
-                       streaklines=streaklines, plotHCS=plotHCS)
+        fig, ax = plot(model, model.time_out[i], plotHCS=plotHCS)
         frame = mplfig_to_npimage(fig)
         plt.close('all')
         return frame
@@ -721,398 +726,6 @@ def animate_3d(model3d, lon=np.NaN*u.deg, tag=''):
     animation = mpy.VideoClip(make_frame_3d, duration=duration)
     animation.write_videofile(filepath, fps=24, codec='libx264')
     return
-
-
-def huxt_streakline(model, carr_lon_src):
-    """
-    A function to compute a streakline in the HUXt solution. Requires that the model was run with the
-     "enable_field_tracer" flag set True.
-    
-    The outline of the algorithm is:
-        - Input an initial longitude to follow, lon
-        - Release a particle at lon
-        - Advect.
-        - Release a new particle when Omega*Dt > longitude grid resolution
-        - Advect all particles and update location.
-        - Repeat til end of simulation
-    Args:
-        model: a HUXt instance with a computed solution from HUXt.solve()
-        carr_lon_src: the longitude you want to follow at t=0 in the model solution
-    Returns:
-        particle_r: An array of radial positions of particles on a streakline, as a function of time and longitude
-        lon: The carrington longitudes corresponding to the streakline initiated from carr_lon_src at first time step.
-    """
-    
-    # check that the full model output is available
-    assert(model.enable_field_tracer == True)
-    
-    # work out the source longitude at t=0 from the given Carrington longitude
-    lon_src = H._zerototwopi_((carr_lon_src - model.cr_lon_init))*u.rad
-    
-    # adjust the source longitude for the spin-up time
-    lon_src = H._zerototwopi_(lon_src.to(u.rad).value - 2*np.pi*model.buffertime.to(u.s) / model.rotation_period)
-    
-    # Get grid values
-    r_grid = model.r.copy().to(u.km).value
-    v_grid = model.v_grid_full.copy().value
-    lon_sim = model.lon.value
-    time_grid = model.model_time.value
-    dlon = model.dlon.value
-    T_rot = model.rotation_period.value 
-    
-    # check if it's a 1d solution
-    if model.nlon == 1:
-        lon_sim = np.array([lon_sim])
-
-    particle_r, particle_lons = trace_particles(r_grid, lon_sim, dlon,
-                                                time_grid, v_grid, T_rot, lon_src)
-
-    # Set all particles stuck on the outer boundary to NaN.        
-    id_outer = particle_r > r_grid[-1] + 3*model.dr.to(u.km).value
-    particle_r[id_outer] = np.NaN
-
-    # Only return the longitudes with particles on
-    lon_grid = np.arange(dlon/2, 2*np.pi-dlon/2+0.01, dlon)
-    n_lon = len(particle_lons)
-    particle_r = particle_r[:, :n_lon]
-    
-    # Only return time steps for the output time (not the full time grid)
-    # find the common timesteps to within +/- 500 seconds
-    common, x_ind, y_ind = np.intersect1d(np.rint(model.model_time/500),
-                                          np.rint(model.time_out/500),
-                                          return_indices=True)
-    particle_r = particle_r[x_ind, :]
-    # If you're getting a kernel restart, check that the length of particle_r is
-    # equal to nt. the tolerance of np.interect1d may need reducing if not.
-    assert(len(particle_r) == len(model.time_out))
-    
-    # add units back in
-    particle_r = (particle_r * u.km).to(u.solRad)
-    lon = lon_grid[particle_lons]
-    lon = lon * u.rad
-    
-    return particle_r, lon
-
-
-@jit(nopython=True)
-def trace_particles(r_grid, lon_sim, dlon, time_grid, v_grid, T_rot, lon_src):
-    """
-    Optimised function to track a single longitude through the HUXt solution. Used by huxt_streakline.
-
-    Args:
-        r_grid: Unitless array of radial grid coordinates from HUXt.r, in km.
-        lon_sim: Unitless array of longitudinal grid coordinates from HUXt.lon, in radians.
-        dlon: Unitless value of radial grid step from HUXt.dr, in km.
-        time_grid: Unitless array of time steps from HUXt.model_time, in seconds.
-        v_grid: Unitless array of solar wind speed solution from HUXt.v_grid, in km/s.
-        T_rot: Rotation rate of HUXt inner boundary, from HUXt.rotation_rate, in seconds.
-        lon_src: The initial longitude of the streakline at time_grid[0], in radians.
-    Returns:
-        particle_r: Radial positions of particles on the streakline as a function of time and longitude.
-        particle_lons: The longitudes of particles on the streakline.
-    """
-    
-    nt = len(time_grid)
-
-    dt = time_grid[1]-time_grid[0]
-    lon_grid = np.arange(dlon/2, 2*np.pi-dlon/2+0.01, dlon)
-    nlon = len(lon_grid)
-    
-    id_lon = np.argmin(np.abs(lon_grid - lon_src))
-    
-    # work out how many rotations are present, including spin up
-    t_total = nt*dt
-    n_rots = int(np.floor(t_total/T_rot) + 1)
-    particle_r = np.NaN * np.zeros((nt, (nlon+1)*n_rots)) 
-    
-    # Initialise starting position of first particle
-    particle_r[0, 0] = r_grid[0]
-    particle_lons = [id_lon]
-    
-    lon_acc = 0 
-    omega = 2 * np.pi / T_rot
-
-    # Loop through model time steps
-    for t_counter, t_out in enumerate(time_grid):
-        
-        # Loop through longitudes with particles on
-        for lon_counter, lon_p in enumerate(particle_lons):
-           
-            # Get the j index for creating a new particle if necessary.
-            lon_next = lon_counter + 1
-            
-            this_lon_present = False
-            if len(lon_sim) > 1:  # 2d solution
-                if (np.abs(lon_sim - lon_grid[lon_p]) < 0.01).any():
-                    this_lon_present = True
-            else:  # 1d solution, single longitude
-                if np.abs(lon_sim - lon_grid[lon_p]) < 0.01:
-                    this_lon_present = True
-            
-            # check whether the longitude of the particle was simulated by HUXt
-            if this_lon_present: 
-
-                # Get the particles position
-                if t_counter == 0:
-                    r_p = r_grid[0]
-                else:
-                    r_p = particle_r[t_counter-1, lon_counter]
-                        
-                # get the model longitude that matches the grid longitude
-                id_mod = np.argmin(np.abs(lon_sim - lon_grid[lon_p]))
-                    
-                # interpolate the speed profile at the particles longitude and radius
-                v_p = np.interp(r_p, r_grid, v_grid[t_counter, :, id_mod])
-                # Advect particle position
-                r_n = r_p + dt*v_p
-                
-                # If particle still in model domain, save updated position, else, set at boundary.
-                if r_n <= r_grid[-1]:
-                    particle_r[t_counter, lon_counter] = r_n
-                else:
-                    particle_r[t_counter, lon_counter] = r_grid[-1]
-                
-                # Get the j index for creating a new particle if necessary.
-                lon_next = lon_counter + 1
-            else:
-                particle_r[t_counter, lon_counter] = np.nan
-        
-        # Has initial longitude rotated into next longitude bin?
-        lon_acc = lon_acc + (omega * dt)
-        if lon_acc >= dlon:
-            # Add new particle 
-            # Get the new longitude index
-            id_lon = id_lon + 1
-            # Reset to zero if cross the 360-0 boundary
-            if id_lon > (nlon-1):
-                id_lon = 0 
-            # Update the longitude ids    
-            particle_lons.append(id_lon)
-            # Initialise the particle height at this time/longitude
-            particle_r[t_counter, lon_next] = r_grid[0]
-            # Reset the longitude accumulator
-            lon_acc = 0
-            
-        # add a particle at the inner boundary for plotting purposes
-        particle_r[t_counter, lon_counter+1] = r_grid[0]
-
-    return particle_r, particle_lons
-
-
-def trace_HCS(model, br_in):
-    """
-    Function to trace HCS from given B(carrLon) and updates the HUXt.HCS_n2p and HUXt.HCS_p2n attributes.
-    Used by add_bgrid function.
-    Args:
-        model: A HUXt instance.
-        br_in: The radial magnetic field at the model inner boundary, as a function of Carrington longitude.
-    Returns:
-        None
-    """
-    
-    # find the HCS crossings
-    Nlon = len(br_in)
-    HCS = np.zeros((Nlon, 1))
-    for i in range(0, Nlon-1):
-        if (br_in[i] >= 0) & (br_in[i+1] < 0):
-            # place the HCS crossing at
-            HCS[i+1] = 1  # this will be neg to pos in time
-        elif (br_in[i] <= 0) & (br_in[i+1] > 0):
-            HCS[i+1] = -1  # this will be pos to neg in time
-            
-    # check the last value by wrapping around 0/2pi
-    if (br_in[Nlon-1] >= 0) & (br_in[0] < 0):
-        # place the HCS crossing at
-        HCS[0] = 1
-    elif (br_in[Nlon-1] <= 0) & (br_in[0] > 0):
-        HCS[0] = -1
-        
-    # track the streaklines from the given Carrington lontidues
-    HCS_p2n_tracks = []
-    HCS_n2p_tracks = []
-    
-    dlon = model.dlon.value
-    lon_grid = np.arange(dlon/2, 2*np.pi-dlon/2+0.01, dlon)
-    
-    for i in range(0, Nlon):
-        if HCS[i] == 1:
-            carr_lon = lon_grid[i]*u.rad
-            r, lons = huxt_streakline(model, carr_lon)
-            # HCS is placed at the r grid immediately before the polarity reversal.
-            HCS_p2n_tracks.append((r, lons))
-        elif HCS[i] == -1:
-            carr_lon = lon_grid[i]*u.rad
-            r, lons = huxt_streakline(model, carr_lon)
-            HCS_n2p_tracks.append((r, lons))
-    
-    # add the HCS crossings to the model class
-    model.HCS_n2p = HCS_n2p_tracks
-    model.HCS_p2n = HCS_p2n_tracks
-    
-    return
-
-
-def add_bgrid(model, br_in):
-    """
-    This function traces the position of hte heliospheric current sheet and updates the HUXt.b_grid attribute of a
-    HUXt instance. Requires HUXt solution to contain the full spin-up data and so to be initialised with
-    enable_field_tracer = True)
-    Args:
-        model: A HUXt instance (configured with enable_field_tracer=True).
-        br_in: The radial magnetic field at the model inner boundary, as a function of Carrington longitude.
-    Returns:
-        None
-    
-    """
-    
-    # trace the HCS positions
-    trace_HCS(model, br_in)
-    
-    # create the full longitude grid
-    dlon = model.dlon.value
-    lon_grid = np.arange(dlon/2, 2*np.pi-dlon/2+0.01, dlon)*u.rad
-    
-    # Rotate the boundary condition, as required by cr_lon_init.    
-    lon_boundary = lon_grid  # model.lon
-    lon_shifted = H._zerototwopi_((lon_boundary - model.cr_lon_init).value)
-    id_sort = np.argsort(lon_shifted)
-    lon_shifted = lon_shifted[id_sort]
-    br_shifted = br_in[id_sort]
-    br_boundary = np.interp(lon_boundary.value, lon_shifted, br_shifted, period=np.pi*2)
-    
-    # combined list
-    HCS_tracks = model.HCS_p2n + model.HCS_n2p
-    HCS_r_list = []
-    HCS_l_list = []
-    HCS_p_list = []
-    for i in range(0, len(HCS_tracks)):
-        r, lons = HCS_tracks[i]
-        HCS_r_list.append(r.value)
-        HCS_l_list.append(lons.value)
-        # set the polarity flag
-        if i < len(model.HCS_p2n):
-            HCS_p_list.append(1)
-        else:
-            HCS_p_list.append(-1)
-
-    r_values = model.r.value  
-    time = model.time_out.value 
-    all_lons = lon_grid.value
-    T_rot = model.rotation_period.value
-    
-    lon_values = model.lon.value 
-    if model.nlon == 1:
-        lon_values = np.array([lon_values])
-    
-    # work out how many rotations are present, including spin up
-    time_grid = model.model_time.value
-    nt = len(time_grid)
-    dt = time_grid[1]-time_grid[0]
-    t_total = nt*dt
-    n_rots = int(np.floor(t_total/T_rot) + 1)
-    
-    model.b_grid = bgrid_from_hcs_tracks(time, HCS_r_list, HCS_l_list, HCS_p_list, br_boundary, all_lons, lon_values,
-                                         r_values, T_rot, n_rots)
-    
-    return
-               
-
-@jit(nopython=True)                 
-def bgrid_from_hcs_tracks(time, HCS_r_list, HCS_l_list, HCS_p_list, br_boundary, all_lons, lon_values, r_values, T_rot,
-                          n_rots):
-    """
-    Optimised function to create a b-polarity grid from streaklines of the heliospheric current sheet (HCS).
-    Args:
-        time:
-        HCS_r_list: List of radial coordinates of the streaklines corresponding to the HCS
-        HCS_l_list: List of longitudinal coordinates of the streaklines corresponding to the HCS
-        HCS_p_list: List of the HCS polarity at a streaklines
-        br_boundary: The radial heliospheric magnetic field component at the HUXt inner boundary
-        all_lons: Unitless gridded longitude coordinates from HUXt.lon_grid
-        lon_values: Unitless longitudinal grid coordinates from HUXt.lon
-        r_values: Unitless radial grid coordiantes from HUXt.r
-        T_rot: Unitless rotation rate in seconds from HUXt.rotation_period
-        n_rots: Number of rotations in the solution.
-
-    Returns:
-        b_grid: Array tracing the polarity of the radial heliospheric magnetic field component.
-    """
-    nHCS = len(HCS_r_list)
-    nt = len(time)
-    nr = len(r_values)
-    nlon = len(lon_values)
-
-    # produce b_grid from HCS crossings
-    b_grid = np.ones((nt, nr, nlon))
-    for t in range(0, nt):
-        
-        # rotate the Br_boundary
-        rot_total = 2*np.pi * time[t] / T_rot
-        
-        # rectify between 0 and 2pi
-        a = -np.floor_divide(rot_total, 2*np.pi)
-        rot = rot_total + (a * 2 * np.pi)
-        
-        # compute this rotated longitude grid
-        lon_shifted = all_lons + rot
-        # rectify between 0 and 2pi
-        a = -np.floor_divide(lon_shifted, 2*np.pi)
-        lon_shifted = lon_shifted + (a * 2 * np.pi)
-    
-        id_sort = np.argsort(lon_shifted)
-        lon_shifted = lon_shifted[id_sort]
-        br_shifted = br_boundary[id_sort]
-        br_rot = np.interp(lon_values, lon_shifted, br_shifted)
-
-        for lon in range(0, nlon):
-            # use the footpoint polarity
-            b_grid[t, :, lon] = np.sign(br_rot[lon])
-            
-            # find which HCS are present at this longitude
-            HCS_thislon = np.ones((nHCS*n_rots, 2)) * np.nan
-            HCS_counter = 0
-            for i in range(0, nHCS):
-                r = HCS_r_list[i]
-                lons = HCS_l_list[i]
-                p = HCS_p_list[i]
-                # check if this HCS corsses the current longitude
-                # mask = (l == lon_values[lon])
-                mask = np.argwhere(lons == lon_values[lon])
-                for j in range(0, mask.size):
-                    HCS_thislon[HCS_counter, 0] = r[t, mask[j].item()]
-                    HCS_thislon[HCS_counter, 1] = p
-                    # get rid of stuff at the outer bound
-                    if HCS_thislon[HCS_counter, 0] >= r_values[-1]:
-                        HCS_thislon[HCS_counter, 0] = np.nan
-                    HCS_counter = HCS_counter + 1
-
-            # sort the HCS crossings into radial distance order
-            order = np.argsort(HCS_thislon[:, 0])
-            HCS_thislon = HCS_thislon[order, :]
-
-            innerR_index = 0
-            outerR_index = nr - 1
-            for j in range(0, nHCS*n_rots):
-                
-                if ~np.isnan(HCS_thislon[j, 0]):
-                    r_index = np.argmin(np.abs(HCS_thislon[j, 0] - r_values))
-                    if HCS_thislon[j, 1] > 0:
-                        b_grid[t, innerR_index:r_index, lon] = 1
-                        b_grid[t, r_index:outerR_index, lon] = -1
-                    else:
-                        b_grid[t, innerR_index:r_index, lon] = -1
-                        b_grid[t, r_index:outerR_index, lon] = 1
-                    # set this HCS as the new inner boundary
-                    innerR_index = r_index
-                    
-            # if there's no HCS at this long, use the previous polarity
-            # stops the polarity from flipping about due to small numerical errors at inner boundary
-            if np.isnan(HCS_thislon[:, 0]).all():
-                if t > 0:  # use the polarity from the previous timestep
-                    b_grid[t, :, lon] = b_grid[t-1, :, lon]
-
-    return b_grid
-
 
 @u.quantity_input(time=u.day)
 def plot_bpol(model, time, save=False, tag='', fighandle=np.nan, axhandle=np.nan, minimalplot=False, streaklines=None,
