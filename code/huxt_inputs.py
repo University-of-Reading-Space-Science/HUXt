@@ -331,9 +331,13 @@ def map_v_inwards(v_orig, r_orig, lon_orig, r_new):
     Tsyn = constants['synodic_period'].to(u.s).value
     r_orig = r_orig.to(u.km).value
     r_new = r_new.to(u.km).value
+    r_0 = (30*u.solRad).to(u.km).value
 
     # Compute the 30 rS speed
-    v0 = v_orig.value * (1 + alpha * (1 - np.exp((r_orig - r_new) / rH)))
+    v0 = v_orig.value / (1 + alpha * (1 - np.exp(-(r_orig - r_0) / rH)))
+    
+    #comppute new speed
+    vnew = v0 * (1 + alpha * (1 - np.exp(-(r_new - r_0) / rH)))
 
     # Compute the transit time from the new to old inner boundary heights (i.e., integrate equations 3 and 4 wrt to r)
     A = v0 + alpha * v0
@@ -344,13 +348,13 @@ def map_v_inwards(v_orig, r_orig, lon_orig, r_new):
     # Work out the longitudinal shift
     phi_new = H._zerototwopi_(lon_orig.value + (T_integral / Tsyn) * 2 * np.pi)
 
-    return v0 * u.km / u.s, phi_new * u.rad
+    return vnew * u.km / u.s, phi_new * u.rad
 
 
 @u.quantity_input(v_orig=u.km / u.s)
 @u.quantity_input(r_orig=u.solRad)
 @u.quantity_input(r_inner=u.solRad)
-def map_v_boundary_inwards(v_orig, r_orig, r_new):
+def map_v_boundary_inwards(v_orig, r_orig, r_new, b_orig = np.nan):
     """
     Function to map a longitudinal V series from r_outer (in rs) to r_inner (in rs)
     accounting for residual acceleration, but neglecting stream interactions.
@@ -360,9 +364,11 @@ def map_v_boundary_inwards(v_orig, r_orig, r_new):
         v_orig: Solar wind speed as function of long at outer radial boundary. Units of km/s.
         r_orig: Radial distance at original radial boundary. Units of km.
         r_new: Radial distance at new radial boundary. Units of km.
+        b_orig: b_r to be optionally mapped using the same time/long delay as v
 
     Returns:
         v_new: Solar wind speed as funciton of long mapped from r_orig to r_new. Units of km/s.
+        b_new: (if b_orig input). B_r as a function of long.
     """
 
     # Compute the longitude grid from the length of the vouter input variable
@@ -374,8 +380,12 @@ def map_v_boundary_inwards(v_orig, r_orig, r_new):
     # Interpolate the mapped speeds back onto the regular Carr long grid,
     # making boundaries periodic
     v_new = np.interp(lon, phis_new, v0, period=2 * np.pi)
-
-    return v_new
+    
+    if np.isfinite(b_orig).any():
+        b_new = np.interp(lon, phis_new, b_orig, period=2 * np.pi)
+        return v_new, b_new
+    else:
+        return v_new
 
 
 @u.quantity_input(v_map=u.km / u.s)
@@ -383,7 +393,7 @@ def map_v_boundary_inwards(v_orig, r_orig, r_new):
 @u.quantity_input(v_map_long=u.rad)
 @u.quantity_input(r_outer=u.solRad)
 @u.quantity_input(r_inner=u.solRad)
-def map_vmap_inwards(v_map, v_map_lat, v_map_long, r_orig, r_new):
+def map_vmap_inwards(v_map, v_map_lat, v_map_long, r_orig, r_new, b_map = np.nan):
     """
     Function to map a V Carrington map from r_orig (in rs) to r_new (in rs),
     accounting for acceleration, but ignoring stream interaction
@@ -395,9 +405,11 @@ def map_vmap_inwards(v_map, v_map_lat, v_map_long, r_orig, r_new):
         v_map_long: Carrington longitude of v_map positions. np.array with units of radians
         r_orig: Radial distance at original radial boundary. np.array with units of km.
         r_new: Radial distance at new radial boundary. np.array with units of km.
+        b_map: b_r to be optionally mapped using the same time/long delay as v. assumed to be on same grid
 
     Returns:
         v_map_new: Solar wind speed map at r_inner. np.array with units of km/s.
+        b_map_new: (if b_orig input). B_r as a function of long.
     """
 
     # Check the dimensions
@@ -405,6 +417,7 @@ def map_vmap_inwards(v_map, v_map_lat, v_map_long, r_orig, r_new):
     assert (len(v_map_long) == len(v_map[1, :]))
 
     v_map_new = np.ones((len(v_map_lat), len(v_map_long)))
+    b_map_new = np.ones((len(v_map_lat), len(v_map_long)))
     for ilat in range(0, len(v_map_lat)):
         # Map each point in to a new speed and longitude
         v0, phis_new = map_v_inwards(v_map[ilat, :], r_orig, v_map_long, r_new)
@@ -413,8 +426,18 @@ def map_vmap_inwards(v_map, v_map_lat, v_map_long, r_orig, r_new):
         # making boundaries periodic * u.km/u.s
         v_map_new[ilat, :] = np.interp(v_map_long.value,
                                        phis_new.value, v0.value, period=2 * np.pi)
-
-    return v_map_new * u.km / u.s
+        
+        #check if b_pol needs mapping
+        if np.isfinite(b_map).any():
+            #check teh b abd v maps are the same dimensions
+            assert (v_map.shape == b_map.shape)
+            b_map_new[ilat, :] = np.interp(v_map_long.value,
+                                           phis_new.value, b_map[ilat, :], period=2 * np.pi)
+            
+    if np.isfinite(b_map).any(): 
+        return v_map_new * u.km / u.s, b_map_new
+    else:
+        return v_map_new * u.km / u.s
 
 
 def get_PFSS_maps(filepath):

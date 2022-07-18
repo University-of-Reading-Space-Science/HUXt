@@ -6,6 +6,7 @@ import h5py
 import numpy as np
 
 import huxt as H
+import huxt_inputs as Hin
 
 
 def test_analytic_solution():
@@ -164,5 +165,101 @@ def test_streaklines():
     mask = np.isfinite(streakline_particles_r)
     assert np.allclose(streakline_particles_r[mask], 
                        model_test.streak_particles_r[mask].value)
+    
+    return
+
+
+def test_input_mapping():
+    """
+    Tests the mapping of v and b to smaller inner boundaries. There are expected
+    to be small differences in the 1-AU solutions, therefore acceptabel tolerances
+    are used. 
+    
+    Tests vlong profile mapping and vmap mapping independently
+    
+    """
+    
+    r_orig = 30*u.solRad
+    r_new = 10*u.solRad
+
+    vtol = 1 # % tolerance for agreement in 1-AU values of V [1]
+    btol = 5 # % tolerance for agreement in 1-AU values of bpolarity [5]
+
+
+    v_orig = np.ones(128) * 400 * (u.km/u.s)
+    v_orig[30:50] = 600 * (u.km/u.s)
+    v_orig[95:125] = 500 * (u.km/u.s)
+
+    b_orig = np.ones(128)
+    b_orig[15:75] = -1
+
+    # long profile mapping
+    #=====================
+
+    #map the v_boundary inwards
+    v_new, b_new = Hin.map_v_boundary_inwards(v_orig, r_orig, r_new, b_orig = b_orig)
+
+    #run the models out 
+    model_orig = H.HUXt(v_boundary=v_orig, b_boundary = b_orig, 
+                     simtime=27*u.day, dt_scale=4, r_min=r_orig, frame = 'sidereal')
+    model_orig.solve([]) 
+
+    model_new = H.HUXt(v_boundary=v_new, b_boundary = b_new,
+                    simtime=27*u.day, dt_scale=4, r_min=r_new,  frame = 'sidereal')
+    model_new.solve([]) 
+ 
+        
+    #compute the fractional difference of 1-AU values
+    v_frac = np.nanmean(abs(model_orig.v_grid[:,-1,:] - model_new.v_grid[:,-1,:])
+                        /np.nanmean(model_orig.v_grid[:,-1,:]))
+    b_frac = np.nanmean(abs(model_orig.b_grid[:,-1,:] - model_new.b_grid[:,-1,:])
+                        /np.nanmean(abs(model_orig.b_grid[:,-1,:])))
+
+        
+    assert(v_frac*100 < vtol)
+    assert(b_frac*100 < btol)
+
+    # check the map mapping
+    #======================
+
+    demo_dir = H._setup_dirs_()['example_inputs']
+    wsafilepath = os.path.join(demo_dir, '2022-02-24T22Z.wsa.gong.fits')
+
+    wsa_vr_map, vr_longs, vr_lats, br_map, br_longs, br_lats, cr_fits \
+        = Hin.get_WSA_maps(wsafilepath)
+        
+    #map the map inwards
+    v_map_new, b_map_new = Hin.map_vmap_inwards(wsa_vr_map, vr_lats, vr_longs, 
+                                                r_orig, r_new, b_map = br_map)
+
+    # extract a 128-length long profile near the equator
+    neq = int(np.floor(len(vr_lats)/2))
+    lon, dlon, nlon = H.longitude_grid()
+    v_orig = np.interp(lon, vr_longs, wsa_vr_map[neq,:], period=2 * np.pi)
+    v_new = np.interp(lon, vr_longs,  v_map_new[neq,:], period=2 * np.pi)
+    b_orig = np.interp(lon, vr_longs, br_map[neq,:], period=2 * np.pi)
+    b_new = np.interp(lon, vr_longs,  b_map_new[neq,:], period=2 * np.pi)
+
+
+    #run the model out 
+    model_orig = H.HUXt(v_boundary=v_orig, b_boundary = b_orig, 
+                     simtime=27*u.day, dt_scale=4, r_min=r_orig, frame = 'sidereal')
+    model_orig.solve([]) 
+
+    model_new = H.HUXt(v_boundary=v_new, b_boundary = b_new,
+                    simtime=27*u.day, dt_scale=4, r_min=r_new,  frame = 'sidereal')
+    model_new.solve([]) 
+
+
+        
+    #compute the fractional difference of 1-AU values
+    v_frac = np.nanmean(abs(model_orig.v_grid[:,-1,:] - model_new.v_grid[:,-1,:])
+                        /np.nanmean(model_orig.v_grid[:,-1,:]))
+    b_frac = np.nanmean(abs(model_orig.b_grid[:,-1,:] - model_new.b_grid[:,-1,:])
+                        /np.nanmean(abs(model_orig.b_grid[:,-1,:])))
+
+        
+    assert(v_frac*100 < vtol)
+    assert(b_frac*100 < btol)
     
     return
