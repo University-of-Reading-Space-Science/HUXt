@@ -8,7 +8,6 @@ import moviepy.editor as mpy
 from moviepy.video.io.bindings import mplfig_to_npimage
 import numpy as np
 import pandas as pd
-from numba import jit
 from sunpy.net import Fido
 from sunpy.net import attrs
 from sunpy.timeseries import TimeSeries
@@ -816,8 +815,15 @@ def plot_bpol(model, time, save=False, tag='', fighandle=np.nan, axhandle=np.nan
     ax.set_xticklabels([])
     
     if not minimalplot:
+        
+        # determine which bodies should be plotted
+        plot_observers = zip(['EARTH', 'VENUS', 'MERCURY', 'STA', 'STB'],
+                             ['ko', 'mo', 'co', 'rs', 'y^'])
+        if model.r[0] > 200 *u.solRad:
+            plot_observers = zip(['EARTH', 'MARS', 'JUPITER', 'SATURN'],
+                                 ['ko', 'mo', 'ro', 'cs'])
         # Add on observers 
-        for body, style in zip(['EARTH', 'VENUS', 'MERCURY', 'STA', 'STB'], ['co', 'mo', 'ko', 'rs', 'y^']):
+        for body, style in plot_observers:
             obs = model.get_observer(body)
             deltalon = 0.0*u.rad
             if model.frame == 'sidereal':

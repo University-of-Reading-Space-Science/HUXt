@@ -539,21 +539,37 @@ class HUXt:
         if np.all(np.isnan(v_boundary)):
             print("Warning: No V boundary conditions supplied. Using default")
             self.v_boundary = 400 * np.ones(self.nlong) * self.kms
+            lon_boundary, dlon, nlon = longitude_grid()
+            self.v_boundary_lons = lon_boundary *u.rad
         elif not np.all(np.isnan(v_boundary)):
-            assert v_boundary.size == self.nlong
+            #check that the implicit time step from vlong is not comparable to the HUXt timestep
+            assert v_boundary.size < 4600 # this equates to about 9 mins
+            
             self.v_boundary = v_boundary
+            # generate the long grid for this v profile
+            nv = len(v_boundary)
+            dlon = 2*np.pi / nv
+            self.v_boundary_lons = np.arange(dlon/2, 2*np.pi - dlon/2 +dlon/10, dlon) *u.rad
+   
         # Keep a protected version that isn't processed for use in saving/loading model runs
         self._v_boundary_init_ = self.v_boundary.copy()
         
         self.track_b = False
         if np.all(np.isnan(b_boundary)):
-            self.b_boundary = np.ones(self.nlong) 
+            self.b_boundary = np.ones(len(self.v_boundary_lons)) 
+            self.b_boundary_lons = self.v_boundary_lons 
         elif not np.all(np.isnan(b_boundary)):
-            assert b_boundary.size == self.nlong
+            #check that the implicit time step from vlong is not comparable to the HUXt timestep
+            assert b_boundary.size < 4600 # this equates to about 9 mins
+            
             self.b_boundary = b_boundary
             self.track_b = True
             # Keep a protected version that isn't processed for use in saving/loading model runs
             self._b_boundary_init_ = self.b_boundary.copy()
+            # generate the long grid for this b profile
+            nb = len(b_boundary)
+            dlon = 2*np.pi / nb
+            self.b_boundary_lons = np.arange(dlon/2, 2*np.pi - dlon/2 +dlon/10, dlon) *u.rad
        
         #add a flag for tracking streaklines
         self.track_streak = False
@@ -579,15 +595,17 @@ class HUXt:
         self.time_init = sun.carrington_rotation_time(cr_frac)
   
         # Rotate the boundary condition as required by cr_lon_init.
-        lon_boundary, dlon, nlon = longitude_grid()
-        lon_shifted = _zerototwopi_((lon_boundary - self.cr_lon_init).value)
+        lon_shifted = _zerototwopi_((self.v_boundary_lons - self.cr_lon_init).value)
         id_sort = np.argsort(lon_shifted)
         lon_shifted = lon_shifted[id_sort]
-        
         v_b_shifted = self.v_boundary[id_sort]
-        self.v_boundary = np.interp(lon_boundary.value, lon_shifted, v_b_shifted, period=self.twopi)
+        self.v_boundary = np.interp(self.v_boundary_lons.value, lon_shifted, v_b_shifted, period=self.twopi)
+        
+        lon_shifted = _zerototwopi_((self.b_boundary_lons - self.cr_lon_init).value)
+        id_sort = np.argsort(lon_shifted)
+        lon_shifted = lon_shifted[id_sort]
         b_b_shifted = self.b_boundary[id_sort]
-        self.b_boundary = np.interp(lon_boundary.value, lon_shifted, b_b_shifted, period=self.twopi)
+        self.b_boundary = np.interp(self.b_boundary_lons.value, lon_shifted, b_b_shifted, period=self.twopi)
         
         # Compute the buffertime required to spin up HUXt, based on minimum speed on the inner boundary
         # and span of radial grid
@@ -657,7 +675,7 @@ class HUXt:
         buffertime = buffersteps * self.dt
         model_time = np.arange(-buffertime.value, (self.simtime.to('s') + self.dt).value, self.dt.value) * self.dt.unit
         dlondt = self.twopi * self.dt / self.rotation_period
-        all_lons, dlon, nlon = longitude_grid()
+        lons, dlon, nlon = longitude_grid()
         self.model_time = model_time
 
         # How many radians of Carrington rotation in this simulation length
@@ -686,7 +704,7 @@ class HUXt:
             # Rectify so that it is between 0 - 2pi
             loninit = _zerototwopi_(lonint)
             # Interpolate the inner boundary speed to this higher resolution
-            vinit = np.interp(loninit, all_lons.value, self.v_boundary.value, period=2 * np.pi)
+            vinit = np.interp(loninit, self.v_boundary_lons.value, self.v_boundary.value, period=2 * np.pi)
             # convert from cr longitude to timesolve
             vinput = np.flipud(vinit)
             # Store the input series
@@ -694,7 +712,7 @@ class HUXt:
             
             
             if self.track_b:
-                binit = np.interp(loninit, all_lons.value, self.b_boundary, period=2 * np.pi)
+                binit = np.interp(loninit, self.b_boundary_lons.value, self.b_boundary, period=2 * np.pi)
                 # convert from cr longitude to timesolve
                 binput = np.flipud(binit)
                 # Store the input series
@@ -828,7 +846,7 @@ class HUXt:
             # find the number of HCS crossings at long
             n_hcs = np.zeros(self.lon.size)
             for i in range(self.lon.size):
-                db = self.input_b_ts[:-1,0]-self.input_b_ts[1:,0]
+                db = self.input_b_ts[:-1,i]-self.input_b_ts[1:,i]
                 n_hcs[i] = (abs(db) > 0.01).sum()
             
             #create variables to store the HCS positions
@@ -937,9 +955,9 @@ class HUXt:
                 lons = self.lon.value
                 
             self.b_grid = bgrid_from_hcs(self.hcs_particles_r, self.input_b_ts, 
-                                         self.model_time.value, lon_grid, 
-                                         self.time_out.value,
-                                         self.r.to(u.km).value, lons)
+                                          self.model_time.value, lon_grid, 
+                                          self.time_out.value,
+                                          self.r.to(u.km).value, lons)
 
         if save:
             if tag == '':
@@ -1856,16 +1874,25 @@ def bgrid_from_hcs(hcs_particles_r, input_b_ts, model_time, lon_grid, time_out,
             bgrid[t,:,ilon] = input_b_ts[id_t, id_lon]
             
             #step through each HCS inversion and flip everything beyond each one
-            hcs_crossings = hcs_particles_r[:,t,0,ilon]
-            #sort into ascending order
-            order = np.argsort(hcs_crossings)
-            hcs_crossings = hcs_crossings[order]
+            hcs_crossings_r = hcs_particles_r[:,t,0,ilon]
+            hcs_crossings_p = hcs_particles_r[:,t,1,ilon]
             
-            for ihcs in range(0,len(hcs_crossings)):
-                if np.isfinite(hcs_crossings[ihcs]):
-                    #find the inner r boundary
-                    r_i = np.argmin(np.abs(hcs_crossings[ihcs] - r_grid + dr/2))
-                    #flip everything beyond this radius
-                    bgrid[t, r_i:, ilon] = -bgrid[t, r_i:,ilon]
+            #hcs crossings are ordered so the further is the first. flip them
+            hcs_crossings_r = np.flip(hcs_crossings_r)
+            hcs_crossings_p = np.flip(hcs_crossings_p)
+            
+            #sort into ascending order
+            #order = np.argsort(hcs_crossings_r)
+            #hcs_crossings_r = hcs_crossings_r[order]
+            
+            for ihcs in range(0,len(hcs_crossings_r)):
+                if np.isfinite(hcs_crossings_r[ihcs]):
+                    #find the r index corresponding to this HCS crossing 
+                    r_i = np.argmin(np.abs(hcs_crossings_r[ihcs] - r_grid + dr/2))
+                    #flip everything at and beyond this radius
+                    if hcs_crossings_p[ihcs] > 0:
+                        bgrid[t, r_i:, ilon] = -1.0
+                    else:
+                        bgrid[t, r_i:, ilon] = 1.0
     return bgrid
                     
