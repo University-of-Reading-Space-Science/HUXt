@@ -16,6 +16,13 @@ Then the examples can be accessed through
 >>jupyter lab code/HUXt_examples.ipynb
 ```
 
+## Testing
+A small test suite is included in ['test_huxt.py'](code/test_huxt.py), which compares tests a HUXt installation against a simple analytical solution and some reference simulation data included in this repository. You should run the test suite after installation as a (limited) check that everything is working as intended. The test suite uses `pytest`, which is included in the `huxt` environment. Using the anaconda prompt from the root directory of `HUXt`, these tests can be performed by running:
+```
+pytest code/test_huxt.py
+```
+The four tests should take around 30s to complete on a modest laptop. These tests are not an exhaustive test of all of the features in `huxt`, but they do cover all of the core functionality and expected common use cases.
+
 ## Usage
 Some examples of how to use HUXt can be found in [`HUXt_examples.ipynb`](code/HUXt_examples.ipynb).
 

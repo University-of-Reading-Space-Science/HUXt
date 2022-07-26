@@ -448,18 +448,21 @@ class HUXt:
     @u.quantity_input(cr_lon_init=u.deg)
     def __init__(self, 
                  v_boundary=np.NaN * (u.km / u.s),
+                 b_boundary=np.nan,
                  cr_num=np.NaN, cr_lon_init=360.0 * u.deg, latitude=0*u.deg,
                  r_min=30 * u.solRad, r_max=240 * u.solRad,
                  lon_out=np.NaN * u.rad, lon_start=np.NaN * u.rad, lon_stop=np.NaN * u.rad,
                  simtime=5.0 * u.day, dt_scale=1.0, frame='synodic',
                  input_v_ts=np.nan * (u.km/u.s),
+                 input_b_ts=np.nan,
                  input_iscme_ts=np.NaN,
                  input_t_ts=np.nan * u.s,
-                 enable_field_tracer=False, track_cmes=True):
+                 track_cmes=True):
         """
         Initialise the HUXt model instance.
 
-            v_boundary: Inner solar wind speed boundary condition. Must be an array of size 128 with units of km/s.
+            v_boundary: Inner solar wind speed boundary condition. Must be an array of size nlon (default 128) with units of km/s.
+            b_boundary: Inner B polarity boundary condition. Must be an array of size nlon (default 128) with units of km/s.
             cr_num: Integer Carrington rotation number. Used to determine the planetary and spacecraft positions
             cr_lon_init: Carrington longitude of Earth at model initialisation, in degrees.
             latitude: Helio latitude (from equator) of HUXt plane, in degrees
@@ -471,12 +474,15 @@ class HUXt:
             simtime: Duration of the simulation window, in days.
             dt_scale: Integer scaling number to set the model output time step relative to the models CFL time.
             frame: string determining the rotation frame for the model
-            input_v_ts: Time series of inner boundary conditions. For initialising HUXt with, for example, 
+            input_v_ts: Time series of inner boundary V conditions. For initialising HUXt with, for example, 
                            in-situ observations from L1. If used as keyword input argument, overrides v_boundary input.
+            input_bv_ts: Time series of inner boundary B conditions. For initialising HUXt with, for example, 
+                            in-situ observations from L1. If used as keyword input argument, overrides b_boundary input.              
             input_t_ts: Times of input_v_ts in seconds, including spin up.
             input_iscme_ts: Boolean mask time series indicating what time steps correspond to CMEs in input_v_ts.
                                If used as keyword input argument, overrides ConeCMEs past to huxt.sovle().
             save_full_v: Boolean flag to determine if full v field (including spin up) is saved for post-processing.
+            track_cmes: Boolean flag to determine if CMEs are tracked at run time (small speed reduction).
         """
 
         # some constants and units
@@ -529,33 +535,46 @@ class HUXt:
         self.time_out = time_grid_dict['time_out']
         del time_grid_dict
          
-        # Establish the speed boundary condition
+        # Establish the Carrington (time stationary) speed boundary condition 
         if np.all(np.isnan(v_boundary)):
             print("Warning: No V boundary conditions supplied. Using default")
             self.v_boundary = 400 * np.ones(self.nlong) * self.kms
+            lon_boundary, dlon, nlon = longitude_grid()
+            self.v_boundary_lons = lon_boundary *u.rad
         elif not np.all(np.isnan(v_boundary)):
-            assert v_boundary.size == self.nlong
+            #check that the implicit time step from vlong is not comparable to the HUXt timestep
+            assert v_boundary.size < 4600 # this equates to about 9 mins
+            
             self.v_boundary = v_boundary
+            # generate the long grid for this v profile
+            nv = len(v_boundary)
+            dlon = 2*np.pi / nv
+            self.v_boundary_lons = np.arange(dlon/2, 2*np.pi - dlon/2 +dlon/10, dlon) *u.rad
+   
         # Keep a protected version that isn't processed for use in saving/loading model runs
         self._v_boundary_init_ = self.v_boundary.copy()
         
-        # Process inputs for time dependent boundary conditions from in-situ data
-        # Solar wind boundary
-        if np.all(np.isnan(input_v_ts)):
-            self.input_v_ts = np.NaN * (u.km / u.s)
-            self.input_v_ts_flag = False
-        else:
-            self.input_v_ts = input_v_ts
-            self.model_time = input_t_ts
-            self.input_v_ts_flag = True
+        self.track_b = False
+        if np.all(np.isnan(b_boundary)):
+            self.b_boundary = np.ones(len(self.v_boundary_lons)) 
+            self.b_boundary_lons = self.v_boundary_lons 
+        elif not np.all(np.isnan(b_boundary)):
+            #check that the implicit time step from vlong is not comparable to the HUXt timestep
+            assert b_boundary.size < 4600 # this equates to about 9 mins
+            
+            self.b_boundary = b_boundary
+            self.track_b = True
+            # Keep a protected version that isn't processed for use in saving/loading model runs
+            self._b_boundary_init_ = self.b_boundary.copy()
+            # generate the long grid for this b profile
+            nb = len(b_boundary)
+            dlon = 2*np.pi / nb
+            self.b_boundary_lons = np.arange(dlon/2, 2*np.pi - dlon/2 +dlon/10, dlon) *u.rad
+       
+        #add a flag for tracking streaklines
+        self.track_streak = False
         
-        # CME flag boundary
-        if np.all(np.isnan(input_iscme_ts)):
-            self.input_iscme_ts = np.NaN
-            self.input_iscme_ts_flag = False
-        else:
-            self.input_iscme_ts = input_iscme_ts
-            self.input_iscme_ts_flag = True   
+
         
         # Determine CR number, used for spacecraft/planetary positions
         if np.isnan(cr_num):
@@ -576,13 +595,17 @@ class HUXt:
         self.time_init = sun.carrington_rotation_time(cr_frac)
   
         # Rotate the boundary condition as required by cr_lon_init.
-        lon_boundary, dlon, nlon = longitude_grid()
-        lon_shifted = _zerototwopi_((lon_boundary - self.cr_lon_init).value)
+        lon_shifted = _zerototwopi_((self.v_boundary_lons - self.cr_lon_init).value)
         id_sort = np.argsort(lon_shifted)
         lon_shifted = lon_shifted[id_sort]
-        
         v_b_shifted = self.v_boundary[id_sort]
-        self.v_boundary = np.interp(lon_boundary.value, lon_shifted, v_b_shifted, period=self.twopi)
+        self.v_boundary = np.interp(self.v_boundary_lons.value, lon_shifted, v_b_shifted, period=self.twopi)
+        
+        lon_shifted = _zerototwopi_((self.b_boundary_lons - self.cr_lon_init).value)
+        id_sort = np.argsort(lon_shifted)
+        lon_shifted = lon_shifted[id_sort]
+        b_b_shifted = self.b_boundary[id_sort]
+        self.b_boundary = np.interp(self.b_boundary_lons.value, lon_shifted, b_b_shifted, period=self.twopi)
         
         # Compute the buffertime required to spin up HUXt, based on minimum speed on the inner boundary
         # and span of radial grid
@@ -590,23 +613,9 @@ class HUXt:
         
         # Preallocate space for the output for the solar wind fields for the cme and ambient solution.
         self.v_grid = np.zeros((self.nt_out, self.nr, self.nlon)) * self.kms
+        if self.track_b:
+            self.b_grid = np.zeros((self.nt_out, self.nr, self.nlon)) 
         
-        # Preallocate space for the full output for the solar wind fields if required
-        self.enable_field_tracer = enable_field_tracer
-        if self.enable_field_tracer:
-            # Set up variable for storing full v_grid
-            buffersteps = np.fix(self.buffertime.to(u.s) / self.dt)
-            buffertime = buffersteps * self.dt
-            model_time = np.arange(-buffertime.value, (self.simtime.to('s') + self.dt).value, self.dt.value)
-            model_time = model_time * self.dt.unit
-            self.v_grid_full = np.zeros((len(model_time), self.nr, self.nlon)) * self.kms
-            
-            # Set up the variable for the B grid
-            self.b_grid = np.zeros((self.nt_out, self.nr, self.nlon)) * np.nan
-            
-            # Set up empty lists for the HCS crossings
-            self.HCS_n2p = []
-            self.HCS_p2n = []
 
         # Mesh the spatial coordinates.
         self.lon_grid, self.r_grid = np.meshgrid(self.lon, self.r)
@@ -619,7 +628,40 @@ class HUXt:
         # Numpy array of model parameters for parsing to external functions that use numba
         self.model_params = np.array([self.dtdr.value, self.alpha.value, self.r_accel.value,
                                       self.dt_scale.value, self.nt_out, self.nr, self.nlon,
-                                      self.r[0].to('km').value])
+                                      self.r[0].to('km').value],
+                                      self.rotation_period.to(u.s).value)
+        
+        
+        # Process inputs for time dependent boundary conditions, e.g., from in-situ data
+        self.input_b_ts = np.NaN 
+        self.input_b_ts_flag = False
+        self.input_iscme_ts = np.NaN
+        self.input_iscme_ts_flag = False
+        self.input_v_ts = np.NaN * (u.km / u.s)
+        self.input_v_ts_flag = False
+        if not np.all(np.isnan(input_v_ts)):
+            
+            #find the required longitudes
+            full_lon_grid, dlon, nlon = longitude_grid()
+            xy, x_ind, y_ind = np.intersect1d(self.lon.value, full_lon_grid.value, 
+                                        return_indices=True)
+            
+            self.input_v_ts = input_v_ts[:, y_ind]
+            self.model_time = input_t_ts
+            self.input_v_ts_flag = True
+        
+            # B polarity
+            if not np.all(np.isnan(input_b_ts)):
+                self.input_b_ts = input_b_ts[:, y_ind]
+                self.input_b_ts_flag = True
+                self.track_b = True
+            
+            # CME flag boundary
+            if not np.all(np.isnan(input_iscme_ts)):
+                self.input_iscme_ts = input_iscme_ts[:, y_ind]
+                self.input_iscme_ts_flag = True  
+        
+        
         return
 
     def ts_from_vlong(self):
@@ -633,7 +675,7 @@ class HUXt:
         buffertime = buffersteps * self.dt
         model_time = np.arange(-buffertime.value, (self.simtime.to('s') + self.dt).value, self.dt.value) * self.dt.unit
         dlondt = self.twopi * self.dt / self.rotation_period
-        all_lons, dlon, nlon = longitude_grid()
+        lons, dlon, nlon = longitude_grid()
         self.model_time = model_time
 
         # How many radians of Carrington rotation in this simulation length
@@ -642,7 +684,9 @@ class HUXt:
         bufferlon = self.twopi * buffertime / self.rotation_period
 
         # Variables to store the input conditions.
-        self.input_v_ts = np.nan * np.ones((model_time.size, nlon))
+        self.input_v_ts = np.nan * np.ones((model_time.size, nlon))  
+        if self.track_b:
+            self.input_b_ts = np.nan * np.ones((model_time.size, nlon))
         
         # Loop through model longitudes and compute boundary conditions at each radial profile.
         for i in range(self.lon.size):
@@ -660,25 +704,45 @@ class HUXt:
             # Rectify so that it is between 0 - 2pi
             loninit = _zerototwopi_(lonint)
             # Interpolate the inner boundary speed to this higher resolution
-            vinit = np.interp(loninit, all_lons.value, self.v_boundary.value, period=2 * np.pi)
+            vinit = np.interp(loninit, self.v_boundary_lons.value, self.v_boundary.value, period=2 * np.pi)
             # convert from cr longitude to timesolve
             vinput = np.flipud(vinit)
             # Store the input series
             self.input_v_ts[:, i] = vinput
             
+            
+            if self.track_b:
+                binit = np.interp(loninit, self.b_boundary_lons.value, self.b_boundary, period=2 * np.pi)
+                # convert from cr longitude to timesolve
+                binput = np.flipud(binit)
+                # Store the input series
+                self.input_b_ts[:, i] = binput
+                
+            
         return
 
-    def solve(self, cme_list, save=False, tag=''):
+    def solve(self, cme_list, streak_carr = [], save=False, tag=''):
         """
         Solve HUXt for the provided longitudinal boundary conditions and cme list. Updates the HUXt.v_grid
         Args:
             cme_list: A list of ConeCME instances to use in solving HUXt
+            streak_src: A list of Carrington longitudes from which to trace streaklines
             save: Boolean, if True saves model output to HDF5 file
             tag: String, appended to the filename of saved solution.
         Returns:
             None
         """
-       
+        
+        # ======================================================================
+        # Generate ambient solar wind time series
+        # ======================================================================
+        # If the input time series has not been prescribed,
+        # Generate it from v(long)
+        if not self.input_v_ts_flag:
+            self.ts_from_vlong()   
+            
+        
+        
         # ======================================================================
         # Process CME list
         # ======================================================================
@@ -695,7 +759,7 @@ class HUXt:
                 
                 if self.frame == 'sidereal':
                     # if the solution is in the sideral frame, adjust CME longitudes
-                    print('Adjusting CME HEEQ longitude for sidereal frame')
+                    #print('Adjusting CME HEEQ longitude for sidereal frame')
                     earthpos = self.get_observer('EARTH')
                     # time and longitude from start of run
                     dt_t0 = (earthpos.time - self.time_init).to(u.s)
@@ -724,19 +788,11 @@ class HUXt:
         else:
             cme_params = np.NaN * np.zeros((1, 9))
             
-        # do a sanity check the CME initial height is the same as teh model inner boundary
+        # sanity check the CME initial height is the same as the model inner boundary
         if len(self.cmes) > 0:
             for cme in self.cmes:
                 assert(self.r[0] == cme.initial_height)
                 
-        # ======================================================================
-        # Generate ambient solar wind time series
-        # ======================================================================
-        # If the input time series has not been prescribed,
-        # Generate it from v(long)
-        if not self.input_v_ts_flag:
-            self.ts_from_vlong()           
-        
         # ======================================================================
         # Add CMEs
         # ======================================================================
@@ -772,38 +828,111 @@ class HUXt:
                                                       self.latitude.value)
                 self.input_v_ts[:, i] = v
                 self.input_iscme_ts[:, i] = isincme
+                
+        # Set up the CME test particle position field
+        self.cme_particles_r = np.zeros((n_cme, self.nt_out, 2, self.nlon)) * u.dimensionless_unscaled
+        self.cme_particles_v = np.zeros((n_cme, self.nt_out, 2, self.nlon)) * u.dimensionless_unscaled
+        
+                
+
+        # ======================================================================    
+        # Set up the HCS test particle position field
+        # ======================================================================
+        n_hcs_max = 0
+        if self.track_b:
+            # convert Br to polarity
+            self.input_b_ts = np.sign(self.input_b_ts)
+            
+            # find the number of HCS crossings at long
+            n_hcs = np.zeros(self.lon.size)
+            for i in range(self.lon.size):
+                db = self.input_b_ts[:-1,i]-self.input_b_ts[1:,i]
+                n_hcs[i] = (abs(db) > 0.01).sum()
+            
+            #create variables to store the HCS positions
+            n_hcs_max = int(max(n_hcs))+1
+            self.hcs_particles_r = np.zeros((n_hcs_max, self.nt_out, 2, self.nlon)) * u.dimensionless_unscaled 
+        
+        
+        
+        # ======================================================================    
+        # Set up the streak lines
+        # ======================================================================
+        if streak_carr: 
+            self.track_streak = True
+        
+            #compute the number of intersections with each longitude
+            time_from_start = self.model_time - self.model_time[0]
+            nrot = int(np.ceil(time_from_start[-1]/self.rotation_period) + 1) 
+            
+            streak_times = np.ones((self.nlon, len(streak_carr), nrot,2))*np.nan
+            # work out the source longitude at start of spin up 
+            for istreak, carr in enumerate(streak_carr):
+                
+                #convert from Carrington longitude to model lon at t=0
+                lon_src = _zerototwopi_((carr - self.cr_lon_init))*u.rad
+            
+                # adjust the source longitude for the spin-up time
+                lon_0 = _zerototwopi_(lon_src.to(u.rad).value 
+                                         - 2*np.pi*self.buffertime.to(u.s) / self.rotation_period)
+                
+                #compute the model longitude of the streak line footpoint with time
+                streak_lon_t = (lon_0 + time_from_start * 2*np.pi / self.rotation_period)*u.rad
+                
+                for ilon, lon in enumerate(self.lon):
+                    for irot in range(0,nrot): 
+                        #find the time index of the streakline at the given lon
+                        id_in = np.argmin(abs(streak_lon_t - 
+                                              (lon - self.dlon/2 + 2*np.pi*irot * u.rad))) 
+                        id_out = np.argmin(abs(streak_lon_t - 
+                                               (lon + self.dlon/2 + 2*np.pi*irot * u.rad))) 
+                    
+                        #if id_out ==0, then the streakline hasn't made it to that lon
+                        if id_in > 0 and id_in < len(time_from_start) -1: 
+                            streak_times[ilon,istreak,irot,0] = id_in
+                            streak_times[ilon,istreak,irot,1] = id_out
+                            
+            #self.streak_times = streak_times
+            self.streak_particles_r = np.zeros((self.nt_out, 
+                                                len(streak_carr), nrot,
+                                                self.nlon)) * np.nan * u.dimensionless_unscaled 
+                            
+        else:
+            streak_times = np.ones((self.nlon,1,1,1))*np.nan
+        
+            
+
         
         # ======================================================================
         # Solve the time series at each longitude
         # ======================================================================
-        # Set up the test particle position field
-        self.cme_particles_r = np.zeros((n_cme, self.nt_out, 2, self.nlon)) * u.dimensionless_unscaled
-        self.cme_particles_v = np.zeros((n_cme, self.nt_out, 2, self.nlon)) * u.dimensionless_unscaled
-            
-        # Solve for the input time series
-        for i in range(self.lon.size):
 
-            # check whether the full grid needs saving
-            if self.enable_field_tracer:
-                v, cme_r_bounds, cme_v_bounds, v_full = solve_radial_full(self.input_v_ts[:, i],
-                                                                          self.input_iscme_ts[:, i],
-                                                                          self.model_time,
-                                                                          self.rrel.value,
-                                                                          self.model_params,
-                                                                          n_cme)
-                
-                self.v_grid_full[:, :, i] = v_full * self.kms
+        for i in range(self.lon.size):
+            
+            # check if there is b polarity data
+            if self.track_b:
+                bslice = self.input_b_ts[:, i]
             else:
-                v, cme_r_bounds, cme_v_bounds = solve_radial(self.input_v_ts[:, i],
-                                                             self.input_iscme_ts[:, i],
-                                                             self.model_time,
-                                                             self.rrel.value,
-                                                             self.model_params,
-                                                             n_cme)
-            # Save the outputs
+                bslice = self.input_v_ts[:, i]*np.nan
+            
+            #actually run the HUXt solver
+            v, cme_r_bounds, cme_v_bounds, \
+                hcs_r, streak_r = solve_radial(self.input_v_ts[:, i],
+                                                         bslice,
+                                                         self.input_iscme_ts[:, i],
+                                                         self.model_time,
+                                                         self.rrel.value,
+                                                         self.model_params,
+                                                         n_cme, n_hcs_max,
+                                                         streak_times[i,:,:,:]) 
+            # Save the output at each longitude
             self.v_grid[:, :, i] = v * self.kms
             self.cme_particles_r[:, :, :, i] = cme_r_bounds * u.dimensionless_unscaled
             self.cme_particles_v[:, :, :, i] = cme_v_bounds * u.dimensionless_unscaled
+            if self.track_b:
+                self.hcs_particles_r[:, :, :, i] = hcs_r * u.dimensionless_unscaled
+            if self.track_streak:
+                self.streak_particles_r[:,:,:,i] = streak_r * u.dimensionless_unscaled
             
         # Update CMEs positions by tracking through the solution.
         if self.track_cmes == True:
@@ -813,6 +942,22 @@ class HUXt:
                 updated_cmes.append(cme)
 
             self.cmes = updated_cmes
+            
+        # Create the bgrid
+        if self.track_b:
+            #create the input lon grid
+            dlon = self.dlon.value
+            lon_grid = np.arange(dlon/2, 2*np.pi-dlon/2+0.01, dlon)
+
+            if self.nlon ==1:
+                lons = np.array([self.lon.value])
+            else:
+                lons = self.lon.value
+                
+            self.b_grid = bgrid_from_hcs(self.hcs_particles_r, self.input_b_ts, 
+                                          self.model_time.value, lon_grid, 
+                                          self.time_out.value,
+                                          self.r.to(u.km).value, lons)
 
         if save:
             if tag == '':
@@ -1259,7 +1404,8 @@ def _zerototwopi_(angles):
 
 
 @jit(nopython=True)
-def solve_radial(vinput, iscmeinput, model_time, rrel, params, n_cme):
+def solve_radial(vinput, binput, iscmeinput, model_time, rrel, params, 
+                 n_cme, n_hcs_max, streak_times):
     """
     Solve the radial profile as a function of time (including spinup), and
     return radial profile at specified output timesteps.
@@ -1271,13 +1417,15 @@ def solve_radial(vinput, iscmeinput, model_time, rrel, params, n_cme):
         rrel: Array of model radial coordinates relative to 30rS.
         params: Array of HUXt parameters.
         n_cme: Number of CMEs in the whole model run (not nec this longitude).
+        n_hcs_max: Maximum number of HCS crossings at any longitude
+        streak_times: time indices of streak foot points to track
     Returns:
         v_grid: Array of radial solar wind speed profile as function of time.
         cme_particles_r: Array of CME tracer particle positions as function of time.
         cme_particles_v: Array of CME tracer particle speeds as a function of time.
     """
     
-    # Main model loop
+    # unpack the HUXt params
     dtdr = params[0]
     alpha = params[1]
     r_accel = params[2]
@@ -1300,9 +1448,26 @@ def solve_radial(vinput, iscmeinput, model_time, rrel, params, n_cme):
     do_cme = 0
     if np.any(iscmeinput) > 0:
         do_cme = 1
+        
+    # Check if HCS needs to be tracked.
+    hcs_particles = np.zeros((n_hcs_max, nt_out, 2))*np.nan
+    
+    #see if there are any streaklines to be traced
+    do_streak = False
+    if not (np.isnan(streak_times)).all():
+        do_streak = True
+        n_streaks = len(streak_times[:,0,0])
+        n_rots = len(streak_times[0,:,0])
+        
+        streak_particles = np.ones((nt_out, n_streaks, n_rots))*np.nan
+        #print('Streaking')
+        r_streakparticles = np.ones((n_streaks, n_rots))*np.nan
+    else:
+        streak_particles = np.ones((1, 1, 1))*np.nan
     
     iter_count = 0
     t_out = 0
+    hcs_count = 0
     
     for t, time in enumerate(model_time):
         # Get the initial condition, which will update in the loop,
@@ -1311,9 +1476,33 @@ def solve_radial(vinput, iscmeinput, model_time, rrel, params, n_cme):
             v = np.ones(nr) * 400
             r_cmeparticles = np.ones((n_cme, 2))*np.nan
             v_cmeparticles = np.ones((n_cme, 2))*np.nan
+            r_hcsparticles = np.ones((n_hcs_max, 2))*np.nan
             
         # Update the inner boundary conditions
         v[0] = vinput[t]
+        
+        #see if there's a HCS crossing to be inserted at the boundary
+        if t > 0:
+            if binput[t] - binput[t-1] > 0:
+                r_hcsparticles[hcs_count, 0] = r_boundary
+                r_hcsparticles[hcs_count, 1] = 1
+                hcs_count = hcs_count + 1
+            elif binput[t] - binput[t-1] < 0:
+                r_hcsparticles[hcs_count, 0] = r_boundary
+                r_hcsparticles[hcs_count, 1] = -1
+                hcs_count = hcs_count + 1
+                
+        # see if there's a new streakline to track and if so, insert at boundary
+        if do_streak:
+            for istreak in range(0, n_streaks):
+                for irot in range(0, n_rots):
+                    if t == streak_times[istreak, irot, 0]:
+                        #add a particle in
+                        r_streakparticles[istreak, irot] =  r_boundary
+                    #if t == streak_times[istreak, irot, 1]:
+                        #take a particle out
+                        #r_streakparticles[istreak, irot] =  np.nan
+                
         
         # Compute boundary speed of each CME at this time. 
         if time > 0:
@@ -1332,6 +1521,7 @@ def solve_radial(vinput, iscmeinput, model_time, rrel, params, n_cme):
                         # Until if condition breaks
                         r_cmeparticles[thiscme, 1] = r_boundary
                         v_cmeparticles[thiscme, 1] = v[0]
+                
 
         # Update all fields for the given longitude
         u_up = v[1:].copy()
@@ -1342,8 +1532,8 @@ def solve_radial(vinput, iscmeinput, model_time, rrel, params, n_cme):
         # Save the updated time step
         v[1:] = u_up_next.copy()
         
-        # Move the test particles forward
-        if t > 0:        
+        # Move the CME test particles forward
+        if t > 0 and do_cme:        
             for n in range(0, n_cme):  # loop over each CME
                 for bound in range(0, 2):  # loop over front and rear boundaries
                     if np.isnan(r_cmeparticles[n, bound]) == False:
@@ -1361,125 +1551,38 @@ def solve_radial(vinput, iscmeinput, model_time, rrel, params, n_cme):
                 if r_cmeparticles[n, 1] > rgrid[-1]:
                     # If the trailing edge is past the outer boundary,delete
                     r_cmeparticles[n, :] = rgrid[-1]
+                    
+        # Move the HCS test particles forward
+        if t > 0:   
+            for n in range(0, n_hcs_max):  # loop over each HCS
+                
+                if np.isnan(r_hcsparticles[n, 0]) == False:
+                    # Linearly interpolate the speed
+                    v_test = np.interp(r_hcsparticles[n, 0] - dr/2, rgrid, v)
 
-        # Save this frame to output if it is an output time step
-        if time >= 0:
-            iter_count = iter_count + 1
-            if iter_count == dt_scale:
-                if t_out <= nt_out - 1:
-                    v_grid[t_out, :] = v.copy()
-                    cme_particles_r[:, t_out, :] = r_cmeparticles.copy()
-                    cme_particles_v[:, t_out, :] = v_cmeparticles.copy()
-                    t_out = t_out + 1
-                    iter_count = 0
-    
-    return v_grid, cme_particles_r, cme_particles_v
-
-
-@jit(nopython=True)
-def solve_radial_full(vinput, iscmeinput, model_time, rrel, params, n_cme):
-    """
-    Solve the radial profile as a function of time (including spinup), and
-    return radial profile at specified output timesteps.
-    Tracks CME frotns as test particles
-    Args:
-        vinput: Timeseries of inner boundary solar wind speeds
-        iscmeinput: Timeseries of in/out of a CME at the inner boundary
-        model_time: Array of model timesteps
-        rrel: Array of model radial coordinates relative to 30rS
-        params: Array of HUXt parameters
-        n_cme: Number of CMEs in the whole model run (not nec this longitude)
-    Returns:
-        v_grid: Array of radial solar wind speed profile as function of time.
-        cme_particles_r: Array of CME tracer particle positions as function of time.
-        cme_particles_v: Array of CME tracer particle speeds as a function of time.
-        v_grid: Array of radial solar wind speed profile as function of time, including the spin-up period
-    """
-    
-    # Main model loop
-    dtdr = params[0]
-    alpha = params[1]
-    r_accel = params[2]
-    dt_scale = np.int32(params[3])
-    nt_out = np.int32(params[4])
-    nr = np.int32(params[5])
-    r_boundary = params[7]
-    
-    # Compute the radial grid for the test particles
-    rgrid = (rrel - rrel[0])*695700.0 + r_boundary  # Can't use astropy.units because numba
-    dr = rgrid[1]-rgrid[0]
-    dt = dtdr*dr
-   
-    # Preallocate space for solutions
-    v_grid = np.zeros((nt_out, nr)) 
-    v_grid_full = np.zeros((len(model_time), nr)) 
-    cme_particles_r = np.zeros((n_cme, nt_out, 2))*np.nan
-    cme_particles_v = np.zeros((n_cme, nt_out, 2))*np.nan
-    
-    # Check if CMEs need to be tracked.
-    do_cme = 0
-    if np.any(iscmeinput) > 0:
-        do_cme = 1
-    
-    iter_count = 0
-    t_out = 0
-    
-    for t, time in enumerate(model_time):
-        # Get the initial condition, which will update in the loop,
-        # and snapshots saved to output at right steps.
-        if t == 0:
-            v = np.ones(nr) * 400
-            r_cmeparticles = np.ones((n_cme, 2))*np.nan
-            v_cmeparticles = np.ones((n_cme, 2))*np.nan
-            
-        # Update the inner boundary conditions
-        v[0] = vinput[t]
+                    # Advance the test particle
+                    r_hcsparticles[n, 0] = (r_hcsparticles[n, 0] + v_test * dt)
+                        
+                if r_hcsparticles[n, 0] > rgrid[-1]:
+                    # If the leading edge is past the outer boundary, delete
+                    r_hcsparticles[n, 0] = np.nan
         
-        # Compute boundary speed of each CME at this time. 
-        if time > 0:
-            if do_cme == 1:
-                for n in range(n_cme):
-                    # Check if this point is within the cone CME
-                    if iscmeinput[t] > 0:
-                        thiscme = iscmeinput[t] - 1
+        #move the streak line particles forward
+        if t> 0 and do_streak:
+            for istreak in range(0, n_streaks):
+                for irot in range(0, n_rots):
+                    if np.isnan(r_streakparticles[istreak, irot] ) == False:
+                        # Linearly interpolate the speed
+                        v_test = np.interp(r_streakparticles[istreak, irot] - dr/2, rgrid, v)
 
-                        # If the leading edge test particle doesn't exist, add it
-                        if np.isnan(r_cmeparticles[thiscme, 0]):
-                            r_cmeparticles[thiscme, 0] = r_boundary
-                            v_cmeparticles[thiscme, 0] = v[0]
+                        # Advance the test particle
+                        r_streakparticles[istreak, irot] = (r_streakparticles[istreak, irot]
+                                                            + v_test * dt)
                             
-                        # Hold the CME trailing edge test particle at the inner boundary
-                        # Until if condition breaks
-                        r_cmeparticles[thiscme, 1] = r_boundary
-                        v_cmeparticles[thiscme, 1] = v[0]
-
-        # Update all fields for the given longitude
-        u_up = v[1:].copy()
-        u_dn = v[:-1].copy()
+                    if r_streakparticles[istreak, irot] > rgrid[-1]:
+                        # If the leading edge is past the outer boundary, delete
+                        r_streakparticles[istreak, irot] = np.nan
         
-        # Do a single model time step
-        u_up_next = _upwind_step_(u_up, u_dn, dtdr, alpha, r_accel, rrel)
-        # Save the updated time step
-        v[1:] = u_up_next.copy()
-        
-        # Move the test particles forward
-        if t > 0:        
-            for n in range(0, n_cme):  # loop over each CME
-                for bound in range(0, 2):  # loop over front and rear boundaries
-                    if np.isnan(r_cmeparticles[n, bound]) == False:
-                        # Linearly interpolate the speed
-                        v_test = np.interp(r_cmeparticles[n, bound] - dr/2, rgrid, v)
-                        # Advance the test particle
-                        r_cmeparticles[n, bound] = (r_cmeparticles[n, bound] + v_test * dt)
-                        v_cmeparticles[n, bound] = v_test
-                        
-                if r_cmeparticles[n, 0] > rgrid[-1]:
-                    # If the leading edge is past the outer boundary, put it at the outer boundary
-                    r_cmeparticles[n, 0] = rgrid[-1]
-                    
-                if r_cmeparticles[n, 1] > rgrid[-1]:
-                    # If the trailing edge is past the outer boundary,delete
-                    r_cmeparticles[n, :] = rgrid[-1]
 
         # Save this frame to output if it is an output time step
         if time >= 0:
@@ -1489,12 +1592,13 @@ def solve_radial_full(vinput, iscmeinput, model_time, rrel, params, n_cme):
                     v_grid[t_out, :] = v.copy()
                     cme_particles_r[:, t_out, :] = r_cmeparticles.copy()
                     cme_particles_v[:, t_out, :] = v_cmeparticles.copy()
+                    hcs_particles[:, t_out, :] = r_hcsparticles.copy()
+                    if do_streak:
+                        streak_particles[t_out, :, :] = r_streakparticles.copy()
                     t_out = t_out + 1
                     iter_count = 0
-                    
-        v_grid_full[t, :] = v.copy()
-        
-    return v_grid, cme_particles_r, cme_particles_v, v_grid_full
+    
+    return v_grid, cme_particles_r, cme_particles_v, hcs_particles, streak_particles
 
 
 @jit(nopython=True)
@@ -1730,4 +1834,65 @@ def load_HUXt_run(filepath):
         raise FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT), filepath)
         
     return model, cme_list
+
+
+@jit(nopython=True)
+def bgrid_from_hcs(hcs_particles_r, input_b_ts, model_time, lon_grid, time_out,
+                   r_grid, lons):
+    """
+    Create the b polarity grid from the tracked HCS positions
+    Args:
+        hcs_particles_r: HCS r valus as a function of long and time, in km (model.hcs_particles_r)
+        input_b_ts : Inner boundary b polarity time series (model.input_b_ts)
+        model_time: Time (rel to model start) of inner boundary values (model.model_time)
+        lon_grid : Longitude grid of input_b_ts, in radians
+        time_out : model output time steps
+        r_grid: Radial grid in km
+        lons : model output longitudes, in radians
+    Returns:
+        bgrid : b polarity grid as function of long, time, r
+    """
+    nt = len(time_out)
+    nr = len(r_grid)
+    nlon = len(lons)
+    dr = r_grid[1] - r_grid[0]
     
+    bgrid = np.ones((nt,nr,nlon))*np.nan
+    for ilon in range(0,nlon):
+        #find the closest input longitude to the current longitude
+        #thislon = lons[ilon]
+        id_lon = ilon #np.argmin(np.abs(thislon - lon_grid))
+        
+        for t in range(0,nt):
+            
+            # find the closest input time to the current snapshot time
+            thistime = time_out[t]
+            id_t = np.argmin(np.abs(model_time - thistime))
+            
+            
+            #make all of the bgrid at this longitude equal to the inner boundary polarity
+            bgrid[t,:,ilon] = input_b_ts[id_t, id_lon]
+            
+            #step through each HCS inversion and flip everything beyond each one
+            hcs_crossings_r = hcs_particles_r[:,t,0,ilon]
+            hcs_crossings_p = hcs_particles_r[:,t,1,ilon]
+            
+            #hcs crossings are ordered so the further is the first. flip them
+            hcs_crossings_r = np.flip(hcs_crossings_r)
+            hcs_crossings_p = np.flip(hcs_crossings_p)
+            
+            #sort into ascending order
+            #order = np.argsort(hcs_crossings_r)
+            #hcs_crossings_r = hcs_crossings_r[order]
+            
+            for ihcs in range(0,len(hcs_crossings_r)):
+                if np.isfinite(hcs_crossings_r[ihcs]):
+                    #find the r index corresponding to this HCS crossing 
+                    r_i = np.argmin(np.abs(hcs_crossings_r[ihcs] - r_grid + dr/2))
+                    #flip everything at and beyond this radius
+                    if hcs_crossings_p[ihcs] > 0:
+                        bgrid[t, r_i:, ilon] = -1.0
+                    else:
+                        bgrid[t, r_i:, ilon] = 1.0
+    return bgrid
+                    
