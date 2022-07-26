@@ -4,3 +4,4 @@
 !.gitignore
 !cme_arrival_calc_test.hdf5
 !HUXt_CR2080_time_dependent_test_case.hdf5
+!HUXt_CR2080_streaklines_case.hdf5
