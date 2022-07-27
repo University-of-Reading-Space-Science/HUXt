@@ -162,10 +162,18 @@ def plot(model, time, save=False, tag='', fighandle=np.nan, axhandle=np.nan,
                 streak_r = []
                 streak_lon = []
                 for irot in range(0,nrot):
-                    streak_lon = streak_lon + model.lon.value.tolist()
-                    streak_r = streak_r + (model.streak_particles_r[id_t,istreak,irot,:]* u.km.to(u.solRad)).value.tolist()
-                    
-                ax.plot(streak_lon, streak_r, 'k')
+                    streak_lon = streak_lon + model.lon.value.tolist() 
+                    streak_r =  streak_r + (model.streak_particles_r[id_t,istreak,irot,:]* u.km.to(u.solRad)).value.tolist() 
+               
+                #add the inner boundary postion too
+                mask = np.isfinite(streak_r)
+                streak_r = np.array(streak_r)
+                streak_lon = np.array(streak_lon)
+                
+                plotlon = np.append(streak_lon[mask], model.streak_lon_r0[id_t, istreak] + model.dlon.value/2) 
+                plotr =  np.append(streak_r[mask], model.r[0].to(u.solRad).value )
+                
+                ax.plot(plotlon, plotr, 'k')
 
         # plot any HCS that have been traced
         if plotHCS and hasattr(model, 'b_grid'):
@@ -727,7 +735,7 @@ def animate_3d(model3d, lon=np.NaN*u.deg, tag=''):
     return
 
 @u.quantity_input(time=u.day)
-def plot_bpol(model, time, save=False, tag='', fighandle=np.nan, axhandle=np.nan, minimalplot=False, streaklines=None,
+def plot_bpol(model, time, save=False, tag='', fighandle=np.nan, axhandle=np.nan, minimalplot=False, 
               plotHCS=True):
     """
     Make a contour plot on polar axis of the solar wind solution at a specific time.
@@ -859,11 +867,27 @@ def plot_bpol(model, time, save=False, tag='', fighandle=np.nan, axhandle=np.nan
         label = "HUXt2D"
         fig.text(0.175, pos.y0, label, fontsize=16)
         
-        # plot any provided streak lines
-        if streaklines is not None:
-            for i in range(0, len(streaklines)):
-                r, lon = streaklines[i]
-                ax.plot(lon, r[id_t, :], 'k')
+        # plot any tracked streaklines
+        if model.track_streak:
+            nstreak = len(model.streak_particles_r[0,:,0,0])
+            for istreak in range(0, nstreak):
+                #construct the streakline from multiple rotations
+                nrot = len(model.streak_particles_r[0,0,:,0])
+                streak_r = []
+                streak_lon = []
+                for irot in range(0,nrot):
+                    streak_lon = streak_lon + model.lon.value.tolist() 
+                    streak_r =  streak_r + (model.streak_particles_r[id_t,istreak,irot,:]* u.km.to(u.solRad)).value.tolist() 
+               
+                #add the inner boundary postion too
+                mask = np.isfinite(streak_r)
+                streak_r = np.array(streak_r)
+                streak_lon = np.array(streak_lon)
+                
+                plotlon = np.append(streak_lon[mask], model.streak_lon_r0[id_t, istreak] + model.dlon.value/2) 
+                plotr =  np.append(streak_r[mask], model.r[0].to(u.solRad).value )
+                
+                ax.plot(plotlon, plotr, 'k')
 
         # plot any HCS that have been traced
         if plotHCS and hasattr(model, 'b_grid'):
