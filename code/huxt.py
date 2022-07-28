@@ -860,6 +860,7 @@ class HUXt:
         # ======================================================================
         if streak_carr: 
             self.track_streak = True
+            self.streak_lon_r0 = np.ones((len(self.time_out), len(streak_carr)))
         
             #compute the number of intersections with each longitude
             time_from_start = self.model_time - self.model_time[0]
@@ -878,6 +879,10 @@ class HUXt:
                 
                 #compute the model longitude of the streak line footpoint with time
                 streak_lon_t = (lon_0 + time_from_start * 2*np.pi / self.rotation_period)*u.rad
+                
+                #save the streakline footpoint longitude on the model time step
+                self.streak_lon_r0[:,istreak] = np.interp(self.time_out, self.model_time, 
+                                              streak_lon_t, period = 2*np.pi)
                 
                 for ilon, lon in enumerate(self.lon):
                     for irot in range(0,nrot): 
@@ -958,6 +963,8 @@ class HUXt:
                                           self.model_time.value, lon_grid, 
                                           self.time_out.value,
                                           self.r.to(u.km).value, lons)
+            
+
 
         if save:
             if tag == '':
