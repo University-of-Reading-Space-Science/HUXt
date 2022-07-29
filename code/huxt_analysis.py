@@ -392,18 +392,23 @@ def get_observer_timeseries(model, observer = 'Earth'):
          time_series: A pandas dataframe giving time series of solar wind speed, and if it exists in the HUXt
                             solution, the magnetic field polarity, at the observer.
     """
-    earth_pos = model.get_observer(observer)
+    earth_pos = model.get_observer('Earth')
+    obs_pos = model.get_observer(observer)
 
-    # adjust the HEEQ coordinates if the sidereal frame has been used
-    lonheeq = None
+
+    #find the model coords of Earth as a function of time
     if model.frame == 'sidereal':
         deltalon = earth_pos.lon_hae - earth_pos.lon_hae[0]
-        lonheeq = H._zerototwopi_(earth_pos.lon.value + deltalon.value)
+        model_lon_earth = H._zerototwopi_(earth_pos.lon.value + deltalon.value)
     elif model.frame == 'synodic':
-        lonheeq = earth_pos.lon.value 
+        model_lon_earth = earth_pos.lon.value 
+        
+    #find the model coords of the given osberver as a function of time
+    deltalon = obs_pos.lon_hae - earth_pos.lon_hae 
+    model_lon_obs = H._zerototwopi_(model_lon_earth + deltalon.value)
 
     if model.nlon == 1:
-        print('Single longitude simulated. Extracting time series at Earth r')
+        print('Single longitude simulated. Extracting time series at Observer r')
 
     time = np.ones(model.nt_out)*np.nan
     lon = np.ones(model.nt_out)*np.nan
@@ -418,13 +423,13 @@ def get_observer_timeseries(model, observer = 'Earth'):
         model_lons = model.lon.value
         if model.nlon == 1:
             model_lons = np.array([model_lons])
-        id_lon = np.argmin(np.abs(model_lons - lonheeq[t]))
+        id_lon = np.argmin(np.abs(model_lons - model_lon_obs[t]))
         
-        # check whether the Earth is within the model domain
-        if ((earth_pos.r[t].value < model.r[0].value) or
-            (earth_pos.r[t].value > model.r[-1].value) or
-            ((abs(model_lons[id_lon] - lonheeq[t]) > model.dlon.value) and
-            (abs(model_lons[id_lon] - lonheeq[t]) - 2*np.pi > model.dlon.value)
+        # check whether the observer is within the model domain
+        if ((obs_pos.r[t].value < model.r[0].value) or
+            (obs_pos.r[t].value > model.r[-1].value) or
+            ((abs(model_lons[id_lon] - model_lon_obs[t]) > model.dlon.value) and
+            (abs(model_lons[id_lon] - model_lon_obs[t]) - 2*np.pi > model.dlon.value)
              )):
             
             bpol[t] = np.nan
@@ -432,18 +437,18 @@ def get_observer_timeseries(model, observer = 'Earth'):
             print('Outside model domain')
         else:
             # find the nearest R coord
-            id_r = np.argmin(np.abs(model.r.value - earth_pos.r[t].value))
+            id_r = np.argmin(np.abs(model.r.value - obs_pos.r[t].value))
             rad[t] = model.r[id_r].value
-            lon[t] = lonheeq[t]
+            lon[t] = model_lon_obs[t]
             # then interpolate the values in longitude
             if model.nlon == 1:
                 speed[t] = model.v_grid[t, id_r, 0].value
                 if hasattr(model, 'b_grid'):
                     bpol[t] = model.b_grid[t, id_r, 0]
             else:
-                speed[t] = np.interp(lonheeq[t], model.lon.value, model.v_grid[t, id_r, :].value, period=2*np.pi)
+                speed[t] = np.interp(model_lon_obs[t], model.lon.value, model.v_grid[t, id_r, :].value, period=2*np.pi)
                 if hasattr(model, 'b_grid'):
-                    bpol[t] = np.interp(lonheeq[t], model.lon.value, model.b_grid[t, id_r, :], period=2*np.pi)
+                    bpol[t] = np.interp(model_lon_obs[t], model.lon.value, model.b_grid[t, id_r, :], period=2*np.pi)
 
     time = Time(time, format='jd')
 
@@ -859,11 +864,32 @@ def plot_bpol(model, time, save=False, tag='', fighandle=np.nan, axhandle=np.nan
         label = "HUXt2D"
         fig.text(0.175, pos.y0, label, fontsize=16)
         
-        # plot any provided streak lines
-        if streaklines is not None:
-            for i in range(0, len(streaklines)):
-                r, lon = streaklines[i]
-                ax.plot(lon, r[id_t, :], 'k')
+
+        # plot any tracked streaklines
+        if model.track_streak:
+            nstreak = len(model.streak_particles_r[0,:,0,0])
+            for istreak in range(0, nstreak):
+                #construct the streakline from multiple rotations
+                nrot = len(model.streak_particles_r[0,0,:,0])
+                streak_r = []
+                streak_lon = []
+                for irot in range(0,nrot):
+                    streak_lon = streak_lon + model.lon.value.tolist() 
+                    streak_r =  streak_r + (model.streak_particles_r[id_t,istreak,irot,:]* u.km.to(u.solRad)).value.tolist() 
+               
+                #add the inner boundary postion too
+                mask = np.isfinite(streak_r)
+                plotlon = np.array(streak_lon)[mask]
+                plotr = np.array(streak_r)[mask]
+                #only add the inner boundary if it's in the HUXt longitude grid
+                foot_lon = H._zerototwopi_(model.streak_lon_r0[id_t, istreak]) 
+                dlon_foot = abs(model.lon.value - foot_lon)
+                if dlon_foot.min() <= model.dlon.value:
+                    plotlon = np.append(plotlon, foot_lon + model.dlon.value/2) 
+                    plotr =  np.append(plotr, model.r[0].to(u.solRad).value )
+                
+                ax.plot(plotlon, plotr, 'k')
+                
 
         # plot any HCS that have been traced
         if plotHCS and hasattr(model, 'b_grid'):
