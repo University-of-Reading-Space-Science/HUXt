@@ -153,6 +153,7 @@ def plot(model, time, save=False, tag='', fighandle=np.nan, axhandle=np.nan,
         label = "HUXt2D \nLat: {:3.0f} deg".format(model.latitude.to(u.deg).value)
         fig.text(0.175, pos.y0, label, fontsize=16)
 
+
         # plot any tracked streaklines
         if model.track_streak:
             nstreak = len(model.streak_particles_r[0,:,0,0])
@@ -162,11 +163,22 @@ def plot(model, time, save=False, tag='', fighandle=np.nan, axhandle=np.nan,
                 streak_r = []
                 streak_lon = []
                 for irot in range(0,nrot):
-                    streak_lon = streak_lon + model.lon.value.tolist()
-                    streak_r = streak_r + (model.streak_particles_r[id_t,istreak,irot,:]* u.km.to(u.solRad)).value.tolist()
-                    
-                ax.plot(streak_lon, streak_r, 'k')
-
+                    streak_lon = streak_lon + model.lon.value.tolist() 
+                    streak_r =  streak_r + (model.streak_particles_r[id_t,istreak,irot,:]* u.km.to(u.solRad)).value.tolist() 
+               
+                #add the inner boundary postion too
+                mask = np.isfinite(streak_r)
+                plotlon = np.array(streak_lon)[mask]
+                plotr = np.array(streak_r)[mask]
+                #only add the inner boundary if it's in the HUXt longitude grid
+                foot_lon = H._zerototwopi_(model.streak_lon_r0[id_t, istreak]) 
+                dlon_foot = abs(model.lon.value - foot_lon)
+                if dlon_foot.min() <= model.dlon.value:
+                    plotlon = np.append(plotlon, foot_lon + model.dlon.value/2) 
+                    plotr =  np.append(plotr, model.r[0].to(u.solRad).value )
+                
+                ax.plot(plotlon, plotr, 'k')
+                
         # plot any HCS that have been traced
         if plotHCS and hasattr(model, 'b_grid'):
             for i in range(0, len(model.hcs_particles_r[:, 0,0,0])):
