@@ -17,6 +17,7 @@ from sunpy.coordinates import sun
 from sunpy.net import Fido
 from sunpy.net import attrs
 from sunpy.timeseries import TimeSeries
+import requests
 
 import huxt as H
 
@@ -711,6 +712,73 @@ def get_CorTom_long_profile(filepath, lat=0.0 * u.deg):
     #vr_in = np.interp(lon.value, lon_map.value, vr) * u.km / u.s
 
     return vr * u.km / u.s
+
+def getMetOfficeWSAandCone(startdate, enddate, datadir = ''):
+    #downloads the most recent WSA output and coneCME files for a given time 
+    #window from the Met Office system. Requires an API key to be set as
+    #a system environment variable
+    #saves wsa and cone files to datadir, which defaults tot he current directory
+    #UTC date format is "%Y-%m-%dT%H:%M:%S"
+    #outputs the filepaths to the WSA and cone files
+    
+    version = 'v1'
+    api_key = os.getenv("API_KEY")
+    url_base = "https://gateway.api-management.metoffice.cloud/swx_swimmr_s4/1.0"
+    
+    startdatestr = startdate.strftime("%Y-%m-%dT%H:%M:%S")
+    enddatestr = enddate.strftime("%Y-%m-%dT%H:%M:%S")
+    
+    request_url = url_base + "/" + version + "/data/swc-enlil-wsa?from=" + startdatestr + "&to=" + enddatestr
+    response = requests.get(request_url,  headers={"accept" : "application/json", "apikey" : api_key })
+    
+    success = False
+    wsafilepath = ''
+    conefilepath = ''
+    model_time = ''
+    if response.status_code == 200:
+    
+        #Convert to json
+        js = response.json()
+        nfiles=len(js['data'])
+        #print('Found: ' + str(nfiles))
+        
+        
+        #get the latest file
+        i = nfiles - 1
+        found_wsa = False
+        found_cone = False
+    
+        
+        #start with the most recent file and work back in time
+        while i > 0:
+            model_time = js['data'][i]['model_run_time']
+            wsa_file_name = js['data'][i]['gong_file']
+            cone_file_name = js['data'][i]['cone_file']
+            
+            wsa_file_url = url_base + "/" + version + "/" + wsa_file_name
+            cone_file_url = url_base + "/" + version + "/" + cone_file_name
+            
+            if not found_wsa:
+                response_wsa = requests.get(wsa_file_url,  headers={ "apikey" : api_key })
+                if response_wsa.status_code == 200:
+                    wsafilepath = os.path.join(datadir, wsa_file_name)
+                    open(wsafilepath,"wb").write(response_wsa.content)
+                    found_wsa = True
+            if not found_cone: 
+                response_cone = requests.get(cone_file_url,  headers={ "apikey" : api_key })
+                if response_cone.status_code == 200:
+                    conefilepath = os.path.join(datadir, cone_file_name)
+                    open(conefilepath,"wb").write(response_cone.content)
+                    found_cone = True
+            i = i - 1
+            if found_wsa and found_wsa:
+                success = True
+                break
+    #else: 
+        #print('Found: 0')
+        
+    return success, wsafilepath, conefilepath, model_time
+
 
 def datetime2huxtinputs(dt):
     """
