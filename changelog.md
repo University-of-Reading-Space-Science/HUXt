@@ -1,5 +1,10 @@
 # HUXt Changelog
 
+# V4.0.1
+
+## Bug Fixes
+- Fixed bug `HUXt.solve()` that incorrectly adjusted CME longitudes when running HUXt in the sidereal frame. In this bug, the error in the adjusted CME longitude grew linearly with the CME launch time relative to model initialisation time.
+
 # V4.0.0
 
 ## Bug fixes
