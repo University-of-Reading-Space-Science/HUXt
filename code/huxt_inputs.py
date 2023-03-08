@@ -571,10 +571,22 @@ def get_WSA_maps(filepath):
 
     assert os.path.exists(filepath)
     hdul = fits.open(filepath)
-
+    
+    
+    keys = hdul[0].header
+    assert 'CARROT' in keys
     cr_num = hdul[0].header['CARROT']
-    dgrid = hdul[0].header['GRID'] * np.pi / 180
-    carrlong = hdul[0].header['CARRLONG'] * np.pi / 180
+    
+    #different versions of WSA data have different keywords?
+    if 'GRID' in keys:    
+        dgrid = hdul[0].header['GRID'] * np.pi / 180
+    else:
+        assert 'LONSTEP' in keys
+        dgrid = hdul[0].header['LONSTEP'] * np.pi / 180
+        
+    #The map edge longitude is given by the CARRLONG variable. 
+    #This is 60 degrees from Central meridian (i.e. Earth Carrington longitude)
+    carrlong = _zerototwopi_( (hdul[0].header['CARRLONG'] ) * np.pi / 180 )
 
     data = hdul[0].data
     br_map_fits = data[0, :, :]
@@ -651,6 +663,36 @@ def get_WSA_long_profile(filepath, lat=0.0 * u.deg):
     #vr_in = np.interp(lon.value, lon_map.value, vr) * u.km / u.s
 
     return vr * u.km / u.s
+
+def get_WSA_br_long_profile(filepath, lat=0.0 * u.deg):
+    """
+    Function to read and process WSA output to provide a longitude profile at a specified latitude
+    of the HMF polarity for use as boundary conditions in HUXt.
+
+    Args:
+        filepath: A complete path to the WSA data file
+        lat: Latitude at which to extract the longitudinal profile, measure up from equator. Float with units of deg
+
+    Returns:
+        vr_in: Solar wind speed as a function of Carrington longitude at solar equator.
+               Interpolated to the default HUXt longitudinal grid. np.array (NDIM = 1) in units of km/s
+    """
+    assert (lat >= -90.0 * u.deg)
+    assert (lat <= 90.0 * u.deg)
+    assert(os.path.isfile(filepath))
+
+    vr_map, lon_map, lat_map, br_map, br_lon, br_lat, cr_num = get_WSA_maps(filepath)
+
+    # Extract the value at the given latitude
+    br = np.zeros(lon_map.shape)
+    for i in range(lon_map.size):
+        br[i] = np.interp(lat.to(u.rad).value, lat_map.to(u.rad).value, br_map[:, i])
+
+    # Now interpolate on to the HUXt longitudinal grid
+    #lon, dlon, nlon = H.longitude_grid(lon_start=0.0 * u.rad, lon_stop=2 * np.pi * u.rad)
+    #vr_in = np.interp(lon.value, lon_map.value, vr) * u.km / u.s
+
+    return br 
 
 def get_PFSS_long_profile(filepath, lat=0.0 * u.deg):
     """

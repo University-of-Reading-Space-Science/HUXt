@@ -175,6 +175,7 @@ class ConeCME:
         self.thickness = thickness  # Extra CME thickness
         self.coords = {}
         self.frame = 'NA'
+        self.longitude_huxt = np.nan # the HUXt longitude, adjusted for sidereal frame if necessary
         return
 
     def parameter_array(self):
@@ -184,7 +185,7 @@ class ConeCME:
         Returns:
             None
         """
-        cme_parameters = [self.t_launch.to('s').value, self.longitude.to('rad').value, self.latitude.to('rad').value,
+        cme_parameters = [self.t_launch.to('s').value, self.longitude_huxt.to('rad').value, self.latitude.to('rad').value,
                           self.width.to('rad').value, self.v.value, self.initial_height.to('km').value,
                           self.radius.to('km').value, self.thickness.to('km').value]
         return cme_parameters
@@ -410,7 +411,7 @@ class HUXt:
     Attributes:
         cmes: A list of ConeCME instances used in the model solution.
         cr_num: If provided, this gives the Carrington rotation number of the selected period, else 9999.
-        cr_lon_init: The initial Carrington longitude of Earth at the models initial timestep.
+        cr_lon_init: The initial Carrington longitude of Earth at the models initial timestep (2 pi at the start of the CR, 0 at the end).
         daysec: seconds in a day.
         dlon: Longitudinal grid spacing (in radians)
         dr: Radial grid spacing (in km).
@@ -765,9 +766,12 @@ class HUXt:
                     dt_t0 = (earthpos.time - self.time_init).to(u.s)
                     dlon_t0 = earthpos.lon_hae - earthpos.lon_hae[0]
                     # find the CME hae longitude relative to the run start
-                    cme_hae = np.interp(cme.t_launch.value, dt_t0.value, dlon_t0)
+                    cme_hae = np.interp(cme.t_launch.to(u.s).value, 
+                                        dt_t0.value, dlon_t0)
                     # adjust the CME HEEQ longitude accordingly
-                    cme.longitude = _zerototwopi_(cme.longitude + cme_hae) * u.rad
+                    cme.longitude_huxt = _zerototwopi_(cme.longitude + cme_hae) * u.rad
+                else:
+                    cme.longitude_huxt = cme.longitude
 
                 # add the CME to the list
                 cme_list_checked.append(cme)
