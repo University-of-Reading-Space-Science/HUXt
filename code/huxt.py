@@ -161,12 +161,13 @@ class ConeCME:
             width: Angular width of the CME, in degrees.
             thickness: Thickness of the CME cone, in solar radii
             initial_height: Height (in solRad) that corresponds to the launch time
+            longitude_huxt: Longitude of CME in HUXt coords, i.e. adjusted for sidereal frame if required
         Returns:
             None
         """
         self.t_launch = t_launch  # Time of CME launch, after the start of the simulation
         lon = _zerototwopi_(longitude.to(u.rad).value) * u.rad
-        self.longitude = lon  # Longitudinal launch direction of the CME
+        self.longitude = lon  # User-supplied Longitudinal launch direction of the CME
         self.latitude = latitude.to(u.rad)  # Latitude launch direction of the CME
         self.v = v  # CME nose speed
         self.width = width  # Angular width
@@ -175,7 +176,7 @@ class ConeCME:
         self.thickness = thickness  # Extra CME thickness
         self.coords = {}
         self.frame = 'NA'
-        self.longitude_huxt = np.nan # the HUXt longitude, adjusted for sidereal frame if necessary
+        self.longitude_huxt = -1 * u.rad # the HUXt longitude, adjusted for sidereal frame if necessary
         return
 
     def parameter_array(self):
@@ -187,7 +188,7 @@ class ConeCME:
         """
         cme_parameters = [self.t_launch.to('s').value, self.longitude_huxt.to('rad').value, self.latitude.to('rad').value,
                           self.width.to('rad').value, self.v.value, self.initial_height.to('km').value,
-                          self.radius.to('km').value, self.thickness.to('km').value]
+                          self.radius.to('km').value, self.thickness.to('km').value, self.longitude.to('rad').value]
         return cme_parameters
 
     def _track_(self, model, cme_id):
@@ -790,7 +791,7 @@ class HUXt:
             # Also sort the list of ConeCMEs so that it corresponds ot cme_params
             self.cmes = [self.cmes[i] for i in id_sort]
         else:
-            cme_params = np.NaN * np.zeros((1, 9))
+            cme_params = np.NaN * np.zeros((1, 10))
             
         # sanity check the CME initial height is the same as the model inner boundary
         if len(self.cmes) > 0:
