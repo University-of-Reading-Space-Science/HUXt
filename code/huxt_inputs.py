@@ -1086,7 +1086,7 @@ def set_time_dependent_boundary(vgrid_Carr, time_grid, starttime, simtime, r_min
                        input_t_ts=model_time)
         
     else:
-        # set up the model class with these data initialised
+        # set up the model class without B
         model = H.HUXt(v_boundary=np.ones(128)*400*u.km/u.s,
                        simtime=simtime,
                        cr_num=cr, cr_lon_init=cr_lon_init,
@@ -1117,7 +1117,7 @@ def _zerototwopi_(angles):
 
 
 def generate_vCarr_from_OMNI(runstart, runend, nlon_grid=128, dt=1*u.day, 
-                             ref_r = 215*u.solRad):
+                             ref_r = 215*u.solRad, corot_type = 'both'):
     """
     A function to download OMNI data and generate V_carr and time_grid
     for use with set_time_dependent_boundary
@@ -1128,11 +1128,15 @@ def generate_vCarr_from_OMNI(runstart, runend, nlon_grid=128, dt=1*u.day,
         nlon_grid: Int, 128 by default
         dt: time resolution, in days is 1*u.day.
         ref_r: radial distance to produce v at, 215*u.solRad by default.
+        corot_type: STring that determines corot type (both, back, forward)
     Returns:
         Time: Array of times as Julian dates
         Vcarr: Array of solar wind speeds mapped as a function of Carr long and time
         bcarr: Array of Br mapped as a function of Carr long and time
     """
+    
+    #check the coro_type is one of he accepted values
+    assert corot_type == 'both' or corot_type == 'back' or corot_type == 'forward'
 
     # download an additional 28 days either side
     starttime = runstart - datetime.timedelta(days=28)
@@ -1261,5 +1265,11 @@ def generate_vCarr_from_OMNI(runstart, runend, nlon_grid=128, dt=1*u.day,
         bgrid_carr_recon_both[:, t] = numerator / denominator
     # cut out the requested time
     mask = ((time_grid >= Time(runstart).mjd) & (time_grid <= Time(runend).mjd))
-
-    return time_grid[mask], vgrid_carr_recon_both[:, mask], bgrid_carr_recon_both[:, mask]
+    
+    
+    if corot_type == 'both':
+        return time_grid[mask], vgrid_carr_recon_both[:, mask], bgrid_carr_recon_both[:, mask]
+    elif corot_type == 'back':
+        return time_grid[mask], vgrid_carr_recon_back[:, mask], bgrid_carr_recon_back[:, mask]
+    elif corot_type == 'forward':
+        return time_grid[mask], vgrid_carr_recon_forward[:, mask], bgrid_carr_recon_forward[:, mask]
