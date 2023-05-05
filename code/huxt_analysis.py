@@ -464,9 +464,11 @@ def get_observer_timeseries(model, observer = 'Earth'):
                 if hasattr(model, 'b_grid'):
                     bpol[t] = np.interp(model_lon_obs[t], model.lon.value, model.b_grid[t, id_r, :], period=2*np.pi)
 
-    time = Time(time, format='jd')
+    #time = Time(time, format='jd')
+    time = pd.to_datetime(time, unit='D', origin='julian')
+    
 
-    time_series = pd.DataFrame(data={'time': time.datetime, 'r': rad,
+    time_series = pd.DataFrame(data={'time': time, 'r': rad,
                                            'lon': lon, 'vsw': speed, 'bpol': bpol})
     return time_series
 
