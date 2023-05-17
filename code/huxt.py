@@ -1704,48 +1704,45 @@ def _is_in_cme_boundary_(r_boundary, lon, lat, time, cme_params):
     cme_t_launch = cme_params[0]
     cme_lon = cme_params[1]
     cme_lat = cme_params[2]
-    cme_width = cme_params[3]
+    #cme_width = cme_params[3]
     cme_v = cme_params[4]
     # cme_initial_height = cme_params[5]
-    cme_radius = cme_params[6]
+    cme_radius = cme_params[6] # the physical width at the inner boundary
     cme_thickness = cme_params[7]
 
-    # Center the longitude array on CME nose, running from -pi to pi, to avoid dealing with any 0/2pi crossings
-    lon_cent = lon - cme_lon
-    if lon_cent > np.pi:
-        lon_cent = 2.0 * np.pi - lon_cent
-    if lon_cent < -np.pi:
-        lon_cent = lon_cent + 2.0 * np.pi
 
-    lat_cent = lat - cme_lat
-    if lat_cent > np.pi:
-        lat_cent = 2.0 * np.pi - lat_cent
-    if lat_cent < -np.pi:
-        lat_cent = lat_cent + 2.0 * np.pi
 
-    # Compute great circle distance from nose to input coord, pythagoras on a sphere.
-    sigma = np.arccos(np.cos(lat_cent) * np.cos(lon_cent))  # simplified version for the frame centered on the CME
-   
+    # Compute y, the height of CME nose above the 30rS surface
+    y = cme_v * (time - cme_t_launch)
+    
+    #compute x, the radius of the cme currently threading the inner boundary
     x = np.NaN
-    if (lon_cent >= -cme_width / 2) & (lon_cent <= cme_width / 2):
-        # Longitude inside CME span.
-        # Compute y, the height of CME nose above the 30rS surface
-        y = cme_v * (time - cme_t_launch)
+    if (y >= 0) & (y < cme_radius):
+        # this is the front hemisphere of the spherical CME
+        x = np.sqrt(y * (2 * cme_radius - y))  # compute x, the distance of the current longitude from the nose
+    elif (y >= (cme_radius + cme_thickness)) & (y <= (2 * cme_radius + cme_thickness)):
+        # this is the back hemisphere of the spherical CME
+        y = y - cme_thickness
+        x = np.sqrt(y * (2 * cme_radius - y))
+    elif (cme_thickness > 0) & (y >= cme_radius) & (y <= (cme_radius + cme_thickness)):
+        # this is the "mass" between the hemispheres
+        x = cme_radius
+    else:
+        #the CME is not threading the inner boundary
+        return False
+            
+    #convert x back to an angular width
+    ang_width = np.arctan(x / r_boundary)
+    
+    #compute the angle between the given point and the CME centre
+    delta_long = lon - cme_lon
+    # Calculate the central angle between the reference point and the cme centroid
+    #using the spherical law of cosines
+    central_angle = np.arccos(np.sin(lat) * np.sin(cme_lat) + 
+                              np.cos(lat) * np.cos(cme_lat) * np.cos(delta_long))
 
-        if (y >= 0) & (y < cme_radius):
-            # this is the front hemisphere of the spherical CME
-            x = np.sqrt(y * (2 * cme_radius - y))  # compute x, the distance of the current longitude from the nose
-        elif (y >= (cme_radius + cme_thickness)) & (y <= (2 * cme_radius + cme_thickness)):
-            # this is the back hemisphere of the spherical CME
-            y = y - cme_thickness
-            x = np.sqrt(y * (2 * cme_radius - y))
-        elif (cme_thickness > 0) & (y >= cme_radius) & (y <= (cme_radius + cme_thickness)):
-            # this is the "mass" between the hemispheres
-            x = cme_radius
-
-        theta = np.arctan(x / r_boundary)
-        if sigma <= theta:
-            isincme = True
+    if central_angle <= ang_width:
+        isincme = True
 
     return isincme
 
