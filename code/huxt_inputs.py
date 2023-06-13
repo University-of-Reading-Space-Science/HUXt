@@ -930,7 +930,7 @@ def ConeFile_to_ConeCME_list(model, filepath):
         # compute initial radius of the cone
         radius = np.abs(model.r[0] * np.tan(wid / 2.0))  # eqn on line 162 in ConeCME class
         # Thickness determined from xcld and radius
-        thick = (1.0 - cme_val['xcld']) * radius
+        thick = 5 * u.solRad#(1.0 - cme_val['xcld']) * radius
 
         cme = H.ConeCME(t_launch=dt_cme, longitude=lon, latitude=lat, 
                         width=wid, v=speed, thickness=thick, initial_height=iheight)
@@ -944,6 +944,31 @@ def ConeFile_to_ConeCME_list(model, filepath):
     cme_list = [cme_list[i] for i in id_sort]
 
     return cme_list
+
+def ConeCME_from_params(model, v, lon, lat, width, obstime, obsheight):
+    """
+    A function to produce a ConeCME for input to HUXt derived from supplied CME params.
+    Args:
+        model: A HUXt instance.
+        v: CME speed, in kms/s
+        lon: CME longitude in HEEQ, in deg
+        lat: CME latitude in HEEQ, in deg
+        width: CME full width, in deg
+        obstime: Time of reference coronagraph observation
+        obsheight: Height of reference coronagraph observation, in rS
+    returns:
+        cme: A ConeCME instances.
+    """
+    #figure out the time of the CME at the model inner boundary, assuming constant speed
+    dr = (model.r[0] - obsheight).to(u.km)
+    dt = (dr/v).to(u.day)
+    #t_cme = obstime + 
+          
+    
+    # CME initialisation relative to model initialisation, in days
+    dt_cme = (t_cme - model.time_init).jd * u.day
+    radius = np.abs(model.r[0] * np.tan(width / 2.0)) 
+
 
 
 def ConeFile_to_ConeCME_list_time(filepath, time):
