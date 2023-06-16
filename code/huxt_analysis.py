@@ -47,7 +47,11 @@ def plot(model, time, save=False, tag='', fighandle=np.nan, axhandle=np.nan,
     # Get plotting data
     lon_arr, dlon, nlon = H.longitude_grid()
     lon, rad = np.meshgrid(lon_arr.value, model.r.value)
-    mymap = mpl.cm.viridis
+   
+    orig_cmap = mpl.cm.viridis
+    #make a copy
+    mymap = type(orig_cmap)(orig_cmap.colors)
+      
     v_sub = model.v_grid.value[id_t, :, :].copy()
     plotvmin = 200
     plotvmax = 810
@@ -196,7 +200,7 @@ def plot(model, time, save=False, tag='', fighandle=np.nan, axhandle=np.nan,
     return fig, ax
 
 
-def animate(model, tag, streaklines=None, plotHCS=True):
+def animate(model, tag, streaklines=None, plotHCS=True, outputfilepath=''):
     """
     Animate the model solution, and save as an MP4.
     Args:
@@ -204,6 +208,7 @@ def animate(model, tag, streaklines=None, plotHCS=True):
         tag: String to append to the filename of the animation.
         streaklines: A list of streaklines to plot.
         plotHCS: Boolean flag on whether to plot the heliospheric current sheet location.
+        outputfilepath: full path, including filename if output is to be saved anywhere other than huxt/figures
     Returns:
         None
     """
@@ -230,9 +235,14 @@ def animate(model, tag, streaklines=None, plotHCS=True):
         plt.close('all')
         return frame
 
-    cr_num = np.int32(model.cr_num.value)
-    filename = "HUXt_CR{:03d}_{}_movie.mp4".format(cr_num, tag)
-    filepath = os.path.join(model._figure_dir_, filename)
+    
+    if outputfilepath:
+        filepath = outputfilepath
+    else:
+        cr_num = np.int32(model.cr_num.value)
+        filename = "HUXt_CR{:03d}_{}_movie.mp4".format(cr_num, tag)
+        filepath = os.path.join(model._figure_dir_, filename)
+    
     animation = mpy.VideoClip(make_frame, duration=duration)
     animation.write_videofile(filepath, fps=24, codec='libx264')
     return
@@ -589,7 +599,11 @@ def plot3d_radial_lat_slice(model3d, time, lon=np.NaN*u.deg, save=False, tag='')
         model = model3d.HUXtlat[n]
         mercut[:, n] = model.v_grid[id_t, :, id_lon]
     
-    mymap = mpl.cm.viridis
+     
+    orig_cmap = mpl.cm.viridis
+    #make a copy
+    mymap = type(orig_cmap)(orig_cmap.colors)
+    
     mymap.set_over('lightgrey')
     mymap.set_under([0, 0, 0])
     levels = np.arange(plotvmin, plotvmax + dv, dv)
@@ -712,13 +726,14 @@ def plot3d_radial_lat_slice(model3d, time, lon=np.NaN*u.deg, save=False, tag='')
     return fig, ax
 
 
-def animate_3d(model3d, lon=np.NaN*u.deg, tag=''):
+def animate_3d(model3d, lon=np.NaN*u.deg, tag='', outputfilepath=''):
     """
     Animate the model solution, and save as an MP4.
     Args:
         model3d: An instance of HUXt3d
         lon: The longitude along which to render the latitudinal slice.
         tag: String to append to the filename of the animation.
+        outputfilepath: full path, including filename if output is to be saved anywhere other than huxt/figures
     Returns:
         None
     """
@@ -740,9 +755,14 @@ def animate_3d(model3d, lon=np.NaN*u.deg, tag=''):
         plt.close('all')
         return frame
 
-    cr_num = np.int32(model.cr_num.value)
-    filename = "HUXt_CR{:03d}_{}_movie.mp4".format(cr_num, tag)
-    filepath = os.path.join(model._figure_dir_, filename)
+  
+    if outputfilepath:
+        filepath = outputfilepath
+    else:
+        cr_num = np.int32(model.cr_num.value)
+        filename = "HUXt_CR{:03d}_{}_movie.mp4".format(cr_num, tag)
+        filepath = os.path.join(model._figure_dir_, filename)
+        
     animation = mpy.VideoClip(make_frame_3d, duration=duration)
     animation.write_videofile(filepath, fps=24, codec='libx264')
     return
