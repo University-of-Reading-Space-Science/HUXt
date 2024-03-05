@@ -19,9 +19,10 @@ dependencies:
   - pandas=1.2.3
   - packaging=21.3
   - pip=21.1
-  - pyhdf==0.10.2
+  - pyhdf=0.10.5
+  - pytables=3.6.1
   - pytest=7.1.2
-  - scipy=1.6.0
+  - scipy=1.10.0
   - sunpy=4.0.4
   - urllib3=1.26.8
   
