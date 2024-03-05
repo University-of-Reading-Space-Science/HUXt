@@ -21,8 +21,7 @@ mpl.rc("legend", fontsize=16)
 
 
 @u.quantity_input(time=u.day)
-def plot(model, time, save=False, tag='', fighandle=np.nan, axhandle=np.nan,
-         minimalplot=False,  plotHCS=True):
+def plot(model, time, save=False, tag='', fighandle=np.nan, axhandle=np.nan, minimalplot=False,  plotHCS=True):
     """
     Make a contour plot on polar axis of the solar wind solution at a specific time.
     Args:
@@ -162,7 +161,7 @@ def plot(model, time, save=False, tag='', fighandle=np.nan, axhandle=np.nan,
         if model.track_streak:
             nstreak = len(model.streak_particles_r[0,:,0,0])
             for istreak in range(0, nstreak):
-                #construct the streakline from multiple rotations
+                # construct the streakline from multiple rotations
                 nrot = len(model.streak_particles_r[0,0,:,0])
                 streak_r = []
                 streak_lon = []
@@ -170,11 +169,11 @@ def plot(model, time, save=False, tag='', fighandle=np.nan, axhandle=np.nan,
                     streak_lon = streak_lon + model.lon.value.tolist() 
                     streak_r =  streak_r + (model.streak_particles_r[id_t,istreak,irot,:]* u.km.to(u.solRad)).value.tolist() 
                
-                #add the inner boundary postion too
+                # add the inner boundary postion too
                 mask = np.isfinite(streak_r)
                 plotlon = np.array(streak_lon)[mask]
                 plotr = np.array(streak_r)[mask]
-                #only add the inner boundary if it's in the HUXt longitude grid
+                # only add the inner boundary if it's in the HUXt longitude grid
                 foot_lon = H._zerototwopi_(model.streak_lon_r0[id_t, istreak]) 
                 dlon_foot = abs(model.lon.value - foot_lon)
                 if dlon_foot.min() <= model.dlon.value:
@@ -189,7 +188,6 @@ def plot(model, time, save=False, tag='', fighandle=np.nan, axhandle=np.nan,
                 r = model.hcs_particles_r[i,id_t,0,:]*u.km.to(u.solRad) 
                 lons = model.lon
                 ax.plot(lons, r, 'w.')
-
 
     if save:
         cr_num = np.int32(model.cr_num.value)
@@ -402,7 +400,8 @@ def plot_timeseries(model, radius, lon, save=False, tag=''):
 
     return fig, ax
 
-def get_observer_timeseries(model, observer = 'Earth'):
+
+def get_observer_timeseries(model, observer='Earth'):
     """
     Compute the solar wind time series at an observer location. Returns a pandas dataframe with the 
     solar wind speed time series interpolated from the model solution using the
@@ -417,15 +416,14 @@ def get_observer_timeseries(model, observer = 'Earth'):
     earth_pos = model.get_observer('Earth')
     obs_pos = model.get_observer(observer)
 
-
-    #find the model coords of Earth as a function of time
+    # find the model coords of Earth as a function of time
     if model.frame == 'sidereal':
         deltalon = earth_pos.lon_hae - earth_pos.lon_hae[0]
         model_lon_earth = H._zerototwopi_(earth_pos.lon.value + deltalon.value)
     elif model.frame == 'synodic':
         model_lon_earth = earth_pos.lon.value 
         
-    #find the model coords of the given osberver as a function of time
+    # find the model coords of the given osberver as a function of time
     deltalon = obs_pos.lon_hae - earth_pos.lon_hae 
     model_lon_obs = H._zerototwopi_(model_lon_earth + deltalon.value)
 
@@ -474,13 +472,11 @@ def get_observer_timeseries(model, observer = 'Earth'):
                 if hasattr(model, 'b_grid'):
                     bpol[t] = np.interp(model_lon_obs[t], model.lon.value, model.b_grid[t, id_r, :], period=2*np.pi)
 
-    #time = Time(time, format='jd')
     time = pd.to_datetime(time, unit='D', origin='julian')
-    
 
-    time_series = pd.DataFrame(data={'time': time, 'r': rad,
-                                           'lon': lon, 'vsw': speed, 'bpol': bpol})
+    time_series = pd.DataFrame(data={'time': time, 'r': rad, 'lon': lon, 'vsw': speed, 'bpol': bpol})
     return time_series
+
 
 def plot_earth_timeseries(model, plot_omni=True):
     """
@@ -614,9 +610,7 @@ def plot3d_radial_lat_slice(model3d, time, lon=np.NaN*u.deg, save=False, tag='')
     # Set edge color of contours the same, for good rendering in PDFs
     for c in cnt.collections:
         c.set_edgecolor("face")
-             
-     
-        
+
     # Trace the CME boundaries
     cme_colors = ['r', 'c', 'm', 'y', 'deeppink', 'darkorange']
     for n in range(0, len(model.cmes)):
@@ -631,18 +625,15 @@ def plot3d_radial_lat_slice(model3d, time, lon=np.NaN*u.deg, save=False, tag='')
             
             cme_r_front[ilat] = model.cme_particles_r[n,id_t,0,id_lon]
             cme_r_back[ilat] = model.cme_particles_r[n,id_t,1,id_lon]
-        
-            #ax.plot(model.latitude.to(u.rad), (r_front*u.km).to(u.solRad), 'o', color=cme_colors[n], linewidth=3)
-            #ax.plot(model.latitude.to(u.rad), (r_back*u.km).to(u.solRad), 'o', color=cme_colors[n], linewidth=3)
-        #trim the nans
+
+        # trim the nans
         # Find indices that sort the longitudes, to make a wraparound of lons
         id_sort_inc = np.argsort(lats)
         id_sort_dec = np.flipud(id_sort_inc)
         
         cme_r_front = cme_r_front[id_sort_inc]
         cme_r_back = cme_r_back[id_sort_dec]
-        
-        
+
         lat_front = lats[id_sort_inc]
         lat_back = lats[id_sort_dec]
         
@@ -662,7 +653,6 @@ def plot3d_radial_lat_slice(model3d, time, lon=np.NaN*u.deg, save=False, tag='')
         
             ax.plot(lats.to(u.rad), (cme_r*u.km).to(u.solRad), color=cme_colors[n], linewidth=3)
 
-
     # determine which bodies should be plotted
     plot_observers = zip(['EARTH', 'VENUS', 'MERCURY', 'STA', 'STB'],
                          ['ko', 'mo', 'co', 'rs', 'y^'])
@@ -675,12 +665,13 @@ def plot3d_radial_lat_slice(model3d, time, lon=np.NaN*u.deg, save=False, tag='')
         obs = model.get_observer(body)
         deltalon = 0.0*u.rad
         
-        #adjust body longitude for the frame
+        # adjust body longitude for the frame
         if model.frame == 'sidereal':
             earth_pos = model.get_observer('EARTH')
-            deltalon = earth_pos.lon_hae[id_t] - earth_pos.lon_hae[0]  
+            deltalon = earth_pos.lon_hae[id_t] - earth_pos.lon_hae[0]
+
         bodylon = H._zerototwopi_(obs.lon[id_t] + deltalon)*u.rad
-        #plot bodies that are close to being in the plane
+        # plot bodies that are close to being in the plane
         if abs(bodylon - lon_out) < model.dlon *2:
             ax.plot(obs.lat[id_t], obs.r[id_t], style, markersize=16, label=body)
     
@@ -695,7 +686,6 @@ def plot3d_radial_lat_slice(model3d, time, lon=np.NaN*u.deg, save=False, tag='')
     ax.set_xticklabels([])
     ax.patch.set_facecolor('slategrey')
     fig.subplots_adjust(left=0.05, bottom=0.16, right=0.95, top=0.99)
-
 
     # Add color bar
     pos = ax.get_position()
@@ -899,13 +889,12 @@ def plot_bpol(model, time, save=False, tag='', fighandle=np.nan, axhandle=np.nan
         
         label = "HUXt2D"
         fig.text(0.175, pos.y0, label, fontsize=16)
-        
 
         # plot any tracked streaklines
         if model.track_streak:
             nstreak = len(model.streak_particles_r[0,:,0,0])
             for istreak in range(0, nstreak):
-                #construct the streakline from multiple rotations
+                # construct the streakline from multiple rotations
                 nrot = len(model.streak_particles_r[0,0,:,0])
                 streak_r = []
                 streak_lon = []
@@ -913,11 +902,11 @@ def plot_bpol(model, time, save=False, tag='', fighandle=np.nan, axhandle=np.nan
                     streak_lon = streak_lon + model.lon.value.tolist() 
                     streak_r =  streak_r + (model.streak_particles_r[id_t,istreak,irot,:]* u.km.to(u.solRad)).value.tolist() 
                
-                #add the inner boundary postion too
+                # add the inner boundary postion too
                 mask = np.isfinite(streak_r)
                 plotlon = np.array(streak_lon)[mask]
                 plotr = np.array(streak_r)[mask]
-                #only add the inner boundary if it's in the HUXt longitude grid
+                # only add the inner boundary if it's in the HUXt longitude grid
                 foot_lon = H._zerototwopi_(model.streak_lon_r0[id_t, istreak]) 
                 dlon_foot = abs(model.lon.value - foot_lon)
                 if dlon_foot.min() <= model.dlon.value:
