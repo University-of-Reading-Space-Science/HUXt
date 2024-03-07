@@ -42,7 +42,7 @@ def get_MAS_boundary_conditions(cr=np.NaN, observatory='', runtype='', runnumber
     flag: Integer, 1 = successful download. 0 = files exist, -1 = no file found.
     """
 
-    assert (np.isnan(cr) == False)
+    assert (np.isnan(cr) is False)
 
     # The order of preference for different MAS run results
     overwrite = False
@@ -82,9 +82,9 @@ def get_MAS_boundary_conditions(cr=np.NaN, observatory='', runtype='', runnumber
     vrfilename = 'HelioMAS_CR' + str(int(cr)) + '_vr' + heliomas_url_end
     brfilename = 'HelioMAS_CR' + str(int(cr)) + '_br' + heliomas_url_end
 
-    if (os.path.exists(os.path.join(_boundary_dir_, brfilename)) == False or
-       os.path.exists(os.path.join(_boundary_dir_, vrfilename)) == False or
-       overwrite == True):  # Check if the files already exist
+    if (os.path.exists(os.path.join(_boundary_dir_, brfilename)) is False or
+            os.path.exists(os.path.join(_boundary_dir_, vrfilename)) is False or
+            overwrite is True):  # Check if the files already exist
 
         # Search MHDweb for a HelioMAS run, in order of preference
         h = httplib2.Http(disable_ssl_certificate_validation=False)
@@ -203,7 +203,7 @@ def get_MAS_long_profile(cr, lat=0.0 * u.deg):
         vr_in: Solar wind speed as a function of Carrington longitude at solar equator.
                Interpolated to HUXt longitudinal resolution. np.array (NDIM = 1) in units of km/s
     """
-    assert (np.isnan(cr) == False and cr > 0)
+    assert (np.isnan(cr) is False and cr > 0)
     assert (lat >= -90.0 * u.deg)
     assert (lat <= 90.0 * u.deg)
 
@@ -238,7 +238,7 @@ def get_MAS_br_long_profile(cr, lat=0.0 * u.deg):
         br_in: Br as a function of Carrington longitude at solar equator.
                Interpolated to HUXt longitudinal resolution. np.array (NDIM = 1)
     """
-    assert (np.isnan(cr) == False and cr > 0)
+    assert (np.isnan(cr) is False and cr > 0)
     assert (lat >= -90.0 * u.deg)
     assert (lat <= 90.0 * u.deg)
 
@@ -275,7 +275,7 @@ def get_MAS_vr_map(cr):
         vr_longs: The Carrington longitudes for the Vr map, np.array with units of radians
     """
 
-    assert (np.isnan(cr) == False and cr > 0)
+    assert (np.isnan(cr) is False and cr > 0)
 
     # Check the data exist, if not, download them
     flag = get_MAS_boundary_conditions(cr)
@@ -313,7 +313,7 @@ def get_MAS_br_map(cr):
         vr_longs: The Carrington longitudes for the Vr map, np.array with units of radians
     """
 
-    assert (np.isnan(cr) == False and cr > 0)
+    assert (np.isnan(cr) is False and cr > 0)
 
     # Check the data exist, if not, download them
     flag = get_MAS_boundary_conditions(cr)
@@ -334,6 +334,7 @@ def get_MAS_br_map(cr):
     br_longs = MAS_br_Xa
 
     return br_map.T, br_longs, br_lats
+
 
 @u.quantity_input(v_outer=u.km / u.s)
 @u.quantity_input(r_outer=u.solRad)
@@ -362,11 +363,11 @@ def map_v_inwards(v_orig, r_orig, lon_orig, r_new):
     Tsyn = constants['synodic_period'].to(u.s).value
     r_orig = r_orig.to(u.km).value
     r_new = r_new.to(u.km).value
-    r_0 = (30*u.solRad).to(u.km).value
+    r_0 = (30 * u.solRad).to(u.km).value
 
     # Compute the 30 rS speed
     v0 = v_orig.value / (1 + alpha * (1 - np.exp(-(r_orig - r_0) / rH)))
-    
+
     # comppute new speed
     vnew = v0 * (1 + alpha * (1 - np.exp(-(r_new - r_0) / rH)))
 
@@ -385,7 +386,7 @@ def map_v_inwards(v_orig, r_orig, lon_orig, r_new):
 @u.quantity_input(v_orig=u.km / u.s)
 @u.quantity_input(r_orig=u.solRad)
 @u.quantity_input(r_inner=u.solRad)
-def map_v_boundary_inwards(v_orig, r_orig, r_new, b_orig = np.nan):
+def map_v_boundary_inwards(v_orig, r_orig, r_new, b_orig=np.nan):
     """
     Function to map a longitudinal V series from r_outer (in rs) to r_inner (in rs)
     accounting for residual acceleration, but neglecting stream interactions.
@@ -404,8 +405,8 @@ def map_v_boundary_inwards(v_orig, r_orig, r_new, b_orig = np.nan):
 
     # Compute the longitude grid from the length of the v_orig input variable
     nv = len(v_orig)
-    dlon = 2*np.pi / nv
-    lon = np.arange(dlon/2, 2*np.pi - dlon/2 +dlon/10, dlon) *u.rad
+    dlon = 2 * np.pi / nv
+    lon = np.arange(dlon / 2, 2 * np.pi - dlon / 2 + dlon / 10, dlon) * u.rad
 
     # Map each point in to a new speed and longitude
     v0, phis_new = map_v_inwards(v_orig, r_orig, lon, r_new)
@@ -413,7 +414,7 @@ def map_v_boundary_inwards(v_orig, r_orig, r_new, b_orig = np.nan):
     # Interpolate the mapped speeds back onto the regular Carr long grid,
     # making boundaries periodic
     v_new = np.interp(lon, phis_new, v0, period=2 * np.pi)
-    
+
     if np.isfinite(b_orig).any():
         b_new = np.interp(lon, phis_new, b_orig, period=2 * np.pi)
         return v_new, b_new
@@ -459,15 +460,15 @@ def map_vmap_inwards(v_map, v_map_lat, v_map_long, r_orig, r_new, b_map=np.nan):
         # making boundaries periodic * u.km/u.s
         v_map_new[ilat, :] = np.interp(v_map_long.value,
                                        phis_new.value, v0.value, period=2 * np.pi)
-        
+
         # check if b_pol needs mapping
         if np.isfinite(b_map).any():
             # check teh b abd v maps are the same dimensions
             assert (v_map.shape == b_map.shape)
             b_map_new[ilat, :] = np.interp(v_map_long.value,
                                            phis_new.value, b_map[ilat, :], period=2 * np.pi)
-            
-    if np.isfinite(b_map).any(): 
+
+    if np.isfinite(b_map).any():
         return v_map_new * u.km / u.s, b_map_new
     else:
         return v_map_new * u.km / u.s
@@ -509,7 +510,7 @@ def get_PFSS_maps(filepath):
     vr_longs = phi[0, :]
     br_longs = vr_longs
 
-    return vr_map, vr_longs, vr_lats,  br_map, br_longs, br_lats
+    return vr_map, vr_longs, vr_lats, br_map, br_longs, br_lats
 
 
 def get_CorTom_vr_map(filepath, convert_from_density=False):
@@ -530,38 +531,38 @@ def get_CorTom_vr_map(filepath, convert_from_density=False):
         theta: mesh grid of latitudes
 
     """
-    
+
     columns = ['carrlong', 'carrlat', 'vsw']
-    den_df = pd.read_csv(filepath,  skiprows=2, names=columns)
+    den_df = pd.read_csv(filepath, skiprows=2, names=columns)
 
     # create a regular grid
-    xvals = np.linspace(180.0/128, 360.0-180.0/128, num=360)
-    yvals = np.linspace(-90+180.0/128, 90-180.0/128, num=180)
-    
+    xvals = np.linspace(180.0 / 128, 360.0 - 180.0 / 128, num=360)
+    yvals = np.linspace(-90 + 180.0 / 128, 90 - 180.0 / 128, num=180)
+
     # create a mesh using these new positions
     X, Y = np.meshgrid(xvals, yvals)
-    
+
     # interpolate the data. probably easiest to just use 2d arrays here. Set ML as forecast and OP as reference
     griddata = interpolate.griddata((den_df['carrlong'], den_df['carrlat']), den_df['vsw'], (X, Y), method='linear')
     vgrid = griddata.copy()
-    
+
     if convert_from_density:
         # convert to V
         dmax = 20000.0
         dmin = 4000.0
-        
+
         vmin = 300.0
         vmax = 680.0
 
         vgrid[np.where(vgrid < dmin)] = dmin
         vgrid[np.where(vgrid > dmax)] = dmax
         vgrid = np.abs(vgrid - dmax)
-        
-        vgrid = vmin + (vmax-vmin) * (vgrid/(dmax-dmin))
-        
-    vgrid = vgrid * u.km/u.s
-    phi = X * np.pi/180 * u.rad
-    theta = Y * np.pi/180 * u.rad
+
+        vgrid = vmin + (vmax - vmin) * (vgrid / (dmax - dmin))
+
+    vgrid = vgrid * u.km / u.s
+    phi = X * np.pi / 180 * u.rad
+    theta = Y * np.pi / 180 * u.rad
 
     lons = phi[0, :]
     lats = theta[:, 0]
@@ -597,17 +598,17 @@ def get_WSA_maps(filepath):
     keys = hdul[0].header
     assert 'CARROT' in keys
     cr_num = hdul[0].header['CARROT']
-    
+
     # different versions of WSA data have different keywords?
-    if 'GRID' in keys:    
+    if 'GRID' in keys:
         dgrid = hdul[0].header['GRID'] * np.pi / 180
     else:
         assert 'LONSTEP' in keys
         dgrid = hdul[0].header['LONSTEP'] * np.pi / 180
-        
+
     # The map edge longitude is given by the CARRLONG variable.
     # This is 60 degrees from Central meridian (i.e. Earth Carrington longitude)
-    carrlong = _zerototwopi_( (hdul[0].header['CARRLONG'] ) * np.pi / 180 )
+    carrlong = _zerototwopi_((hdul[0].header['CARRLONG']) * np.pi / 180)
 
     data = hdul[0].data
     br_map_fits = data[0, :, :]
@@ -670,7 +671,7 @@ def get_WSA_long_profile(filepath, lat=0.0 * u.deg):
     """
     assert (lat >= -90.0 * u.deg)
     assert (lat <= 90.0 * u.deg)
-    assert(os.path.isfile(filepath))
+    assert (os.path.isfile(filepath))
 
     vr_map, lon_map, lat_map, br_map, br_lon, br_lat, cr_num = get_WSA_maps(filepath)
 
@@ -697,7 +698,7 @@ def get_WSA_br_long_profile(filepath, lat=0.0 * u.deg):
     """
     assert (lat >= -90.0 * u.deg)
     assert (lat <= 90.0 * u.deg)
-    assert(os.path.isfile(filepath))
+    assert (os.path.isfile(filepath))
 
     vr_map, lon_map, lat_map, br_map, br_lon, br_lat, cr_num = get_WSA_maps(filepath)
 
@@ -706,7 +707,7 @@ def get_WSA_br_long_profile(filepath, lat=0.0 * u.deg):
     for i in range(lon_map.size):
         br[i] = np.interp(lat.to(u.rad).value, lat_map.to(u.rad).value, br_map[:, i])
 
-    return br 
+    return br
 
 
 def get_PFSS_long_profile(filepath, lat=0.0 * u.deg):
@@ -724,7 +725,7 @@ def get_PFSS_long_profile(filepath, lat=0.0 * u.deg):
     """
     assert (lat >= -90.0 * u.deg)
     assert (lat <= 90.0 * u.deg)
-    assert(os.path.isfile(filepath))
+    assert (os.path.isfile(filepath))
 
     vr_map, lon_map, lat_map, br_map, br_lon, br_lat = get_PFSS_maps(filepath)
 
@@ -751,7 +752,7 @@ def get_CorTom_long_profile(filepath, lat=0.0 * u.deg):
     """
     assert (lat >= -90.0 * u.deg)
     assert (lat <= 90.0 * u.deg)
-    assert(os.path.isfile(filepath))
+    assert (os.path.isfile(filepath))
 
     vr_map, lon_map, lat_map = get_CorTom_vr_map(filepath)
 
@@ -771,19 +772,19 @@ def getMetOfficeWSAandCone(startdate, enddate, datadir=''):
     version = 'v1'
     api_key = os.getenv("API_KEY")
     url_base = "https://gateway.api-management.metoffice.cloud/swx_swimmr_s4/1.0"
-    
+
     startdatestr = startdate.strftime("%Y-%m-%dT%H:%M:%S")
     enddatestr = enddate.strftime("%Y-%m-%dT%H:%M:%S")
-    
+
     request_url = url_base + "/" + version + "/data/swc-enlil-wsa?from=" + startdatestr + "&to=" + enddatestr
-    response = requests.get(request_url,  headers={"accept": "application/json", "apikey": api_key})
-    
+    response = requests.get(request_url, headers={"accept": "application/json", "apikey": api_key})
+
     success = False
     wsafilepath = ''
     conefilepath = ''
     model_time = ''
     if response.status_code == 200:
-    
+
         # Convert to json
         js = response.json()
         nfiles = len(js['data'])
@@ -798,18 +799,18 @@ def getMetOfficeWSAandCone(startdate, enddate, datadir=''):
             model_time = js['data'][i]['model_run_time']
             wsa_file_name = js['data'][i]['gong_file']
             cone_file_name = js['data'][i]['cone_file']
-            
+
             wsa_file_url = url_base + "/" + version + "/" + wsa_file_name
             cone_file_url = url_base + "/" + version + "/" + cone_file_name
-            
+
             if not found_wsa:
-                response_wsa = requests.get(wsa_file_url,  headers={"apikey": api_key})
+                response_wsa = requests.get(wsa_file_url, headers={"apikey": api_key})
                 if response_wsa.status_code == 200:
                     wsafilepath = os.path.join(datadir, wsa_file_name)
                     open(wsafilepath, "wb").write(response_wsa.content)
                     found_wsa = True
-            if not found_cone: 
-                response_cone = requests.get(cone_file_url,  headers={"apikey": api_key})
+            if not found_cone:
+                response_cone = requests.get(cone_file_url, headers={"apikey": api_key})
                 if response_cone.status_code == 200:
                     conefilepath = os.path.join(datadir, cone_file_name)
                     open(conefilepath, "wb").write(response_cone.content)
@@ -818,7 +819,7 @@ def getMetOfficeWSAandCone(startdate, enddate, datadir=''):
             if found_wsa and found_wsa:
                 success = True
                 break
-        
+
     return success, wsafilepath, conefilepath, model_time
 
 
@@ -920,9 +921,9 @@ def ConeFile_to_ConeCME_list(model, filepath):
 
         # Get full angular width, cone2bc specifies angular half width under rmajor
         wid = 2 * cme_val['rmajor'] * u.deg
-        
+
         # Set the initial height to be 21.5 rS, the default for WSA
-        iheight = 21.5*u.solRad
+        iheight = 21.5 * u.solRad
 
         # Thickness must be computed from CME cone initial radius and the xcld parameter,
         # which specifies the relative elongation of the cloud, 1=spherical,
@@ -932,10 +933,10 @@ def ConeFile_to_ConeCME_list(model, filepath):
         # Thickness determined from xcld and radius
         thick = 5 * u.solRad  # (1.0 - cme_val['xcld']) * radius
 
-        cme = H.ConeCME(t_launch=dt_cme, longitude=lon, latitude=lat, 
+        cme = H.ConeCME(t_launch=dt_cme, longitude=lon, latitude=lat,
                         width=wid, v=speed, thickness=thick, initial_height=iheight)
         cme_list.append(cme)
-        
+
     # sort the CME list into chronological order
     launch_times = np.ones(len(cme_list))
     for i, cme in enumerate(cme_list):
@@ -956,17 +957,17 @@ def ConeFile_to_ConeCME_list_time(filepath, time):
         cme_list: A list of ConeCME objects that correspond CMEs in a ConeFile
     """
     cr, cr_lon_init = datetime2huxtinputs(time)
-    dummymodel = H.HUXt(v_boundary=np.ones(128) * 400 * (u.km/u.s), simtime=1*u.day, cr_num=cr, cr_lon_init=cr_lon_init,
-                        lon_out=0.0*u.deg, r_min=21.5*u.solRad)
+    dummymodel = H.HUXt(v_boundary=np.ones(128) * 400 * (u.km / u.s), simtime=1 * u.day, cr_num=cr,
+                        cr_lon_init=cr_lon_init,
+                        lon_out=0.0 * u.deg, r_min=21.5 * u.solRad)
 
     cme_list = ConeFile_to_ConeCME_list(dummymodel, filepath)
     return cme_list
 
 
-def set_time_dependent_boundary(vgrid_Carr, time_grid, starttime, simtime, r_min=215*u.solRad, r_max=1290*u.solRad,
-                                dt_scale=50, latitude=0*u.deg, frame='sidereal', lon_start=0*u.rad,
-                                lon_stop=2*np.pi * u.rad, bgrid_Carr=np.nan):
-    
+def set_time_dependent_boundary(vgrid_Carr, time_grid, starttime, simtime, r_min=215 * u.solRad, r_max=1290 * u.solRad,
+                                dt_scale=50, latitude=0 * u.deg, frame='sidereal', lon_start=0 * u.rad,
+                                lon_stop=2 * np.pi * u.rad, bgrid_Carr=np.nan):
     """
     A function to compute an explicitly time dependent inner boundary condition for HUXt, rather than due to
     synodic/sidereal rotation of static coronal structure.
@@ -983,6 +984,7 @@ def set_time_dependent_boundary(vgrid_Carr, time_grid, starttime, simtime, r_min
         frame: String, "synodic" or "sidereal", specifying the rotating frame of reference
         lon_start: Longitude of one edge of the longitudinal domain of HUXt
         lon_stop: Longitude of the other edge of the longitudinal domain of HUXt
+        bgrid_Carr: input magnetic polarity as a function of Carrington longitude and time
     returns:
         model: A HUXt instance initialised with the fully time dependent boundary conditions.
     """
@@ -994,16 +996,16 @@ def set_time_dependent_boundary(vgrid_Carr, time_grid, starttime, simtime, r_min
 
     # work out the start time in terms of cr number and cr_lon_init
     cr, cr_lon_init = datetime2huxtinputs(starttime)
-    
+
     # set up the dummy model class
-    model = H.HUXt(v_boundary=np.ones(128)*400*u.km/u.s,
+    model = H.HUXt(v_boundary=np.ones(128) * 400 * u.km / u.s,
                    lon_start=lon_start, lon_stop=lon_stop,
                    latitude=latitude,
                    r_min=r_min, r_max=r_max,
                    simtime=simtime, dt_scale=dt_scale,
                    cr_num=cr, cr_lon_init=cr_lon_init,
                    frame=frame)
-    
+
     # extract the values from the model class
     buffertime = model.buffertime  # standard buffer time seems insufficient
     simtime = model.simtime
@@ -1013,66 +1015,66 @@ def set_time_dependent_boundary(vgrid_Carr, time_grid, starttime, simtime, r_min
     all_lons, dlon, nlon = H.longitude_grid()
     latitude = model.latitude
     time_init = model.time_init
-    
+
     constants = H.huxt_constants()
     rotation_period = None
     if frame == 'synodic':
         rotation_period = constants['synodic_period']
-    elif frame == 'sidereal':    
+    elif frame == 'sidereal':
         rotation_period = constants['sidereal_period']
-    
+
     # compute the model time step
     buffersteps = np.fix(buffertime.to(u.s) / dt)
     buffertime = buffersteps * dt
     model_time = np.arange(-buffertime.value, (simtime.to('s') + dt).value, dt.value) * dt.unit
-   
+
     # interpolate the solar wind speed onto the model grid 
     # variables to store the input conditions.
     input_ambient_ts = np.nan * np.ones((model_time.size, nlon))
     if do_b:
         input_ambient_ts_b = np.nan * np.ones((model_time.size, nlon))
-    
+
     for t in range(0, len(model_time)):
-        
+
         mjd = time_init.mjd + model_time[t].to(u.day).value
-        
+
         # find the nearest time to the current model time
         t_input = np.argmin(abs(time_grid - mjd))
         if model_time[t] < 0:  # spin up, use initiation time
             t_input = np.argmin(abs(time_grid - time_init.mjd))
-        
+
         # shift the longitude to match the initial model time
-        dlon_from_start = 2*np.pi * u.rad * model_time[t] / rotation_period
-        
+        dlon_from_start = 2 * np.pi * u.rad * model_time[t] / rotation_period
+
         lon_shifted = H._zerototwopi_((all_lons - cr_lon_init + dlon_from_start).value)
         # put longitudes in ascending order for np.interp
         id_sort = np.argsort(lon_shifted)
         lon_shifted = lon_shifted[id_sort]
-        
+
         # take the vlong slice at this value
         v_boundary = vgrid_Carr[:, t_input]
         v_b_shifted = v_boundary[id_sort]
         # interpolate back to the original grid
-        v_boundary = np.interp(all_lons.value, lon_shifted, v_b_shifted, period=2*np.pi)
+        v_boundary = np.interp(all_lons.value, lon_shifted, v_b_shifted, period=2 * np.pi)
         input_ambient_ts[t, :] = v_boundary
-        
+
         if do_b:
             b_boundary = bgrid_Carr[:, t_input]
             b_b_shifted = b_boundary[id_sort]
             # interpolate back to the original grid
-            b_boundary = np.interp(all_lons.value, lon_shifted, b_b_shifted, period=2*np.pi)
+            b_boundary = np.interp(all_lons.value, lon_shifted, b_b_shifted, period=2 * np.pi)
             input_ambient_ts_b[t, :] = b_boundary
-        
+
     # fill the nan values
     mask = np.isnan(input_ambient_ts)
-    input_ambient_ts[mask] = 400   
+    input_ambient_ts[mask] = 400
     if do_b:
         mask = np.isnan(input_ambient_ts_b)
-        input_ambient_ts_b[mask] = 0   
-    
+        input_ambient_ts_b[mask] = 0
+
     if do_b:
         # set up the model class with these data initialised
-        model = H.HUXt(v_boundary=np.ones(128)*400*u.km/u.s,
+        model = H.HUXt(v_boundary=np.ones(128) * 400 * u.km / u.s,
                        simtime=simtime,
                        cr_num=cr, cr_lon_init=cr_lon_init,
                        r_min=r_min, r_max=r_max,
@@ -1082,10 +1084,10 @@ def set_time_dependent_boundary(vgrid_Carr, time_grid, starttime, simtime, r_min
                        input_v_ts=input_ambient_ts,
                        input_b_ts=input_ambient_ts_b,
                        input_t_ts=model_time)
-        
+
     else:
         # set up the model class without B
-        model = H.HUXt(v_boundary=np.ones(128)*400*u.km/u.s,
+        model = H.HUXt(v_boundary=np.ones(128) * 400 * u.km / u.s,
                        simtime=simtime,
                        cr_num=cr, cr_lon_init=cr_lon_init,
                        r_min=r_min, r_max=r_max,
@@ -1094,7 +1096,7 @@ def set_time_dependent_boundary(vgrid_Carr, time_grid, starttime, simtime, r_min
                        lon_start=lon_start, lon_stop=lon_stop,
                        input_v_ts=input_ambient_ts,
                        input_t_ts=model_time)
-     
+
     return model
 
 
@@ -1114,7 +1116,7 @@ def _zerototwopi_(angles):
     return angles_out
 
 
-def generate_vCarr_from_OMNI(runstart, runend, nlon_grid=128, dt=1*u.day, ref_r=215*u.solRad, corot_type='both'):
+def generate_vCarr_from_OMNI(runstart, runend, nlon_grid=128, dt=1 * u.day, ref_r=215 * u.solRad, corot_type='both'):
     """
     A function to download OMNI data and generate V_carr and time_grid for use with set_time_dependent_boundary
 
@@ -1130,14 +1132,14 @@ def generate_vCarr_from_OMNI(runstart, runend, nlon_grid=128, dt=1*u.day, ref_r=
         Vcarr: Array of solar wind speeds mapped as a function of Carr long and time
         bcarr: Array of Br mapped as a function of Carr long and time
     """
-    
+
     # check the coro_type is one of the accepted values
     assert corot_type == 'both' or corot_type == 'back' or corot_type == 'forward'
 
     # download an additional 28 days either side
     starttime = runstart - datetime.timedelta(days=28)
     endtime = runend + datetime.timedelta(days=28)
-    
+
     # Download the 1hr OMNI data from CDAweb
     trange = attrs.Time(starttime, endtime)
     dataset = attrs.cdaweb.Dataset('OMNI2_H0_MRG1HR')
@@ -1147,35 +1149,35 @@ def generate_vCarr_from_OMNI(runstart, runend, nlon_grid=128, dt=1*u.day, ref_r=
     # Import the OMNI data
     omni = TimeSeries(downloaded_files, concatenate=True)
     data = omni.to_dataframe()
-    
+
     # # Set invalid data points to NaN
     id_bad = data['V'] == 9999.0
     data.loc[id_bad, 'V'] = np.NaN
-    
+
     # create a datetime column
     data['datetime'] = data.index.to_pydatetime()
 
     # compute the syndoic rotation period
     daysec = 24 * 60 * 60 * u.s
     synodic_period = 27.2753 * daysec  # Solar Synodic rotation period from Earth.
-    omega_synodic = 2*np.pi * u.rad / synodic_period
+    omega_synodic = 2 * np.pi * u.rad / synodic_period
 
     # find the period of interest
     mask = ((data['datetime'] > starttime) & (data['datetime'] < endtime))
     omni = data[mask]
     omni = omni.reset_index()
     omni['Time'] = Time(omni['datetime'])
-    
+
     smjd = omni['Time'][0].mjd
     fmjd = omni['Time'][len(omni) - 1].mjd
 
     # interpolate through OMNI V data gaps
     omni_int = omni.interpolate(method='linear', axis=0).ffill().bfill()
     del omni
-    
+
     # compute carrington longitudes
     cr = np.ones(len(omni_int))
-    cr_lon_init = np.ones(len(omni_int))*u.rad
+    cr_lon_init = np.ones(len(omni_int)) * u.rad
     for i in range(0, len(omni_int)):
         cr[i], cr_lon_init[i] = datetime2huxtinputs(omni_int['datetime'][i])
 
@@ -1183,47 +1185,46 @@ def generate_vCarr_from_OMNI(runstart, runend, nlon_grid=128, dt=1*u.day, ref_r=
     omni_int['Carr_lon_unwrap'] = np.unwrap(omni_int['Carr_lon'].to_numpy())
 
     omni_int['mjd'] = [t.mjd for t in omni_int['Time'].array]
-    
+
     # get the Earth radial distance info.
     dirs = H._setup_dirs_()
     ephem = h5py.File(dirs['ephemeris'], 'r')
     # convert ephemeric to mjd and interpolate to required times
     all_time = Time(ephem['EARTH']['HEEQ']['time'], format='jd').value - 2400000.5
-    omni_int['R'] = np.interp(omni_int['mjd'], 
+    omni_int['R'] = np.interp(omni_int['mjd'],
                               all_time, ephem['EARTH']['HEEQ']['radius'][:]) * u.km
-    
+
     # map each point back/forward to the reference radial distance
     omni_int['mjd_ref'] = omni_int['mjd']
     omni_int['Carr_lon_ref'] = omni_int['Carr_lon_unwrap']
     for t in range(0, len(omni_int)):
         # time lag to reference radius
-        delta_r = ref_r.to(u.km).value - omni_int['R'][t] 
-        delta_t = delta_r/omni_int['V'][t]/24/60/60
+        delta_r = ref_r.to(u.km).value - omni_int['R'][t]
+        delta_t = delta_r / omni_int['V'][t] / 24 / 60 / 60
         omni_int['mjd_ref'][t] = omni_int['mjd_ref'][t] + delta_t
         # change in Carr long of the measurement
-        omni_int['Carr_lon_ref'][t] = omni_int['Carr_lon_ref'][t] - \
-            delta_t * daysec * 2 * np.pi / synodic_period
-    
+        omni_int['Carr_lon_ref'][t] = omni_int['Carr_lon_ref'][t] - delta_t * daysec * 2 * np.pi / synodic_period
+
     # sort the omni data by Carr_lon_ref for interpolation
     omni_temp = omni_int.copy()
     omni_temp = omni_temp.sort_values(by=['Carr_lon_ref'])
-    
+
     # now remap these speeds back on to the original time steps
     omni_int['V_ref'] = np.interp(omni_int['Carr_lon_unwrap'], omni_temp['Carr_lon_ref'],
                                   omni_temp['V'])
     omni_int['Br_ref'] = np.interp(omni_int['Carr_lon_unwrap'], omni_temp['Carr_lon_ref'],
-                                  -omni_temp['BX_GSE'])
+                                   -omni_temp['BX_GSE'])
 
     # compute the longitudinal and time grids
-    dphi_grid = 360/nlon_grid
-    lon_grid = np.arange(dphi_grid/2, 360.1-dphi_grid/2, dphi_grid) * np.pi/180 * u.rad
+    dphi_grid = 360 / nlon_grid
+    lon_grid = np.arange(dphi_grid / 2, 360.1 - dphi_grid / 2, dphi_grid) * np.pi / 180 * u.rad
     dt = dt.to(u.day).value
-    time_grid = np.arange(smjd, fmjd + dt/2, dt)
+    time_grid = np.arange(smjd, fmjd + dt / 2, dt)
 
     vgrid_carr_recon_back = np.ones((nlon_grid, len(time_grid))) * np.nan
     vgrid_carr_recon_forward = np.ones((nlon_grid, len(time_grid))) * np.nan
     vgrid_carr_recon_both = np.ones((nlon_grid, len(time_grid))) * np.nan
-    
+
     bgrid_carr_recon_back = np.ones((nlon_grid, len(time_grid))) * np.nan
     bgrid_carr_recon_forward = np.ones((nlon_grid, len(time_grid))) * np.nan
     bgrid_carr_recon_both = np.ones((nlon_grid, len(time_grid))) * np.nan
@@ -1232,14 +1233,14 @@ def generate_vCarr_from_OMNI(runstart, runend, nlon_grid=128, dt=1*u.day, ref_r=
         # find nearest time and current Carrington longitude
         t_id = np.argmin(np.abs(omni_int['mjd'] - time_grid[t]))
         Elong = omni_int['Carr_lon'][t_id] * u.rad
-        
+
         # get the Carrington longitude difference from current Earth pos
         dlong_back = _zerototwopi_(lon_grid.value - Elong.value) * u.rad
         dlong_forward = _zerototwopi_(Elong.value - lon_grid.value) * u.rad
-        
+
         dt_back = (dlong_back / omega_synodic).to(u.day)
         dt_forward = (dlong_forward / omega_synodic).to(u.day)
-        
+
         vgrid_carr_recon_back[:, t] = np.interp(time_grid[t] - dt_back.value, omni_int['mjd'], omni_int['V_ref'],
                                                 left=np.nan, right=np.nan)
         bgrid_carr_recon_back[:, t] = np.interp(time_grid[t] - dt_back.value, omni_int['mjd'], omni_int['Br_ref'],
@@ -1253,7 +1254,7 @@ def generate_vCarr_from_OMNI(runstart, runend, nlon_grid=128, dt=1*u.day, ref_r=
         numerator = (dt_forward * vgrid_carr_recon_back[:, t] + dt_back * vgrid_carr_recon_forward[:, t])
         denominator = dt_forward + dt_back
         vgrid_carr_recon_both[:, t] = numerator / denominator
-        
+
         numerator = (dt_forward * bgrid_carr_recon_back[:, t] + dt_back * bgrid_carr_recon_forward[:, t])
         bgrid_carr_recon_both[:, t] = numerator / denominator
     # cut out the requested time
