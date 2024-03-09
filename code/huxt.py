@@ -826,13 +826,14 @@ class HUXt:
                 self.input_b_ts[:, i] = binput
 
         return
-
-    def solve(self, cme_list, streak_carr=[], save=False, tag=''):
+    
+    @u.quantity_input(streak_carr=u.rad)
+    def solve(self, cme_list, streak_carr=np.array([])*u.rad, save=False, tag=''):
         """
         Solve HUXt for the provided longitudinal boundary conditions and cme list. Updates the HUXt.v_grid
         Args:
             cme_list: A list of ConeCME instances to use in solving HUXt
-            streak_carr: A list of Carrington longitudes from which to trace streaklines
+            streak_carr: An numpy array of Carrington longitudes from which to trace streaklines, units of radians.
             save: Boolean, if True saves model output to HDF5 file
             tag: String, appended to the filename of saved solution.
         Returns:
@@ -960,7 +961,7 @@ class HUXt:
             # ======================================================================
         # Set up the streak lines
         # ======================================================================
-        if streak_carr:
+        if isinstance(streak_carr, u.Quantity) & (streak_carr.size > 0):
             self.track_streak = True
             self.streak_lon_r0 = np.ones((len(self.time_out), len(streak_carr)))
 
