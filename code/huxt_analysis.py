@@ -1,7 +1,6 @@
 import os
 
 import astropy.units as u
-from astropy.time import Time
 import matplotlib.pyplot as plt
 import matplotlib as mpl
 import moviepy.editor as mpy
@@ -21,7 +20,7 @@ mpl.rc("legend", fontsize=16)
 
 
 @u.quantity_input(time=u.day)
-def plot(model, time, save=False, tag='', fighandle=np.nan, axhandle=np.nan, minimalplot=False,  plotHCS=True):
+def plot(model, time, save=False, tag='', fighandle=np.nan, axhandle=np.nan, minimalplot=False, plotHCS=True):
     """
     Make a contour plot on polar axis of the solar wind solution at a specific time.
     Args:
@@ -46,17 +45,17 @@ def plot(model, time, save=False, tag='', fighandle=np.nan, axhandle=np.nan, min
     # Get plotting data
     lon_arr, dlon, nlon = H.longitude_grid()
     lon, rad = np.meshgrid(lon_arr.value, model.r.value)
-   
+
     orig_cmap = mpl.cm.viridis
-    #make a copy
+    # make a copy
     mymap = type(orig_cmap)(orig_cmap.colors)
-      
+
     v_sub = model.v_grid.value[id_t, :, :].copy()
     plotvmin = 200
     plotvmax = 810
     dv = 10
     ylab = "Solar Wind Speed (km/s)"
-    
+
     # Insert into full array
     if lon_arr.size != model.lon.size:
         v = np.zeros((model.nr, nlon)) * np.NaN
@@ -80,14 +79,14 @@ def plot(model, time, save=False, tag='', fighandle=np.nan, axhandle=np.nan, min
     mymap.set_over('lightgrey')
     mymap.set_under([0, 0, 0])
     levels = np.arange(plotvmin, plotvmax + dv, dv)
-    
+
     # if no fig and axis handles are given, create a new figure
     if isinstance(fighandle, float):
         fig, ax = plt.subplots(figsize=(10, 10), subplot_kw={"projection": "polar"})
     else:
         fig = fighandle
         ax = axhandle
-        
+
     cnt = ax.contourf(lon, rad, v, levels=levels, cmap=mymap, extend='both')
 
     # Set edge color of contours the same, for good rendering in PDFs
@@ -109,33 +108,32 @@ def plot(model, time, save=False, tag='', fighandle=np.nan, axhandle=np.nan, min
     ax.set_ylim(0, model.r.value.max())
     ax.set_yticklabels([])
     ax.set_xticklabels([])
-    
+
     if not minimalplot:
         # determine which bodies should be plotted
         plot_observers = zip(['EARTH', 'VENUS', 'MERCURY', 'STA', 'STB'],
                              ['ko', 'mo', 'co', 'rs', 'y^'])
-        if model.r[0] > 200 *u.solRad:
+        if model.r[0] > 200 * u.solRad:
             plot_observers = zip(['EARTH', 'MARS', 'JUPITER', 'SATURN'],
                                  ['ko', 'mo', 'ro', 'cs'])
-    
-        
+
         # Add on observers 
         for body, style in plot_observers:
             obs = model.get_observer(body)
-            deltalon = 0.0*u.rad
+            deltalon = 0.0 * u.rad
             if model.frame == 'sidereal':
                 earth_pos = model.get_observer('EARTH')
                 deltalon = earth_pos.lon_hae[id_t] - earth_pos.lon_hae[0]
-                
+
             obslon = H._zerototwopi_(obs.lon[id_t] + deltalon)
             ax.plot(obslon, obs.r[id_t], style, markersize=16, label=body)
-    
+
         # Add on a legend.
         fig.legend(ncol=5, loc='lower center', frameon=False, handletextpad=0.2, columnspacing=1.0)
-        
+
         ax.patch.set_facecolor('slategrey')
         fig.subplots_adjust(left=0.05, bottom=0.16, right=0.95, top=0.99)
-    
+
         # Add color bar
         pos = ax.get_position()
         dw = 0.005
@@ -146,46 +144,46 @@ def plot(model, time, save=False, tag='', fighandle=np.nan, axhandle=np.nan, min
         cbaxes = fig.add_axes([left, bottom, wid, 0.03])
         cbar1 = fig.colorbar(cnt, cax=cbaxes, orientation='horizontal')
         cbar1.set_label(ylab)
-        cbar1.set_ticks(np.arange(plotvmin, plotvmax, dv*10))
-    
+        cbar1.set_ticks(np.arange(plotvmin, plotvmax, dv * 10))
+
         # Add label
         label = "   Time: {:3.2f} days".format(model.time_out[id_t].to(u.day).value)
         label = label + '\n ' + (model.time_init + time).strftime('%Y-%m-%d %H:%M')
         fig.text(0.70, pos.y0, label, fontsize=16)
-        
+
         label = "HUXt2D \nLat: {:3.0f} deg".format(model.latitude.to(u.deg).value)
         fig.text(0.175, pos.y0, label, fontsize=16)
 
-
         # plot any tracked streaklines
         if model.track_streak:
-            nstreak = len(model.streak_particles_r[0,:,0,0])
+            nstreak = len(model.streak_particles_r[0, :, 0, 0])
             for istreak in range(0, nstreak):
                 # construct the streakline from multiple rotations
-                nrot = len(model.streak_particles_r[0,0,:,0])
+                nrot = len(model.streak_particles_r[0, 0, :, 0])
                 streak_r = []
                 streak_lon = []
-                for irot in range(0,nrot):
-                    streak_lon = streak_lon + model.lon.value.tolist() 
-                    streak_r =  streak_r + (model.streak_particles_r[id_t,istreak,irot,:]* u.km.to(u.solRad)).value.tolist() 
-               
-                # add the inner boundary postion too
+                for irot in range(0, nrot):
+                    streak_lon = streak_lon + model.lon.value.tolist()
+                    streak_r = streak_r + (
+                            model.streak_particles_r[id_t, istreak, irot, :] * u.km.to(u.solRad)).value.tolist()
+
+                    # add the inner boundary postion too
                 mask = np.isfinite(streak_r)
                 plotlon = np.array(streak_lon)[mask]
                 plotr = np.array(streak_r)[mask]
                 # only add the inner boundary if it's in the HUXt longitude grid
-                foot_lon = H._zerototwopi_(model.streak_lon_r0[id_t, istreak]) 
+                foot_lon = H._zerototwopi_(model.streak_lon_r0[id_t, istreak])
                 dlon_foot = abs(model.lon.value - foot_lon)
                 if dlon_foot.min() <= model.dlon.value:
-                    plotlon = np.append(plotlon, foot_lon + model.dlon.value/2) 
-                    plotr =  np.append(plotr, model.r[0].to(u.solRad).value )
-                
+                    plotlon = np.append(plotlon, foot_lon + model.dlon.value / 2)
+                    plotr = np.append(plotr, model.r[0].to(u.solRad).value)
+
                 ax.plot(plotlon, plotr, 'k')
-                
+
         # plot any HCS that have been traced
         if plotHCS and hasattr(model, 'b_grid'):
-            for i in range(0, len(model.hcs_particles_r[:, 0,0,0])):
-                r = model.hcs_particles_r[i,id_t,0,:]*u.km.to(u.solRad) 
+            for i in range(0, len(model.hcs_particles_r[:, 0, 0, 0])):
+                r = model.hcs_particles_r[i, id_t, 0, :] * u.km.to(u.solRad)
                 lons = model.lon
                 ax.plot(lons, r, 'w.')
 
@@ -233,14 +231,13 @@ def animate(model, tag, streaklines=None, plotHCS=True, outputfilepath=''):
         plt.close('all')
         return frame
 
-    
     if outputfilepath:
         filepath = outputfilepath
     else:
         cr_num = np.int32(model.cr_num.value)
         filename = "HUXt_CR{:03d}_{}_movie.mp4".format(cr_num, tag)
         filepath = os.path.join(model._figure_dir_, filename)
-    
+
     animation = mpy.VideoClip(make_frame, duration=duration)
     animation.write_videofile(filepath, fps=24, codec='libx264')
     return
@@ -287,27 +284,27 @@ def plot_radial(model, time, lon, save=False, tag=''):
     ax.plot(model.r, model.v_grid[id_t, :, id_lon], 'k-')
     ymin = 200
     ymax = 1000
-    
+
     # Plot the CME points on if needed
     cme_colors = ['r', 'c', 'm', 'y', 'deeppink', 'darkorange']
     for c, cme in enumerate(model.cmes):
         cc = np.mod(c, len(cme_colors))
-        
+
         lon_cme = cme.coords[id_t]['lon']
         r_cme = cme.coords[id_t]['r'].to(u.solRad)
-        
+
         id_front = cme.coords[id_t]['front_id'] == 1.0
-        id_back = cme.coords[id_t]['front_id'] == 0.0 
+        id_back = cme.coords[id_t]['front_id'] == 0.0
         r_front = r_cme[id_front]
         lon_front = lon_cme[id_front]
         r_back = r_cme[id_back]
         lon_back = lon_cme[id_back]
-        
+
         id_cme_lon = np.argmin(np.abs(lon_front - lon))
         r_front = r_front[id_cme_lon]
         id_cme_lon = np.argmin(np.abs(lon_back - lon))
         r_back = r_back[id_cme_lon]
-        
+
         id_cme = (model.r >= r_back) & (model.r <= r_front)
         label = "CME {:02d}".format(c)
         ax.plot(model.r[id_cme], model.v_grid[id_t, id_cme, id_lon], '.', color=cme_colors[cc], label=label)
@@ -324,7 +321,7 @@ def plot_radial(model, time, lon, save=False, tag=''):
     lon_label = " Lon: {:3.2f}$^\\circ$".format(lon_out)
     label = "HUXt" + time_label + lon_label
     ax.set_title(label, fontsize=20)
-    
+
     if save:
         cr_num = np.int32(model.cr_num.value)
         lon_tag = "{}deg".format(lon.to(u.deg).value)
@@ -370,7 +367,7 @@ def plot_timeseries(model, radius, lon, save=False, tag=''):
         lon_out = model.lon[id_lon].value
 
     t_day = model.time_out.to(u.day)
-    
+
     ax.plot(t_day, model.v_grid[:, id_r, id_lon], 'k-')
     ylab = 'Solar Wind Speed (km/s)'
     ymin = 200
@@ -408,7 +405,7 @@ def get_observer_timeseries(model, observer='Earth'):
     observer ephemeris. Nearest neighbour interpolation in r, linear interpolation in longitude.
     Args:
         model: A HUXt instance with a solution generated by HUXt.solve().
-    
+        observer: String name of the observer. Can be any permitted by Observer class.
     Returns:
          time_series: A pandas dataframe giving time series of solar wind speed, and if it exists in the HUXt
                             solution, the magnetic field polarity, at the observer.
@@ -421,20 +418,20 @@ def get_observer_timeseries(model, observer='Earth'):
         deltalon = earth_pos.lon_hae - earth_pos.lon_hae[0]
         model_lon_earth = H._zerototwopi_(earth_pos.lon.value + deltalon.value)
     elif model.frame == 'synodic':
-        model_lon_earth = earth_pos.lon.value 
-        
-    # find the model coords of the given osberver as a function of time
-    deltalon = obs_pos.lon_hae - earth_pos.lon_hae 
+        model_lon_earth = earth_pos.lon.value
+
+        # find the model coords of the given osberver as a function of time
+    deltalon = obs_pos.lon_hae - earth_pos.lon_hae
     model_lon_obs = H._zerototwopi_(model_lon_earth + deltalon.value)
 
     if model.nlon == 1:
         print('Single longitude simulated. Extracting time series at Observer r')
 
-    time = np.ones(model.nt_out)*np.nan
-    lon = np.ones(model.nt_out)*np.nan
-    rad = np.ones(model.nt_out)*np.nan
-    speed = np.ones(model.nt_out)*np.nan
-    bpol = np.ones(model.nt_out)*np.nan
+    time = np.ones(model.nt_out) * np.nan
+    lon = np.ones(model.nt_out) * np.nan
+    rad = np.ones(model.nt_out) * np.nan
+    speed = np.ones(model.nt_out) * np.nan
+    bpol = np.ones(model.nt_out) * np.nan
 
     for t in range(model.nt_out):
         time[t] = (model.time_init + model.time_out[t]).jd
@@ -444,16 +441,16 @@ def get_observer_timeseries(model, observer='Earth'):
         if model.nlon == 1:
             model_lons = np.array([model_lons])
         id_lon = np.argmin(np.abs(model_lons - model_lon_obs[t]))
-        
+
         # check whether the observer is within the model domain
         if ((obs_pos.r[t].value < model.r[0].value) or
-             (obs_pos.r[t].value > model.r[-1].value) or
-             ( 
-               (abs(model_lons[id_lon] - model_lon_obs[t]) > model.dlon.value) and
-               (abs(model_lons[id_lon] + 2*np.pi - model_lon_obs[t]) > model.dlon.value)
-             )
-            ):
-            
+                (obs_pos.r[t].value > model.r[-1].value) or
+                (
+                        (abs(model_lons[id_lon] - model_lon_obs[t]) > model.dlon.value) and
+                        (abs(model_lons[id_lon] + 2 * np.pi - model_lon_obs[t]) > model.dlon.value)
+                )
+        ):
+
             bpol[t] = np.nan
             speed[t] = np.nan
             print('Outside model domain')
@@ -468,9 +465,10 @@ def get_observer_timeseries(model, observer='Earth'):
                 if hasattr(model, 'b_grid'):
                     bpol[t] = model.b_grid[t, id_r, 0]
             else:
-                speed[t] = np.interp(model_lon_obs[t], model.lon.value, model.v_grid[t, id_r, :].value, period=2*np.pi)
+                speed[t] = np.interp(model_lon_obs[t], model.lon.value, model.v_grid[t, id_r, :].value,
+                                     period=2 * np.pi)
                 if hasattr(model, 'b_grid'):
-                    bpol[t] = np.interp(model_lon_obs[t], model.lon.value, model.b_grid[t, id_r, :], period=2*np.pi)
+                    bpol[t] = np.interp(model_lon_obs[t], model.lon.value, model.b_grid[t, id_r, :], period=2 * np.pi)
 
     time = pd.to_datetime(time, unit='D', origin='julian')
 
@@ -491,9 +489,9 @@ def plot_earth_timeseries(model, plot_omni=True):
         axs : Axes handles
 
     """
-    
-    huxt_ts = get_observer_timeseries(model, observer = 'Earth')
-    
+
+    huxt_ts = get_observer_timeseries(model, observer='Earth')
+
     # 2-panel plot if the B polarity has been traced
     if hasattr(model, 'b_grid'):
         fig, axs = plt.subplots(2, 1, figsize=(14, 7))
@@ -502,7 +500,7 @@ def plot_earth_timeseries(model, plot_omni=True):
     else:
         fig, axs = plt.subplots(1, 1, figsize=(14, 4))
         axs = np.array([axs])
-        
+
     axs[0].plot(huxt_ts['time'], huxt_ts['vsw'], 'k', label='HUXt')
     axs[0].set_ylim(250, 1000)
 
@@ -516,24 +514,24 @@ def plot_earth_timeseries(model, plot_omni=True):
         dataset = attrs.cdaweb.Dataset('OMNI2_H0_MRG1HR')
         result = Fido.search(trange, dataset)
         downloaded_files = Fido.fetch(result)
-        
+
         # Import the OMNI data
         omni = TimeSeries(downloaded_files, concatenate=True)
         data = omni.to_dataframe()
-        
+
         # Set invalid data points to NaN
         id_bad = data['V'] == 9999.0
         data.loc[id_bad, 'V'] = np.NaN
-        
+
         # Create a datetime column
         data['datetime'] = data.index.to_pydatetime()
-        
+
         mask = (data['datetime'] >= starttime) & (data['datetime'] <= endtime)
         plotdata = data[mask]
         axs[0].plot(plotdata['datetime'], plotdata['V'], 'r', label='OMNI')
-        
+
         if hasattr(model, 'b_grid'):
-            axs[1].plot(plotdata['datetime'], -np.sign(plotdata['BX_GSE'])*0.92, 'r.', label='OMNI')
+            axs[1].plot(plotdata['datetime'], -np.sign(plotdata['BX_GSE']) * 0.92, 'r.', label='OMNI')
             axs[1].set_ylim(-1.1, 1.1)
 
     for a in axs:
@@ -549,12 +547,12 @@ def plot_earth_timeseries(model, plot_omni=True):
         axs[1].set_xlabel('Date')
 
     fig.subplots_adjust(left=0.07, bottom=0.08, right=0.99, top=0.97, hspace=0.05)
-    
+
     return fig, axs
 
 
 @u.quantity_input(time=u.day)
-def plot3d_radial_lat_slice(model3d, time, lon=np.NaN*u.deg, save=False, tag=''):
+def plot3d_radial_lat_slice(model3d, time, lon=np.NaN * u.deg, save=False, tag=''):
     """
     Make a contour plot on polar axis of a radial-latitudinal plane of the solar wind solution at a fixed time and
     longitude.
@@ -572,15 +570,15 @@ def plot3d_radial_lat_slice(model3d, time, lon=np.NaN*u.deg, save=False, tag='')
     plotvmax = 810
     dv = 10
     ylab = "Solar Wind Speed (km/s)"
-    
+
     # get the metadata from one of the individual HUXt elements
     model = model3d.HUXtlat[0]
-    
+
     if (time < model.time_out.min()) | (time > (model.time_out.max())):
         print("Error, input time outside span of model times. Defaulting to closest time")
 
     id_t = np.argmin(np.abs(model.time_out - time))
-    
+
     # get the requested longitude
     if model.lon.size == 1:
         id_lon = 0
@@ -588,18 +586,17 @@ def plot3d_radial_lat_slice(model3d, time, lon=np.NaN*u.deg, save=False, tag='')
     else:
         id_lon = np.argmin(np.abs(model.lon - lon))
         lon_out = model.lon[id_lon].to(u.deg)
-        
+
     # loop over latitudes and extract the radial profiles
     mercut = np.ones((len(model.r), model3d.nlat))
     for n in range(0, model3d.nlat):
         model = model3d.HUXtlat[n]
         mercut[:, n] = model.v_grid[id_t, :, id_lon]
-    
-     
+
     orig_cmap = mpl.cm.viridis
-    #make a copy
+    # make a copy
     mymap = type(orig_cmap)(orig_cmap.colors)
-    
+
     mymap.set_over('lightgrey')
     mymap.set_under([0, 0, 0])
     levels = np.arange(plotvmin, plotvmax + dv, dv)
@@ -617,70 +614,70 @@ def plot3d_radial_lat_slice(model3d, time, lon=np.NaN*u.deg, save=False, tag='')
 
         # Get latitudes 
         lats = model3d.lat
-        
-        cme_r_front = np.ones(model3d.nlat)*np.nan
-        cme_r_back = np.ones(model3d.nlat)*np.nan
+
+        cme_r_front = np.ones(model3d.nlat) * np.nan
+        cme_r_back = np.ones(model3d.nlat) * np.nan
         for ilat in range(0, model3d.nlat):
             model = model3d.HUXtlat[ilat]
-            
-            cme_r_front[ilat] = model.cme_particles_r[n,id_t,0,id_lon]
-            cme_r_back[ilat] = model.cme_particles_r[n,id_t,1,id_lon]
+
+            cme_r_front[ilat] = model.cme_particles_r[n, id_t, 0, id_lon]
+            cme_r_back[ilat] = model.cme_particles_r[n, id_t, 1, id_lon]
 
         # trim the nans
         # Find indices that sort the longitudes, to make a wraparound of lons
         id_sort_inc = np.argsort(lats)
         id_sort_dec = np.flipud(id_sort_inc)
-        
+
         cme_r_front = cme_r_front[id_sort_inc]
         cme_r_back = cme_r_back[id_sort_dec]
 
         lat_front = lats[id_sort_inc]
         lat_back = lats[id_sort_dec]
-        
+
         # Only keep good values
         id_good = np.isfinite(cme_r_front)
         if id_good.any():
             cme_r_front = cme_r_front[id_good]
             lat_front = lat_front[id_good]
-            
+
             id_good = np.isfinite(cme_r_back)
             cme_r_back = cme_r_back[id_good]
             lat_back = lat_back[id_good]
-            
+
             # Get one array of longitudes and radii from the front and back particles
             lats = np.hstack([lat_front, lat_back, lat_front[0]])
             cme_r = np.hstack([cme_r_front, cme_r_back, cme_r_front[0]])
-        
-            ax.plot(lats.to(u.rad), (cme_r*u.km).to(u.solRad), color=cme_colors[n], linewidth=3)
+
+            ax.plot(lats.to(u.rad), (cme_r * u.km).to(u.solRad), color=cme_colors[n], linewidth=3)
 
     # determine which bodies should be plotted
     plot_observers = zip(['EARTH', 'VENUS', 'MERCURY', 'STA', 'STB'],
                          ['ko', 'mo', 'co', 'rs', 'y^'])
-    if model.r[0] > 200 *u.solRad:
+    if model.r[0] > 200 * u.solRad:
         plot_observers = zip(['EARTH', 'MARS', 'JUPITER', 'SATURN'],
                              ['ko', 'mo', 'ro', 'cs'])
-    
+
     # Add on observers 
     for body, style in plot_observers:
         obs = model.get_observer(body)
-        deltalon = 0.0*u.rad
-        
+        deltalon = 0.0 * u.rad
+
         # adjust body longitude for the frame
         if model.frame == 'sidereal':
             earth_pos = model.get_observer('EARTH')
             deltalon = earth_pos.lon_hae[id_t] - earth_pos.lon_hae[0]
 
-        bodylon = H._zerototwopi_(obs.lon[id_t] + deltalon)*u.rad
+        bodylon = H._zerototwopi_(obs.lon[id_t] + deltalon) * u.rad
         # plot bodies that are close to being in the plane
-        if abs(bodylon - lon_out) < model.dlon *2:
+        if abs(bodylon - lon_out) < model.dlon * 2:
             ax.plot(obs.lat[id_t], obs.r[id_t], style, markersize=16, label=body)
-    
+
     # Add on a legend.
     fig.legend(ncol=5, loc='lower center', frameon=False, handletextpad=0.2, columnspacing=1.0)
-    
+
     ax.patch.set_facecolor('slategrey')
     fig.subplots_adjust(left=0.05, bottom=0.16, right=0.95, top=0.99)
-         
+
     ax.set_ylim(0, model.r.value.max())
     ax.set_yticklabels([])
     ax.set_xticklabels([])
@@ -697,13 +694,13 @@ def plot3d_radial_lat_slice(model3d, time, lon=np.NaN*u.deg, save=False, tag='')
     cbaxes = fig.add_axes([left, bottom, wid, 0.03])
     cbar1 = fig.colorbar(cnt, cax=cbaxes, orientation='horizontal')
     cbar1.set_label(ylab)
-    cbar1.set_ticks(np.arange(plotvmin, plotvmax, dv*10))
-    
+    cbar1.set_ticks(np.arange(plotvmin, plotvmax, dv * 10))
+
     # Add label
     label = "   Time: {:3.2f} days".format(model.time_out[id_t].to(u.day).value)
     label = label + '\n ' + (model.time_init + time).strftime('%Y-%m-%d %H:%M')
     fig.text(0.70, pos.y0, label, fontsize=16)
-    
+
     label = "HUXt3D \nLong: {:3.1f} deg".format(lon_out.to(u.deg).value)
     fig.text(0.175, pos.y0, label, fontsize=16)
 
@@ -716,7 +713,7 @@ def plot3d_radial_lat_slice(model3d, time, lon=np.NaN*u.deg, save=False, tag='')
     return fig, ax
 
 
-def animate_3d(model3d, lon=np.NaN*u.deg, tag='', outputfilepath=''):
+def animate_3d(model3d, lon=np.NaN * u.deg, tag='', outputfilepath=''):
     """
     Animate the model solution, and save as an MP4.
     Args:
@@ -745,17 +742,17 @@ def animate_3d(model3d, lon=np.NaN*u.deg, tag='', outputfilepath=''):
         plt.close('all')
         return frame
 
-  
     if outputfilepath:
         filepath = outputfilepath
     else:
         cr_num = np.int32(model.cr_num.value)
         filename = "HUXt_CR{:03d}_{}_movie.mp4".format(cr_num, tag)
         filepath = os.path.join(model._figure_dir_, filename)
-        
+
     animation = mpy.VideoClip(make_frame_3d, duration=duration)
     animation.write_videofile(filepath, fps=24, codec='libx264')
     return
+
 
 @u.quantity_input(time=u.day)
 def plot_bpol(model, time, save=False, tag='', fighandle=np.nan, axhandle=np.nan, minimalplot=False, streaklines=None,
@@ -791,7 +788,7 @@ def plot_bpol(model, time, save=False, tag='', fighandle=np.nan, axhandle=np.nan
     plotvmax = 1.1
     dv = 1
     ylab = "Magnetic field polarity"
-    
+
     # Insert into full array
     if lon_arr.size != model.lon.size:
         v = np.zeros((model.nr, nlon)) * np.NaN
@@ -815,14 +812,14 @@ def plot_bpol(model, time, save=False, tag='', fighandle=np.nan, axhandle=np.nan
     mymap.set_over('lightgrey')
     mymap.set_under([0, 0, 0])
     levels = np.arange(plotvmin, plotvmax + dv, dv)
-    
+
     # if no fig and axis handles are given, create a new figure
     if isinstance(fighandle, float):
         fig, ax = plt.subplots(figsize=(10, 10), subplot_kw={"projection": "polar"})
     else:
         fig = fighandle
         ax = axhandle
-        
+
     cnt = ax.contourf(lon, rad, v, levels=levels, cmap=mymap, extend='both')
 
     # Set edge color of contours the same, for good rendering in PDFs
@@ -844,32 +841,32 @@ def plot_bpol(model, time, save=False, tag='', fighandle=np.nan, axhandle=np.nan
     ax.set_ylim(0, model.r.value.max())
     ax.set_yticklabels([])
     ax.set_xticklabels([])
-    
+
     if not minimalplot:
-        
+
         # determine which bodies should be plotted
         plot_observers = zip(['EARTH', 'VENUS', 'MERCURY', 'STA', 'STB'],
                              ['ko', 'mo', 'co', 'rs', 'y^'])
-        if model.r[0] > 200 *u.solRad:
+        if model.r[0] > 200 * u.solRad:
             plot_observers = zip(['EARTH', 'MARS', 'JUPITER', 'SATURN'],
                                  ['ko', 'mo', 'ro', 'cs'])
         # Add on observers 
         for body, style in plot_observers:
             obs = model.get_observer(body)
-            deltalon = 0.0*u.rad
+            deltalon = 0.0 * u.rad
             if model.frame == 'sidereal':
                 earth_pos = model.get_observer('EARTH')
                 deltalon = earth_pos.lon_hae[id_t] - earth_pos.lon_hae[0]
-                
+
             obslon = H._zerototwopi_(obs.lon[id_t] + deltalon)
             ax.plot(obslon, obs.r[id_t], style, markersize=16, label=body)
-    
+
         # Add on a legend.
         fig.legend(ncol=5, loc='lower center', frameon=False, handletextpad=0.2, columnspacing=1.0)
-        
+
         ax.patch.set_facecolor('slategrey')
         fig.subplots_adjust(left=0.05, bottom=0.16, right=0.95, top=0.99)
-    
+
         # Add color bar
         pos = ax.get_position()
         dw = 0.005
@@ -881,45 +878,45 @@ def plot_bpol(model, time, save=False, tag='', fighandle=np.nan, axhandle=np.nan
         cbar1 = fig.colorbar(cnt, cax=cbaxes, orientation='horizontal')
         cbar1.set_label(ylab)
         cbar1.set_ticks(np.arange(plotvmin, plotvmax, 1))
-    
+
         # Add label
         label = "   Time: {:3.2f} days".format(model.time_out[id_t].to(u.day).value)
         label = label + '\n ' + (model.time_init + time).strftime('%Y-%m-%d %H:%M')
         fig.text(0.70, pos.y0, label, fontsize=16)
-        
+
         label = "HUXt2D"
         fig.text(0.175, pos.y0, label, fontsize=16)
 
         # plot any tracked streaklines
         if model.track_streak:
-            nstreak = len(model.streak_particles_r[0,:,0,0])
+            nstreak = len(model.streak_particles_r[0, :, 0, 0])
             for istreak in range(0, nstreak):
                 # construct the streakline from multiple rotations
-                nrot = len(model.streak_particles_r[0,0,:,0])
+                nrot = len(model.streak_particles_r[0, 0, :, 0])
                 streak_r = []
                 streak_lon = []
-                for irot in range(0,nrot):
-                    streak_lon = streak_lon + model.lon.value.tolist() 
-                    streak_r =  streak_r + (model.streak_particles_r[id_t,istreak,irot,:]* u.km.to(u.solRad)).value.tolist() 
-               
-                # add the inner boundary postion too
+                for irot in range(0, nrot):
+                    streak_lon = streak_lon + model.lon.value.tolist()
+                    streak_r = streak_r + (
+                            model.streak_particles_r[id_t, istreak, irot, :] * u.km.to(u.solRad)).value.tolist()
+
+                    # add the inner boundary postion too
                 mask = np.isfinite(streak_r)
                 plotlon = np.array(streak_lon)[mask]
                 plotr = np.array(streak_r)[mask]
                 # only add the inner boundary if it's in the HUXt longitude grid
-                foot_lon = H._zerototwopi_(model.streak_lon_r0[id_t, istreak]) 
+                foot_lon = H._zerototwopi_(model.streak_lon_r0[id_t, istreak])
                 dlon_foot = abs(model.lon.value - foot_lon)
                 if dlon_foot.min() <= model.dlon.value:
-                    plotlon = np.append(plotlon, foot_lon + model.dlon.value/2) 
-                    plotr =  np.append(plotr, model.r[0].to(u.solRad).value )
-                
+                    plotlon = np.append(plotlon, foot_lon + model.dlon.value / 2)
+                    plotr = np.append(plotr, model.r[0].to(u.solRad).value)
+
                 ax.plot(plotlon, plotr, 'k')
-                
 
         # plot any HCS that have been traced
         if plotHCS and hasattr(model, 'b_grid'):
-            for i in range(0, len(model.hcs_particles_r[:, 0,0,0])):
-                r = model.hcs_particles_r[i,id_t,0,:]*u.km.to(u.solRad) 
+            for i in range(0, len(model.hcs_particles_r[:, 0, 0, 0])):
+                r = model.hcs_particles_r[i, id_t, 0, :] * u.km.to(u.solRad)
                 lons = model.lon
                 ax.plot(lons, r, 'k.')
 
