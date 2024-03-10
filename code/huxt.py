@@ -523,6 +523,7 @@ class HUXt:
     
     Attributes:
         cmes: A list of ConeCME instances used in the model solution.
+        cme_expansion: Whether CMEs are inserted with a declining velocity profile
         cr_num: If provided, this gives the Carrington rotation number of the selected period, else 9999.
         cr_lon_init: The initial Carrington longitude of Earth at the models initial timestep (2 pi at the start of the CR, 0 at the end).
         daysec: seconds in a day.
@@ -570,7 +571,8 @@ class HUXt:
                  input_b_ts=np.nan,
                  input_iscme_ts=np.NaN,
                  input_t_ts=np.nan * u.s,
-                 track_cmes=True):
+                 track_cmes=True,
+                 cme_expansion = False):
         """
         Initialise the HUXt model instance.
 
@@ -596,6 +598,7 @@ class HUXt:
                                If used as keyword input argument, overrides ConeCMEs past to huxt.sovle().
             save_full_v: Boolean flag to determine if full v field (including spin up) is saved for post-processing.
             track_cmes: Boolean flag to determine if CMEs are tracked at run time (small speed reduction).
+            cme_expansion: Boolean flag to determine whether CMEs are inserted with a declining velocity profile
         """
 
         # some constants and units
@@ -734,6 +737,8 @@ class HUXt:
         self.cmes = []
 
         self.track_cmes = track_cmes  # If true, cmes are tracked, which costs a little extra computation time
+        
+        self.cme_expansion = cme_expansion #if true, cmes inserted with declining velocity profile
 
         # Numpy array of model parameters for parsing to external functions that use numba
         self.model_params = np.array([self.dtdr.value, self.alpha.value, self.r_accel.value,
@@ -930,9 +935,10 @@ class HUXt:
 
                 # Add the CMEs to the input series
                 v, isincme = add_cmes_to_input_series(self.input_v_ts[:, i],
-                                                      self.model_time, lon_out,
-                                                      self.r[0].to('km').value, cme_params,
-                                                      self.latitude.value)
+                                                      self.model_time, lon_out, 
+                                                      self.r[0].to('km').value, cme_params, 
+                                                      self.latitude.value, self.cme_expansion)
+
                 self.input_v_ts[:, i] = v
                 self.input_iscme_ts[:, i] = isincme
 
@@ -1191,7 +1197,7 @@ class HUXt3d:
                  latitude_max=30 * u.deg, latitude_min=-30 * u.deg,
                  r_min=30 * u.solRad, r_max=240 * u.solRad,
                  lon_out=np.NaN * u.rad, lon_start=np.NaN * u.rad, lon_stop=np.NaN * u.rad,
-                 simtime=5.0 * u.day, dt_scale=1.0):
+                 simtime=5.0 * u.day, dt_scale=1.0, cme_expansion = True):
         """
         Initialise the HUXt3D instance.
 
@@ -1212,6 +1218,7 @@ class HUXt3d:
             r_max: The radial outer boundary distance of HUXt.
             simtime: Duration of the simulation window, in days.
             dt_scale: Integer scaling number to set the model output time step relative to the models CFL time.
+            cme_expansion: Boolean, whether CMEs have a declining velocity profile at the inner boundary
         """
 
         # Define latitude grid
@@ -1243,7 +1250,7 @@ class HUXt3d:
                                      cr_num=cr_num, cr_lon_init=cr_lon_init,
                                      r_min=r_min, r_max=r_max,
                                      lon_out=lon_out, lon_start=lon_start, lon_stop=lon_stop,
-                                     simtime=simtime, dt_scale=dt_scale))
+                                     simtime=simtime, dt_scale=dt_scale, cme_expansion=cme_expansion))
         return
 
     def solve(self, cme_list):
@@ -1700,7 +1707,7 @@ def solve_radial(vinput, binput, iscmeinput, model_time, rrel, params,
 
 
 @jit(nopython=True)
-def add_cmes_to_input_series(vinput, model_time, lon, r_boundary, cme_params, latitude):
+def add_cmes_to_input_series(vinput, model_time, lon, r_boundary, cme_params, latitude, cme_expansion):
     """
     Add CMEs to the model input time series
     Args:
@@ -1709,7 +1716,7 @@ def add_cmes_to_input_series(vinput, model_time, lon, r_boundary, cme_params, la
         lon: The longitude of this radial
         r_boundary: The HUXt inner boundary in rS
         cme_params: Array of ConeCME parameters to include in the solution. One row for each CME, with columns as
-                    required by _is_in_cone_cme_boundary_
+                    required by _is_in_cone_cme_boundary_expanding_
         latitude: Latitude (from equator) of the HUXt plane
     Returns: 
         v: vinput with CME speeds added
@@ -1729,8 +1736,18 @@ def add_cmes_to_input_series(vinput, model_time, lon, r_boundary, cme_params, la
             for n in range(n_cme):
                 cme = cme_params[n, :]
                 # Check if this point is within the cone CME
-                if _is_in_cme_boundary_(r_boundary, lon, latitude, time, cme):
-                    v_update_cme[n] = cme[4]
+                iscme, dist_from_nose = _is_in_cme_boundary_expanding_(r_boundary, lon, latitude, time, cme)
+                if iscme: 
+                    if cme_expansion:
+                        # #use Owens2005 empirical relations
+                        # v_LE = 1.3 * cme[4] - 57.7
+                        # v_EXP = 0.266 * v_LE - 70.6
+                        # v_update_cme[n] = cme[4] + v_EXP * (0.5 - dist_from_nose) 
+                        
+                        v_update_cme[n] = cme[4] + 0.75 * cme[4] * (0.5 - dist_from_nose) 
+                    else:
+                        v_update_cme[n] = cme[4]
+
                     # record the CME number
                     isincme[t] = n + 1
 
@@ -1772,10 +1789,13 @@ def _upwind_step_(v_up, v_dn, dtdr, alpha, r_accel, rrel):
     return v_up_next
 
 
+
 @jit(nopython=True)
-def _is_in_cme_boundary_(r_boundary, lon, lat, time, cme_params):
+def _is_in_cme_boundary_expanding_(r_boundary, lon, lat, time, cme_params):
     """
     Check whether a given lat, lon point on the inner boundary is within a given CME.
+    Returns the fraction of the distance between nose and tail, which can be used to 
+    produce a declining speed profile mimicking expansion
     Args:
         r_boundary: Height of model inner boundary.
         lon: A HEEQ latitude, in radians.
@@ -1784,22 +1804,27 @@ def _is_in_cme_boundary_(r_boundary, lon, lat, time, cme_params):
         cme_params: An array containing the cme parameters
     Returns:
          isincme: Boolean, True if coordinate is on or inside the CME domain.
+         dist_from_nose: Float, fractional distance from nose to tail.
     """
     isincme = False
+    dist_from_nose = 0.0
 
     cme_t_launch = cme_params[0]
     cme_lon = cme_params[1]
     cme_lat = cme_params[2]
-    # cme_width = cme_params[3]
+    #cme_width = cme_params[3]
     cme_v = cme_params[4]
     # cme_initial_height = cme_params[5]
-    cme_radius = cme_params[6]  # the physical width at the inner boundary
+    cme_radius = cme_params[6] # the physical width at the inner boundary
     cme_thickness = cme_params[7]
+
+
 
     # Compute y, the height of CME nose above the 30rS surface
     y = cme_v * (time - cme_t_launch)
-
-    # compute x, the radius of the cme currently threading the inner boundary
+    
+    #compute x, the radius of the cme currently threading the inner boundary
+    x = np.NaN
     if (y >= 0) & (y < cme_radius):
         # this is the front hemisphere of the spherical CME
         x = np.sqrt(y * (2 * cme_radius - y))  # compute x, the distance of the current longitude from the nose
@@ -1811,23 +1836,28 @@ def _is_in_cme_boundary_(r_boundary, lon, lat, time, cme_params):
         # this is the "mass" between the hemispheres
         x = cme_radius
     else:
-        # the CME is not threading the inner boundary
-        return False
-
-    # convert x back to an angular width
+        #the CME is not threading the inner boundary
+        return False, dist_from_nose
+            
+    #convert x back to an angular width
     ang_width = np.arctan(x / r_boundary)
-
-    # compute the angle between the given point and the CME centre
+    
+    #compute the angle between the given point and the CME centre
     delta_long = lon - cme_lon
     # Calculate the central angle between the reference point and the cme centroid
-    # using the spherical law of cosines
-    central_angle = np.arccos(np.sin(lat) * np.sin(cme_lat) +
+    #using the spherical law of cosines
+    central_angle = np.arccos(np.sin(lat) * np.sin(cme_lat) + 
                               np.cos(lat) * np.cos(cme_lat) * np.cos(delta_long))
 
     if central_angle <= ang_width:
+        #compute the fractional distance from nose to tail
+        r_of_nose = cme_v * (time - cme_t_launch)
+        nose_to_tail_r = (2 * cme_radius + cme_thickness)
+        dist_from_nose = r_of_nose / nose_to_tail_r
+        
         isincme = True
 
-    return isincme
+    return isincme, dist_from_nose
 
 
 def load_HUXt_run(filepath):
