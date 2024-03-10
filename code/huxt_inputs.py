@@ -2,16 +2,16 @@ import datetime
 import os
 import urllib
 import ssl
+import copy
 
 import astropy.units as u
 from astropy.io import fits
 from astropy.time import Time
 import httplib2
 import numpy as np
-import pandas as pd
 from pyhdf.SD import SD, SDC
 import h5py
-from scipy.io import netcdf
+from scipy.io import netcdf, readsav
 from scipy import interpolate
 from sunpy.coordinates import sun
 from sunpy.net import Fido
@@ -42,7 +42,7 @@ def get_MAS_boundary_conditions(cr=np.NaN, observatory='', runtype='', runnumber
     flag: Integer, 1 = successful download. 0 = files exist, -1 = no file found.
     """
 
-    assert (np.isnan(cr) is False)
+    assert (np.isnan(cr) == False)
 
     # The order of preference for different MAS run results
     overwrite = False
@@ -203,7 +203,7 @@ def get_MAS_long_profile(cr, lat=0.0 * u.deg):
         vr_in: Solar wind speed as a function of Carrington longitude at solar equator.
                Interpolated to HUXt longitudinal resolution. np.array (NDIM = 1) in units of km/s
     """
-    assert (np.isnan(cr) is False and cr > 0)
+    assert (np.isnan(cr) == False and cr > 0)
     assert (lat >= -90.0 * u.deg)
     assert (lat <= 90.0 * u.deg)
 
@@ -238,7 +238,7 @@ def get_MAS_br_long_profile(cr, lat=0.0 * u.deg):
         br_in: Br as a function of Carrington longitude at solar equator.
                Interpolated to HUXt longitudinal resolution. np.array (NDIM = 1)
     """
-    assert (np.isnan(cr) is False and cr > 0)
+    assert (np.isnan(cr) == False and cr > 0)
     assert (lat >= -90.0 * u.deg)
     assert (lat <= 90.0 * u.deg)
 
@@ -275,7 +275,7 @@ def get_MAS_vr_map(cr):
         vr_longs: The Carrington longitudes for the Vr map, np.array with units of radians
     """
 
-    assert (np.isnan(cr) is False and cr > 0)
+    assert (np.isnan(cr) == False and cr > 0)
 
     # Check the data exist, if not, download them
     flag = get_MAS_boundary_conditions(cr)
@@ -313,7 +313,7 @@ def get_MAS_br_map(cr):
         vr_longs: The Carrington longitudes for the Vr map, np.array with units of radians
     """
 
-    assert (np.isnan(cr) is False and cr > 0)
+    assert (np.isnan(cr) == False and cr > 0)
 
     # Check the data exist, if not, download them
     flag = get_MAS_boundary_conditions(cr)
@@ -513,7 +513,7 @@ def get_PFSS_maps(filepath):
     return vr_map, vr_longs, vr_lats, br_map, br_longs, br_lats
 
 
-def get_CorTom_vr_map(filepath, convert_from_density=False):
+def get_CorTom_vr_map(filepath):
     """
     A function to load, read and process CorTom density output to provide HUXt V boundary conditions as lat-long maps.
     Maps returned in native resolution, not HUXt resolution.
@@ -521,8 +521,6 @@ def get_CorTom_vr_map(filepath, convert_from_density=False):
 
     Args:
         filepath: String, The filepath for the CorTom.txt file
-        convert_from_density : Old files were density, not speed. Use this flag to convert
-
     Returns:
         vr_map: np.array, Solar wind speed as a Carrington longitude-latitude map. In km/s
         vr_lats: np.array, The latitudes for the Vr map, in radians from trhe equator
@@ -532,41 +530,17 @@ def get_CorTom_vr_map(filepath, convert_from_density=False):
 
     """
 
-    columns = ['carrlong', 'carrlat', 'vsw']
-    den_df = pd.read_csv(filepath, skiprows=2, names=columns)
+    cortom_data = readsav(filepath)
+    vr_map = copy.copy(cortom_data['velocity'])
+    vr_colat = copy.copy(cortom_data['colat_rad'])
+    vr_longs = copy.copy(cortom_data['lon_rad'])
 
-    # create a regular grid
-    xvals = np.linspace(180.0 / 128, 360.0 - 180.0 / 128, num=360)
-    yvals = np.linspace(-90 + 180.0 / 128, 90 - 180.0 / 128, num=180)
+    vr_lats = (np.pi/2 - vr_colat) * u.rad
+    # Flip so south pole at bottom
+    vr_lats = np.flipud(vr_lats)
+    vr_map = np.flipud(vr_map)
 
-    # create a mesh using these new positions
-    X, Y = np.meshgrid(xvals, yvals)
-
-    # interpolate the data. probably easiest to just use 2d arrays here. Set ML as forecast and OP as reference
-    griddata = interpolate.griddata((den_df['carrlong'], den_df['carrlat']), den_df['vsw'], (X, Y), method='linear')
-    vgrid = griddata.copy()
-
-    if convert_from_density:
-        # convert to V
-        dmax = 20000.0
-        dmin = 4000.0
-
-        vmin = 300.0
-        vmax = 680.0
-
-        vgrid[np.where(vgrid < dmin)] = dmin
-        vgrid[np.where(vgrid > dmax)] = dmax
-        vgrid = np.abs(vgrid - dmax)
-
-        vgrid = vmin + (vmax - vmin) * (vgrid / (dmax - dmin))
-
-    vgrid = vgrid * u.km / u.s
-    phi = X * np.pi / 180 * u.rad
-    theta = Y * np.pi / 180 * u.rad
-
-    lons = phi[0, :]
-    lats = theta[:, 0]
-    return vgrid, lons, lats
+    return vr_map*u.km/u.s, vr_longs*u.rad, vr_lats*u.rad
 
 
 def get_WSA_maps(filepath):
@@ -586,8 +560,6 @@ def get_WSA_maps(filepath):
         br_map: Br as a Carrington longitude-latitude map. Dimensionless np.array.
         br_lats: The latitudes for the Br map, in radians from the equator. np.array in units of radians.
         br_longs: The Carrington longitudes for the Br map, in radians. np.array in units of radians.
-        phi: Mesh grid of vr_longs. np.array in units of radians.
-        theta: Mesh grid of vr_lats. np.array in units of radians.
         cr: Integer, Carrington rotation number
 
     """
@@ -759,7 +731,7 @@ def get_CorTom_long_profile(filepath, lat=0.0 * u.deg):
     # Extract the value at the given latitude
     vr = np.zeros(lon_map.shape)
     for i in range(lon_map.size):
-        vr[i] = np.interp(lat.to(u.rad).value, lat_map.to(u.rad).value, vr_map[:, i].value)
+        vr[i] = np.interp(lat.to(u.rad).value, lat_map.value, vr_map[:, i].value)
 
     return vr * u.km / u.s
 
@@ -1148,6 +1120,14 @@ def generate_vCarr_from_OMNI(runstart, runend, nlon_grid=128, dt=1 * u.day, ref_
 
     # Import the OMNI data
     omni = TimeSeries(downloaded_files, concatenate=True)
+    
+    # drop all except V and Bx_gse
+    columns = omni.columns
+    columns.remove('V')
+    columns.remove('BX_GSE')
+    for col in columns:
+        omni = omni.remove_column(col)
+    
     data = omni.to_dataframe()
 
     # # Set invalid data points to NaN
@@ -1181,7 +1161,7 @@ def generate_vCarr_from_OMNI(runstart, runend, nlon_grid=128, dt=1 * u.day, ref_
     for i in range(0, len(omni_int)):
         cr[i], cr_lon_init[i] = datetime2huxtinputs(omni_int['datetime'][i])
 
-    omni_int['Carr_lon'] = cr_lon_init
+    omni_int['Carr_lon'] = cr_lon_init.value # remove unit as this confuses pd.DataFrame.copy() needed later
     omni_int['Carr_lon_unwrap'] = np.unwrap(omni_int['Carr_lon'].to_numpy())
 
     omni_int['mjd'] = [t.mjd for t in omni_int['Time'].array]
@@ -1191,29 +1171,27 @@ def generate_vCarr_from_OMNI(runstart, runend, nlon_grid=128, dt=1 * u.day, ref_
     ephem = h5py.File(dirs['ephemeris'], 'r')
     # convert ephemeric to mjd and interpolate to required times
     all_time = Time(ephem['EARTH']['HEEQ']['time'], format='jd').value - 2400000.5
-    omni_int['R'] = np.interp(omni_int['mjd'],
-                              all_time, ephem['EARTH']['HEEQ']['radius'][:]) * u.km
+    omni_int['R'] = np.interp(omni_int['mjd'], all_time, ephem['EARTH']['HEEQ']['radius'][:]) # no unit for same as above
 
     # map each point back/forward to the reference radial distance
     omni_int['mjd_ref'] = omni_int['mjd']
     omni_int['Carr_lon_ref'] = omni_int['Carr_lon_unwrap']
+    
     for t in range(0, len(omni_int)):
         # time lag to reference radius
         delta_r = ref_r.to(u.km).value - omni_int['R'][t]
-        delta_t = delta_r / omni_int['V'][t] / 24 / 60 / 60
+        delta_t = delta_r / omni_int['V'][t] / daysec.value
         omni_int['mjd_ref'][t] = omni_int['mjd_ref'][t] + delta_t
         # change in Carr long of the measurement
-        omni_int['Carr_lon_ref'][t] = omni_int['Carr_lon_ref'][t] - delta_t * daysec * 2 * np.pi / synodic_period
+        omni_int['Carr_lon_ref'][t] = omni_int['Carr_lon_ref'][t] - delta_t * daysec.value * 2 * np.pi / synodic_period.value
 
     # sort the omni data by Carr_lon_ref for interpolation
     omni_temp = omni_int.copy()
     omni_temp = omni_temp.sort_values(by=['Carr_lon_ref'])
 
     # now remap these speeds back on to the original time steps
-    omni_int['V_ref'] = np.interp(omni_int['Carr_lon_unwrap'], omni_temp['Carr_lon_ref'],
-                                  omni_temp['V'])
-    omni_int['Br_ref'] = np.interp(omni_int['Carr_lon_unwrap'], omni_temp['Carr_lon_ref'],
-                                   -omni_temp['BX_GSE'])
+    omni_int['V_ref'] = np.interp(omni_int['Carr_lon_unwrap'], omni_temp['Carr_lon_ref'], omni_temp['V'])
+    omni_int['Br_ref'] = np.interp(omni_int['Carr_lon_unwrap'], omni_temp['Carr_lon_ref'], -omni_temp['BX_GSE'])
 
     # compute the longitudinal and time grids
     dphi_grid = 360 / nlon_grid
