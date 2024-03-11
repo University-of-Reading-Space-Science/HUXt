@@ -1,5 +1,17 @@
 # HUXt Changelog
 
+# V4.1
+
+## Bug fixes
+- In `huxt.solve()` tracing field lines was failing in the updated environment due to the default argument of an empty list. This was fixed by being replaced with an empty quantity
+- In the updated environment, `huxt_inputs.generate_vCarr_from_OMNI()` was failing due to an unexplained issue with a pandas dataframe containing an astropy quantity, and that pandas could not copy this data frame. Units have been removed from the dataframe, which solves the issue. 
+
+## Additions
+- Updated environment file to solve dependency sercurity issues
+- Added `ConeCME.compute_arrival_at_location()`, to compute CME arrival at a specified radius and longitude.
+- Added CME expansion to CME boundary paramterisation
+- Updated CorTom loader to work with the IDL save files in the Aberystwyth repository
+
 # V4.0.1
 
 ## Bug Fixes

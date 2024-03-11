@@ -1161,7 +1161,7 @@ def generate_vCarr_from_OMNI(runstart, runend, nlon_grid=128, dt=1 * u.day, ref_
     for i in range(0, len(omni_int)):
         cr[i], cr_lon_init[i] = datetime2huxtinputs(omni_int['datetime'][i])
 
-    omni_int['Carr_lon'] = cr_lon_init.value # remove unit as this confuses pd.DataFrame.copy() needed later
+    omni_int['Carr_lon'] = cr_lon_init.value  # remove unit as this confuses pd.DataFrame.copy() needed later
     omni_int['Carr_lon_unwrap'] = np.unwrap(omni_int['Carr_lon'].to_numpy())
 
     omni_int['mjd'] = [t.mjd for t in omni_int['Time'].array]
@@ -1171,7 +1171,7 @@ def generate_vCarr_from_OMNI(runstart, runend, nlon_grid=128, dt=1 * u.day, ref_
     ephem = h5py.File(dirs['ephemeris'], 'r')
     # convert ephemeric to mjd and interpolate to required times
     all_time = Time(ephem['EARTH']['HEEQ']['time'], format='jd').value - 2400000.5
-    omni_int['R'] = np.interp(omni_int['mjd'], all_time, ephem['EARTH']['HEEQ']['radius'][:]) # no unit for same as above
+    omni_int['R'] = np.interp(omni_int['mjd'], all_time, ephem['EARTH']['HEEQ']['radius'][:])  # no unit as L1164
 
     # map each point back/forward to the reference radial distance
     omni_int['mjd_ref'] = omni_int['mjd']
