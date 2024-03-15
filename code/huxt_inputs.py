@@ -1100,7 +1100,7 @@ def generate_vCarr_from_OMNI(runstart, runend, nlon_grid=128, dt=1 * u.day, ref_
         ref_r: radial distance to produce v at, 215*u.solRad by default.
         corot_type: STring that determines corot type (both, back, forward)
     Returns:
-        Time: Array of times as Julian dates
+        Time: Array of times as modified Julian days
         Vcarr: Array of solar wind speeds mapped as a function of Carr long and time
         bcarr: Array of Br mapped as a function of Carr long and time
     """
