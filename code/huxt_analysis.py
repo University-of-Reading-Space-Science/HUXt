@@ -167,18 +167,31 @@ def plot(model, time, save=False, tag='', fighandle=np.nan, axhandle=np.nan, min
                     streak_lon = streak_lon + model.lon.value.tolist()
                     streak_r = streak_r + (
                             model.streak_particles_r[id_t, istreak, irot, :] * u.km.to(u.solRad)).value.tolist()
-
-                    # add the inner boundary postion too
+                    
+                #get the real values for plotting
                 mask = np.isfinite(streak_r)
                 plotlon = np.array(streak_lon)[mask]
                 plotr = np.array(streak_r)[mask]
-                # only add the inner boundary if it's in the HUXt longitude grid
-                foot_lon = H._zerototwopi_(model.streak_lon_r0[id_t, istreak])
-                dlon_foot = abs(model.lon.value - foot_lon)
-                if dlon_foot.min() <= model.dlon.value:
-                    plotlon = np.append(plotlon, foot_lon + model.dlon.value / 2)
-                    plotr = np.append(plotr, model.r[0].to(u.solRad).value)
-
+                
+                #for plotting only, fix the inner most point on the inner bounday. 
+                r_min = model.r[0].to(u.solRad).value
+                dr = plotr[-1] - r_min
+                plotr = np.append(plotr, r_min)
+                #compute the long of the footpoint assuming a constant solar wind speed
+                dt = (dr * u.solRad / (350 *u.km /u.s)).to(u.s)
+                dlon = (2*np.pi)*(dt/model.rotation_period).value 
+                plotlon = np.append(plotlon, H._zerototwopi_(plotlon[-1] + dlon))
+                
+                #for plotting only, fix the outermost point on the outer boundary
+                r_max = model.r[-1].to(u.solRad).value
+                dr = r_max - plotr[0]
+                plotr = np.append(r_max, plotr)
+                #compute the long of the outer footpoint assuming a constant solar wind speed
+                dt = (dr * u.solRad / (450 *u.km /u.s)).to(u.s)
+                dlon = (2*np.pi)*(dt/model.rotation_period).value
+                plotlon = np.append(H._zerototwopi_(plotlon[0] - dlon), plotlon)
+                
+                #plot the streakline
                 ax.plot(plotlon, plotr, 'k')
 
         # plot any HCS that have been traced
