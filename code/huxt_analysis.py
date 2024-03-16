@@ -289,6 +289,9 @@ def animate(model, tag, duration=10, fps=10, plotHCS=True, outputfilepath=''):
     
     # Save the animation as a movie file
     ani.save(filepath, writer='ffmpeg')
+    print('mp4 file written to ' + filepath)
+    
+    
     return
 
 def plot_radial(model, time, lon, save=False, tag=''):
@@ -858,6 +861,7 @@ def animate_3d(model3d, lon=0.0 * u.deg, tag='', duration=10, fps=10, plotHCS=Tr
     
     # Save the animation as a movie file
     ani.save(filepath, writer='ffmpeg')
+    print('mp4 file written to ' + filepath)
     
     return
 
