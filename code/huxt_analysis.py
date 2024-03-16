@@ -196,13 +196,12 @@ def plot(model, time, save=False, tag='', fighandle=np.nan, axhandle=np.nan, min
     return fig, ax
 
 
-def animate(model, tag, streaklines=None, plotHCS=True, outputfilepath=''):
+def animate(model, tag, plotHCS=True, outputfilepath=''):
     """
     Animate the model solution, and save as an MP4.
     Args:
         model: An instance of the HUXt class with a completed solution.
         tag: String to append to the filename of the animation.
-        streaklines: A list of streaklines to plot.
         plotHCS: Boolean flag on whether to plot the heliospheric current sheet location.
         outputfilepath: full path, including filename if output is to be saved anywhere other than huxt/figures
     Returns:
@@ -213,8 +212,6 @@ def animate(model, tag, streaklines=None, plotHCS=True, outputfilepath=''):
     # Scaled so a 5-day simulation with dt_scale=4 is a 10-second movie.
     duration = model.simtime.value * (10 / 432000)
 
-    if streaklines is None:
-        streaklines = []
 
     def make_frame(t):
         """
@@ -241,6 +238,8 @@ def animate(model, tag, streaklines=None, plotHCS=True, outputfilepath=''):
     animation = mpy.VideoClip(make_frame, duration=duration)
     animation.write_videofile(filepath, fps=24, codec='libx264')
     return
+
+
 
 
 def plot_radial(model, time, lon, save=False, tag=''):
