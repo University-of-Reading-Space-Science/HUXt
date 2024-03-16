@@ -3,8 +3,9 @@ import os
 import astropy.units as u
 import matplotlib.pyplot as plt
 import matplotlib as mpl
-import moviepy.editor as mpy
-from moviepy.video.io.bindings import mplfig_to_npimage
+from matplotlib.animation import FuncAnimation
+# import moviepy.editor as mpy
+# from moviepy.video.io.bindings import mplfig_to_npimage
 import numpy as np
 import pandas as pd
 from sunpy.net import Fido
@@ -196,24 +197,67 @@ def plot(model, time, save=False, tag='', fighandle=np.nan, axhandle=np.nan, min
     return fig, ax
 
 
-def animate(model, tag, plotHCS=True, outputfilepath=''):
+# def animate(model, tag, plotHCS=True, outputfilepath=''):
+#     """
+#     Animate the model solution, and save as an MP4.
+#     Args:
+#         model: An instance of the HUXt class with a completed solution.
+#         tag: String to append to the filename of the animation.
+#         plotHCS: Boolean flag on whether to plot the heliospheric current sheet location.
+#         outputfilepath: full path, including filename if output is to be saved anywhere other than huxt/figures
+#     Returns:
+#         None
+#     """
+
+#     # Set the duration of the movie
+#     # Scaled so a 5-day simulation with dt_scale=4 is a 10-second movie.
+#     duration = model.simtime.value * (10 / 432000)
+
+
+#     def make_frame(t):
+#         """
+#         Produce the frame required by MoviePy.VideoClip.
+#         Args:
+#             t: time through the movie
+#         Returns:
+#             frame: An image array for rendering to movie clip.
+#         """
+#         # Get the time index closest to this fraction of movie duration
+#         i = np.int32((model.nt_out - 1) * t / duration)
+#         fig, ax = plot(model, model.time_out[i], plotHCS=plotHCS)
+#         frame = mplfig_to_npimage(fig)
+#         plt.close('all')
+#         return frame
+
+#     if outputfilepath:
+#         filepath = outputfilepath
+#     else:
+#         cr_num = np.int32(model.cr_num.value)
+#         filename = "HUXt_CR{:03d}_{}_movie.mp4".format(cr_num, tag)
+#         filepath = os.path.join(model._figure_dir_, filename)
+
+#     animation = mpy.VideoClip(make_frame, duration=duration)
+#     animation.write_videofile(filepath, fps=24, codec='libx264')
+#     return
+
+def animate(model, tag, duration=10, fps=10, plotHCS=True, outputfilepath=''):
     """
     Animate the model solution, and save as an MP4.
     Args:
         model: An instance of the HUXt class with a completed solution.
         tag: String to append to the filename of the animation.
+        duration: the movie duration, in seconds
+        fps: frames per second
         plotHCS: Boolean flag on whether to plot the heliospheric current sheet location.
         outputfilepath: full path, including filename if output is to be saved anywhere other than huxt/figures
     Returns:
         None
     """
-
-    # Set the duration of the movie
-    # Scaled so a 5-day simulation with dt_scale=4 is a 10-second movie.
-    duration = model.simtime.value * (10 / 432000)
-
-
-    def make_frame(t):
+    
+    interval = (1/fps)*1000
+    nframes = int(duration*1000/interval)
+    
+    def make_frame(frame):
         """
         Produce the frame required by MoviePy.VideoClip.
         Args:
@@ -221,26 +265,31 @@ def animate(model, tag, plotHCS=True, outputfilepath=''):
         Returns:
             frame: An image array for rendering to movie clip.
         """
+        plt.clf()  # Clear the previous frame
+        ax = fig.add_subplot(111, projection='polar')
+        
         # Get the time index closest to this fraction of movie duration
-        i = np.int32((model.nt_out - 1) * t / duration)
-        fig, ax = plot(model, model.time_out[i], plotHCS=plotHCS)
-        frame = mplfig_to_npimage(fig)
-        plt.close('all')
+        i = np.int32((model.nt_out - 1) * frame / nframes)
+        plot(model, model.time_out[i], fighandle=fig, axhandle=ax, plotHCS=plotHCS)
         return frame
-
+    
+    # Create a new figure
+    fig, ax = plt.subplots(figsize=(10, 10), subplot_kw={"projection": "polar"})
+    
+    # Create the animation
+    ani = FuncAnimation(fig, make_frame, frames=range(nframes), interval=interval)
+    
+    #set up the save path
     if outputfilepath:
         filepath = outputfilepath
     else:
         cr_num = np.int32(model.cr_num.value)
         filename = "HUXt_CR{:03d}_{}_movie.mp4".format(cr_num, tag)
         filepath = os.path.join(model._figure_dir_, filename)
-
-    animation = mpy.VideoClip(make_frame, duration=duration)
-    animation.write_videofile(filepath, fps=24, codec='libx264')
+    
+    # Save the animation as a movie file
+    ani.save(filepath, writer='ffmpeg')
     return
-
-
-
 
 def plot_radial(model, time, lon, save=False, tag=''):
     """
@@ -551,7 +600,8 @@ def plot_earth_timeseries(model, plot_omni=True):
 
 
 @u.quantity_input(time=u.day)
-def plot3d_radial_lat_slice(model3d, time, lon=np.NaN * u.deg, save=False, tag=''):
+def plot3d_radial_lat_slice(model3d, time, lon=np.NaN * u.deg, save=False, tag='',
+                            fighandle=np.nan, axhandle=np.nan):
     """
     Make a contour plot on polar axis of a radial-latitudinal plane of the solar wind solution at a fixed time and
     longitude.
@@ -599,8 +649,14 @@ def plot3d_radial_lat_slice(model3d, time, lon=np.NaN * u.deg, save=False, tag='
     mymap.set_over('lightgrey')
     mymap.set_under([0, 0, 0])
     levels = np.arange(plotvmin, plotvmax + dv, dv)
+    
+    # if no fig and axis handles are given, create a new figure
+    if isinstance(fighandle, float):
+        fig, ax = plt.subplots(figsize=(10, 10), subplot_kw={"projection": "polar"})
+    else:
+        fig = fighandle
+        ax = axhandle
 
-    fig, ax = plt.subplots(figsize=(10, 10), subplot_kw={"projection": "polar"})
     cnt = ax.contourf(model3d.lat.to(u.rad), model.r, mercut, levels=levels, cmap=mymap, extend='both')
 
     # Set edge color of contours the same, for good rendering in PDFs
@@ -712,46 +768,98 @@ def plot3d_radial_lat_slice(model3d, time, lon=np.NaN * u.deg, save=False, tag='
     return fig, ax
 
 
-def animate_3d(model3d, lon=np.NaN * u.deg, tag='', outputfilepath=''):
+# def animate_3d(model3d, lon=np.NaN * u.deg, tag='', outputfilepath=''):
+#     """
+#     Animate the model solution, and save as an MP4.
+#     Args:
+#         model3d: An instance of HUXt3d
+#         lon: The longitude along which to render the latitudinal slice.
+#         tag: String to append to the filename of the animation.
+#         outputfilepath: full path, including filename if output is to be saved anywhere other than huxt/figures
+#     Returns:
+#         None
+#     """
+
+#     # Set the duration of the movie
+#     # Scaled so a 5-day simulation with dt_scale=4 is a 10-second movie.
+#     model = model3d.HUXtlat[0]
+#     duration = model.simtime.value * (10 / 432000)
+
+#     def make_frame_3d(t):
+#         """
+#         Produce the frame required by MoviePy.VideoClip.
+#             t: time through the movie
+#         """
+#         # Get the time index closest to this fraction of movie duration
+#         i = np.int32((model.nt_out - 1) * t / duration)
+#         fig, ax = plot3d_radial_lat_slice(model3d, model.time_out[i], lon)
+#         frame = mplfig_to_npimage(fig)
+#         plt.close('all')
+#         return frame
+
+#     if outputfilepath:
+#         filepath = outputfilepath
+#     else:
+#         cr_num = np.int32(model.cr_num.value)
+#         filename = "HUXt_CR{:03d}_{}_movie.mp4".format(cr_num, tag)
+#         filepath = os.path.join(model._figure_dir_, filename)
+
+#     animation = mpy.VideoClip(make_frame_3d, duration=duration)
+#     animation.write_videofile(filepath, fps=24, codec='libx264')
+#     return
+
+def animate_3d(model3d, lon=0.0 * u.deg, tag='', duration=10, fps=10, plotHCS=True, outputfilepath=''):
     """
     Animate the model solution, and save as an MP4.
     Args:
         model3d: An instance of HUXt3d
         lon: The longitude along which to render the latitudinal slice.
-        tag: String to append to the filename of the animation.
+        duration: the movie duration, in seconds
+        fps: frames per second
+        plotHCS: Boolean flag on whether to plot the heliospheric current sheet location.
         outputfilepath: full path, including filename if output is to be saved anywhere other than huxt/figures
     Returns:
         None
     """
-
-    # Set the duration of the movie
-    # Scaled so a 5-day simulation with dt_scale=4 is a 10-second movie.
     model = model3d.HUXtlat[0]
-    duration = model.simtime.value * (10 / 432000)
-
-    def make_frame_3d(t):
-        """
+    
+    interval = (1/fps)*1000
+    nframes = int(duration*1000/interval)
+    
+    def make_frame3d(frame):
+        """v
         Produce the frame required by MoviePy.VideoClip.
+        Args:
             t: time through the movie
+        Returns:
+            frame: An image array for rendering to movie clip.
         """
+        plt.clf()  # Clear the previous frame
+        ax = fig.add_subplot(111, projection='polar')
+        
         # Get the time index closest to this fraction of movie duration
-        i = np.int32((model.nt_out - 1) * t / duration)
-        fig, ax = plot3d_radial_lat_slice(model3d, model.time_out[i], lon)
-        frame = mplfig_to_npimage(fig)
-        plt.close('all')
+        i = np.int32((model.nt_out - 1) * frame / nframes)
+        plot3d_radial_lat_slice(model3d, model.time_out[i], lon, 
+                                fighandle=fig, axhandle=ax)
         return frame
-
+    
+    # Create a new figure
+    fig, ax = plt.subplots(figsize=(10, 10), subplot_kw={"projection": "polar"})
+    
+    # Create the animation
+    ani = FuncAnimation(fig, make_frame3d, frames=range(nframes), interval=interval)
+    
     if outputfilepath:
         filepath = outputfilepath
     else:
         cr_num = np.int32(model.cr_num.value)
         filename = "HUXt_CR{:03d}_{}_movie.mp4".format(cr_num, tag)
         filepath = os.path.join(model._figure_dir_, filename)
-
-    animation = mpy.VideoClip(make_frame_3d, duration=duration)
-    animation.write_videofile(filepath, fps=24, codec='libx264')
+    
+    # Save the animation as a movie file
+    ani.save(filepath, writer='ffmpeg')
+    
     return
-
 
 @u.quantity_input(time=u.day)
 def plot_bpol(model, time, save=False, tag='', fighandle=np.nan, axhandle=np.nan, minimalplot=False, streaklines=None,
