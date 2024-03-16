@@ -240,7 +240,7 @@ def plot(model, time, save=False, tag='', fighandle=np.nan, axhandle=np.nan, min
 #     animation.write_videofile(filepath, fps=24, codec='libx264')
 #     return
 
-def animate(model, tag, duration=10, fps=10, plotHCS=True, outputfilepath=''):
+def animate(model, tag, duration=10, fps=20, plotHCS=True, outputfilepath=''):
     """
     Animate the model solution, and save as an MP4.
     Args:
@@ -256,6 +256,9 @@ def animate(model, tag, duration=10, fps=10, plotHCS=True, outputfilepath=''):
     
     interval = (1/fps)*1000
     nframes = int(duration*1000/interval)
+    
+    exp_time = int(nframes*0.2)
+    print('Rendering ' + str(nframes) + ' frames. Expected time: ' + str(exp_time) + ' secs')
     
     def make_frame(frame):
         """
@@ -811,7 +814,7 @@ def plot3d_radial_lat_slice(model3d, time, lon=np.NaN * u.deg, save=False, tag='
 #     animation.write_videofile(filepath, fps=24, codec='libx264')
 #     return
 
-def animate_3d(model3d, lon=0.0 * u.deg, tag='', duration=10, fps=10, plotHCS=True, outputfilepath=''):
+def animate_3d(model3d, lon=0.0 * u.deg, tag='', duration=10, fps=20, plotHCS=True, outputfilepath=''):
     """
     Animate the model solution, and save as an MP4.
     Args:
@@ -828,6 +831,9 @@ def animate_3d(model3d, lon=0.0 * u.deg, tag='', duration=10, fps=10, plotHCS=Tr
     
     interval = (1/fps)*1000
     nframes = int(duration*1000/interval)
+    
+    exp_time = int(nframes*0.2)
+    print('Rendering ' + str(nframes) + ' frames. Expected time: ' + str(exp_time) + ' secs')
     
     def make_frame3d(frame):
         """v
