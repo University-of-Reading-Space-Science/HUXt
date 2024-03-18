@@ -960,6 +960,8 @@ def set_time_dependent_boundary(vgrid_Carr, time_grid, starttime, simtime, r_min
     returns:
         model: A HUXt instance initialised with the fully time dependent boundary conditions.
     """
+    all_lons, dlon, nlon = H.longitude_grid()
+    assert(len(vgrid_Carr[:,0]) == nlon)
 
     # see if br boundary conditions are supplied
     do_b = False
@@ -984,7 +986,7 @@ def set_time_dependent_boundary(vgrid_Carr, time_grid, starttime, simtime, r_min
     frame = model.frame
     dt = model.dt
     cr_lon_init = model.cr_lon_init
-    all_lons, dlon, nlon = H.longitude_grid()
+    
     latitude = model.latitude
     time_init = model.time_init
 
@@ -1088,14 +1090,14 @@ def _zerototwopi_(angles):
     return angles_out
 
 
-def generate_vCarr_from_OMNI(runstart, runend, nlon_grid=128, dt=1 * u.day, ref_r=215 * u.solRad, corot_type='both'):
+def generate_vCarr_from_OMNI(runstart, runend, nlon_grid=None, dt=1 * u.day, ref_r=215 * u.solRad, corot_type='both'):
     """
     A function to download OMNI data and generate V_carr and time_grid for use with set_time_dependent_boundary
 
     Args:
         runstart: Start time as a datetime
         runend: End time as a datetime
-        nlon_grid: Int, 128 by default
+        nlon_grid: Int. If none specified, will be set to the current HUXt value (usually 128)
         dt: time resolution, in days is 1*u.day.
         ref_r: radial distance to produce v at, 215*u.solRad by default.
         corot_type: STring that determines corot type (both, back, forward)
@@ -1104,9 +1106,17 @@ def generate_vCarr_from_OMNI(runstart, runend, nlon_grid=128, dt=1 * u.day, ref_
         Vcarr: Array of solar wind speeds mapped as a function of Carr long and time
         bcarr: Array of Br mapped as a function of Carr long and time
     """
+    
 
     # check the coro_type is one of the accepted values
     assert corot_type == 'both' or corot_type == 'back' or corot_type == 'forward'
+    
+    #set the default longitude grid, check specified value
+    all_lons, dlon, nlon = H.longitude_grid()
+    if nlon_grid is None:
+        nlon_grid = nlon
+    if not (nlon_grid == nlon):
+        print('Warning: vCarr generated for different longitude resolution than current HUXt default')
 
     # download an additional 28 days either side
     starttime = runstart - datetime.timedelta(days=28)
