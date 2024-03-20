@@ -7,7 +7,7 @@
 This repository provides an implementation of the HUXt model (Heliospheric Upwind Extrapolation with time dependence) in Python, as described by [Owens et al. (2020)](https://doi.org/10.1007/s11207-020-01605-3). This is a simple 1D incompressible hydrodynamic model, which essentially solves Burgers equation using the upwind numerical scheme. For more details on the models background, refer to [Owens et al. (2020)](https://doi.org/10.1007/s11207-020-01605-3).
 
 ## Installation
- `HUXt` is written in Python 3.9.13 and has a range of dependencies, which are listed in the `requirements.txt` and `environment.yml` files. Because of these dependencies, the simplest way to work with `HUXt` in `conda` is to create its own environment. With the anaconda prompt, in the root directory of `HUXt`, this can be done as:
+ `HUXt` is written in Python 3.9.13 and has a range of dependencies, which are listed in the `requirements.txt` and `environment.yml` files. Because of these dependencies, the simplest way to work with `HUXt` is to use `conda` to create a virtual environment for `HUXt`. We recommend using and up-to-date version of [miniconda](https://docs.anaconda.com/free/miniconda/index.html). With the anaconda prompt, in the root directory of `HUXt`, this can be done as:
 ```
 >>conda env create -f environment.yml
 >>conda activate huxt

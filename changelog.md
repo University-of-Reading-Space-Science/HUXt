@@ -1,6 +1,14 @@
 # HUXt Changelog
 
-# V4.1
+# V4.1.1
+## Bug fixes
+- In `huxt_inputs.set_time_dependent_boundary()` added a check to ensure input vgrid_Carr matches the longitudes of HUXt.
+- In `huxt_inputs.generate_vCarr_from_OMNI()` added checks and warnings to highlight if generated longitude series does not match default HUXt longitudes.
+
+## Additions
+- Dependence on `moviepy` removed from `huxt_analysis.animate()`. This now uses only matplotlib. Syntax remains unchanged so is backwards compatible.
+
+# V4.1.0
 
 ## Bug fixes
 - In `huxt.solve()` tracing field lines was failing in the updated environment due to the default argument of an empty list. This was fixed by being replaced with an empty quantity

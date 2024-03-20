@@ -4,8 +4,6 @@ import astropy.units as u
 import matplotlib.pyplot as plt
 import matplotlib as mpl
 from matplotlib.animation import FuncAnimation
-# import moviepy.editor as mpy
-# from moviepy.video.io.bindings import mplfig_to_npimage
 import numpy as np
 import pandas as pd
 from sunpy.net import Fido
