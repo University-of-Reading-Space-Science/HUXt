@@ -9,6 +9,8 @@ import pandas as pd
 from sunpy.net import Fido
 from sunpy.net import attrs
 from sunpy.timeseries import TimeSeries
+from numba import jit
+from scipy.optimize import minimize
 
 import huxt as H
 
@@ -19,7 +21,8 @@ mpl.rc("legend", fontsize=16)
 
 
 @u.quantity_input(time=u.day)
-def plot(model, time, save=False, tag='', fighandle=np.nan, axhandle=np.nan, minimalplot=False, plotHCS=True):
+def plot(model, time, save=False, tag='', fighandle=np.nan, axhandle=np.nan, 
+         minimalplot=False, plotHCS=True, trace_earth_connection =False):
     """
     Make a contour plot on polar axis of the solar wind solution at a specific time.
     Args:
@@ -198,6 +201,10 @@ def plot(model, time, save=False, tag='', fighandle=np.nan, axhandle=np.nan, min
                 r = model.hcs_particles_r[i, id_t, 0, :] * u.km.to(u.solRad)
                 lons = model.lon
                 ax.plot(lons, r, 'w.')
+    if trace_earth_connection:
+        plotlon, plotr, optimal_lon, optimal_t = find_Earth_connected_field_line(model, time)
+        ax.plot(plotlon, plotr, 'w')
+        
 
     if save:
         cr_num = np.int32(model.cr_num.value)
@@ -251,7 +258,8 @@ def plot(model, time, save=False, tag='', fighandle=np.nan, axhandle=np.nan, min
 #     animation.write_videofile(filepath, fps=24, codec='libx264')
 #     return
 
-def animate(model, tag, duration=10, fps=20, plotHCS=True, outputfilepath=''):
+def animate(model, tag, duration=10, fps=20, plotHCS=True, 
+            trace_earth_connection = False, outputfilepath=''):
     """
     Animate the model solution, and save as an MP4.
     Args:
@@ -284,7 +292,8 @@ def animate(model, tag, duration=10, fps=20, plotHCS=True, outputfilepath=''):
         
         # Get the time index closest to this fraction of movie duration
         i = np.int32((model.nt_out - 1) * frame / nframes)
-        plot(model, model.time_out[i], fighandle=fig, axhandle=ax, plotHCS=plotHCS)
+        plot(model, model.time_out[i], fighandle=fig, axhandle=ax, 
+             plotHCS=plotHCS, trace_earth_connection=trace_earth_connection)
         return frame
     
     # Create a new figure
@@ -1055,3 +1064,393 @@ def plot_bpol(model, time, save=False, tag='', fighandle=np.nan, axhandle=np.nan
         fig.savefig(filepath)
 
     return fig, ax
+
+
+
+
+
+
+
+
+
+@jit(nopython=True)
+def trace_field_line_out(v_trl_kms, longrid_rad, rgrid_km, tgrid_s, 
+                         start_lon, time_start_s, time_stop_s,
+                         rot_period_s):
+    
+    """
+    Trace a field line through an exixisting model run. 
+    model must output with dt_scale = 1
+    
+    Args:
+        v_trl_kms: model.v_grid.value - the speed as a funciton of time, radius and longitude
+        longrid_rad: model.lon.to(u.rad).value - the longitude grid in radians
+        rgrid_km: model.r.to(u.km).value - the radial grid in km
+        tgrid_s: model.time_out.to(u.s).value - the time grid in seconds
+        start_lon: The longitude, in HUXt coords, from which to start tracing
+        time_start_s: The time from the start of the model run, in seconds, from which to start tracing
+        time_stop_s: The time from thr start of the model run, in seconds, at which to stop tracing
+        rot_period_s: the  HUXt rotation period, in seconds
+
+    Returns:
+        r_streak_km: An array of test particle distances for all time and longitudes
+    """
+
+    
+    #get the grid dimensions
+    nt = len(tgrid_s)
+    nlon = len(longrid_rad)
+    nr = len(rgrid_km)
+    
+    #check the dimensions of the grid
+    assert(len(v_trl_kms[:,0,0] == nt))
+    assert(len(v_trl_kms[0,:,0] == nr))
+    assert(len(v_trl_kms[0,0,:] == nlon))
+    
+    dt_phi_s = rot_period_s / nlon
+    dt_s = tgrid_s[1] - tgrid_s[0]
+    
+    
+    #create the main variable
+    r_streak_km = np.ones((nt, nlon)) * np.nan
+    
+    #find the start time index
+    id_t_start = np.argmin(np.abs(tgrid_s - time_start_s))
+    id_t_stop = np.argmin(np.abs(tgrid_s - time_stop_s))
+    #find the start lon index
+    id_lon_start = np.argmin(np.abs(longrid_rad - start_lon))
+    
+    id_t = id_t_start
+    id_lon = id_lon_start
+    while id_t < nt:
+        #stick a particle at the inner boundary
+        r_streak_km[id_t, id_lon] = rgrid_km[0]
+        
+        #find the time when the next longitude will need a test particle
+        id_t = id_t + int(dt_phi_s/dt_s)
+        id_lon = id_lon + 1
+        if id_lon >= nlon:
+            id_lon = 0
+    
+    #move each particle  forward
+    for it in range(id_t_start, id_t_stop): #loop through the required time range
+        for ilon in range(0,nlon): #loop through each longitude and move the particles forward
+            if ~np.isnan(r_streak_km[it, ilon]):
+                v_test_kms = np.interp(r_streak_km[it, ilon], rgrid_km, v_trl_kms[it, :, ilon])
+                r_streak_km[it+1, ilon] = r_streak_km[it, ilon] + v_test_kms * dt_s
+                
+                if  r_streak_km[it+1, ilon] > rgrid_km[-1]:
+                    r_streak_km[it+1, ilon] = np.nan
+     
+    return r_streak_km
+        
+
+@jit(nopython=True)
+def min_distance_streakline_point(streak_lon_rad, streak_r_km, 
+                              point_lon_rad, point_r_km, d = 100000):
+
+    
+    """
+    Return the minimum distance between a given field line and a fixed point (e.g. Earth)
+    
+    Args:
+        streak_lon_rad: Longitudes of fieldline
+        streak_r_km: Radial distances of fiedline
+        point_lon_rad: longitude of fixed point
+        point_r_km: radial distance of fixed point
+        d: resolution at which to interpolate the field line (in km)
+
+    Returns:
+        distance: minimum distance, in km
+        r: radial distance of closest point on fieldline, in km
+        theta: longitude of closest point on fieldine, in radians
+    """
+    
+    #convert the fieldline points to cartesean
+    # Convert polar coordinates to Cartesian coordinates
+    x = streak_r_km * np.cos(streak_lon_rad)
+    y = streak_r_km * np.sin(streak_lon_rad)
+    
+    #get Earth poisition in Cartesean
+    Ex = point_r_km * np.cos(point_lon_rad)
+    Ey = point_r_km * np.sin(point_lon_rad)
+    
+    # Calculate cumulative distances between consecutive points
+    dist_along_line = np.sqrt(np.diff(x)**2 + np.diff(y)**2)
+    cumulative_distances = np.nancumsum(dist_along_line)
+    
+    # Pad cumulative_distances with a zero at the beginning
+    padded_cumulative_distances = np.zeros(len(cumulative_distances) + 1)
+    padded_cumulative_distances[1:] = cumulative_distances
+
+    # Calculate total length of the line
+    total_length = padded_cumulative_distances[-1]
+    # Determine the number of interpolated points
+    num_interpolated_points = int(total_length / d)
+    
+    # Interpolate points along the line
+    intx = np.interp(np.linspace(0, total_length, num_interpolated_points + 1),
+                               padded_cumulative_distances, x)
+    inty = np.interp(np.linspace(0, total_length, num_interpolated_points + 1),
+                               padded_cumulative_distances, y)
+
+    
+    #find closest point to Earth 
+    distances = np.sqrt((intx - Ex)**2 + (inty - Ey)**2)
+    
+    # Replace NaN values with a large value
+    distances[np.isnan(distances)] = np.inf
+    i = np.argmin(distances)
+    
+    #convert the closest point back to r, lon
+    r = np.sqrt(intx[i]**2 + inty[i]**2)
+    #theta = H._zerototwopi_(
+    theta =    np.arctan2(inty[i], intx[i]) 
+    
+    return distances[i], r, theta
+
+
+
+@jit(nopython=True)
+def respinup_model(v_trl_kms, tgrid_s, rgrid_km, longrid_rad, 
+                   rot_period_s, buffer_time_s):
+    
+    """
+    recreate the spin-up period to enable field-line tracing near the start of a model run
+    
+    Args:
+        v_trl_kms: model.v_grid.value - 
+        longrid_rad: model.lon.to(u.rad).value - the longitude grid in radians
+        rgrid_km: model.r.to(u.km).value - the radial grid in km
+        tgrid_s: model.time_out.to(u.s).value - the time grid in seconds
+        start_lon: The longitude, in HUXt coords, from which to start tracing
+        rot_period_s: the  HUXt rotation period, in seconds
+        buffer_time_s: How back to take the model before the start time, in seconds
+
+    Returns:
+        new_v_trl_kms: the speed as a funciton of time, radius and longitude, 
+                    for both the spint-up and model run period
+        new_tgrid_s: the new time grid. spin-up period has negative times.
+    """
+
+    
+    dt_s = tgrid_s[1] - tgrid_s[0]
+    nlon = len(longrid_rad)
+    nr = len(rgrid_km)
+    
+    
+    #get the exact starting time
+    nsteps = int(np.ceil(buffer_time_s/dt_s))
+    
+    spinup_tgrid_s = np.arange(-nsteps*dt_s,0, dt_s)
+    
+    new_tgrid_s = np.append(spinup_tgrid_s, tgrid_s)
+    
+    
+    new_v_trl_kms = np.ones((len(new_tgrid_s), nr, nlon))
+    #put the existing data in
+    new_v_trl_kms[nsteps:, :, :] = v_trl_kms[:, :, :]
+    
+    
+    for t in range(0,len(spinup_tgrid_s)):
+        dt = -spinup_tgrid_s[t]
+        dlon = np.mod(2*np.pi * dt / rot_period_s, 2*np.pi)
+        this_lons = np.mod(longrid_rad + dlon, 2*np.pi)
+        for r in range(0,nr):
+            new_v_trl_kms[t, r, :] = np.interp(this_lons, longrid_rad, v_trl_kms[0, r, :])
+            
+        
+    return new_v_trl_kms, new_tgrid_s
+
+
+
+@jit(nopython=True)
+def _return_distance_for_given_t_(t, start_lon, v_trl_kms = np.nan, longrid_rad = np.nan, 
+                                rgrid_km = np.nan, tgrid_s =np.nan,
+                                time_stop_s = np.nan, 
+                                Earth_lon_rad = np.nan, Earth_r_km = np.nan,
+                                rot_period_s = np.nan):
+
+    """
+    function to be minimised. finds the closest time step for a given longitude
+    
+    """
+    
+    #make sure the longitude is between 0 and 2 pi
+    start_lon = np.mod(start_lon, 2*np.pi)
+    
+    
+    #first trace the field line
+    r_streak = trace_field_line_out(v_trl_kms, longrid_rad, rgrid_km, tgrid_s, 
+                             start_lon, t, time_stop_s, rot_period_s)
+
+    
+    id_t_stop = np.argmin(np.abs(tgrid_s - time_stop_s))
+    
+        
+    #order the longitude points starting at the initial lon
+    rel_lons = np.mod( longrid_rad - start_lon, 2*np.pi)
+    sort_indices = np.argsort(rel_lons)
+    plotlon = longrid_rad[sort_indices]
+    plotr= r_streak[id_t_stop,sort_indices]
+    
+    
+    
+    # #remove points at the outer boundary
+    # mask = r_streak[id_t_stop, :] >= rgrid_km[-1]
+    # r_streak[id_t_stop, mask] = np.nan
+    
+    #then compute the distance to Earth
+    dist, r, theta = min_distance_streakline_point(plotlon, plotr, 
+                                  Earth_lon_rad, Earth_r_km)
+    
+    return dist
+
+
+
+
+@jit(nopython=True)
+def _return_distance_for_given_lon_(start_lon, t, v_trl_kms = np.nan, longrid_rad = np.nan, 
+                                rgrid_km = np.nan, tgrid_s =np.nan,
+                                time_stop_s = np.nan, 
+                                Earth_lon_rad = np.nan, Earth_r_km = np.nan,
+                                rot_period_s = np.nan):
+
+    """
+    function to be minimised. finds the closest longitude for a given timestep
+    
+    """
+    
+    #make sure the longitude is between 0 and 2 pi
+    start_lon = np.mod(start_lon, 2*np.pi)
+    
+    #first trace the field line
+    r_streak = trace_field_line_out(v_trl_kms, longrid_rad, rgrid_km, tgrid_s, 
+                             start_lon, t, time_stop_s, rot_period_s)
+
+    
+    id_t_stop = np.argmin(np.abs(tgrid_s - time_stop_s))
+    
+        
+    #order the longitude points starting at the initial lon
+    rel_lons = np.mod( longrid_rad - start_lon, 2*np.pi)
+    sort_indices = np.argsort(rel_lons)
+    plotlon = longrid_rad[sort_indices]
+    plotr= r_streak[id_t_stop,sort_indices]
+    
+    
+    
+    # #remove points at the outer boundary
+    # mask = r_streak[id_t_stop, :] >= rgrid_km[-1]
+    # r_streak[id_t_stop, mask] = np.nan
+    
+    #then compute the distance to Earth
+    dist, r, theta = min_distance_streakline_point(plotlon, plotr, 
+                                  Earth_lon_rad, Earth_r_km)
+    
+    return dist
+
+def find_Earth_connected_field_line(model, time):
+    """
+    Locate the Earth connected field line for a completed model run at a given model time
+    Re-spins the model if necessary
+    
+    Args:
+        model: The HUXt model class for the solved run. Must be output at dt_scale = 1
+        time: The model time at which to trace the field line
+    Returns:
+        plotlon: The longitudes of the Earth-connected field line (in radians)
+        plotr: The radial distances of the Earth-connected field line (in solar radii, for plotting) 
+        optimal_lon: The model longitude at the field line start, in radians 
+        optimal_t: The time step at the field line start, in seconds from start of model run
+    """
+    
+    #return the Earth-connected streakline for a given model rn and time
+    
+    assert(model.dt_scale == 1)
+    
+
+    buffertime = 6*u.day #the the tracing this time before the ballistic start time estimate
+    buffer_time_s = buffertime.to(u.s).value
+    time_s = time.to(u.s).value
+    
+    rgrid_km = model.r.to(u.km).value
+    tgrid_s = model.time_out.to(u.s).value
+    longrid_rad = model.lon.to(u.rad).value
+    v_trl_kms = model.v_grid.to(u.km/u.s).value
+    rot_period_s = model.rotation_period.to(u.s).value
+    
+    #get the current Earth position
+    id_t = np.argmin(np.abs(tgrid_s - time_s))
+    earth_pos = model.get_observer('Earth')
+    r_Earth_km = earth_pos.r[id_t].to(u.km).value
+    if model.frame == 'synodic':
+        lon_Earth_rad = earth_pos.lon[id_t].to(u.rad).value
+    elif model.frame == 'sidereal':
+        lon_Earth_t = earth_pos.lon_hae[id_t]
+        lon_Earth_0 = earth_pos.lon_hae[0]
+        lon_Earth_rad = H._zerototwopi_(lon_Earth_t - lon_Earth_0)
+    
+    #check if fieldline tracing will need to start before the model run start
+    if time < buffertime:
+        #print('respinning for buffer period')
+        v_trl_kms, tgrid_s = respinup_model(v_trl_kms, tgrid_s, rgrid_km, longrid_rad, 
+                           rot_period_s, buffer_time_s)
+
+    
+    time_start_s = (time - buffertime).to(u.s).value
+    
+    start_lon = H._zerototwopi_(lon_Earth_rad - 1)#2 * np.pi * buffer_time_s / rot_period_s)
+    
+    #first minimise the longitude for a fixed time
+    result = minimize(_return_distance_for_given_lon_, x0 = start_lon, 
+                     args =(time_start_s, v_trl_kms, longrid_rad, rgrid_km, tgrid_s,
+                            time_s, lon_Earth_rad, r_Earth_km,
+                                    rot_period_s),
+                     method = 'Nelder-Mead')
+    
+    optimal_params = result.x
+    optimal_lon = optimal_params[0]
+    
+    #then minimise t for the fixed lon
+    result = minimize(_return_distance_for_given_t_, x0 = time_start_s, 
+                     args =(optimal_lon, v_trl_kms, longrid_rad, rgrid_km, tgrid_s,
+                            time_s, lon_Earth_rad, r_Earth_km,
+                                    rot_period_s),
+                     method = 'Nelder-Mead')
+    
+
+    
+    optimal_params = result.x
+    optimal_t = optimal_params[0]
+    
+    rstreak = trace_field_line_out(v_trl_kms, longrid_rad, rgrid_km, tgrid_s, 
+                             optimal_lon, optimal_t, time_s, rot_period_s)
+    
+    #make the field line nice for plotting
+    #====================================
+    id_t = np.argmin(np.abs(tgrid_s - time_s))
+    
+    # order  points in increasing angle from the initial value
+    rel_lon = H._zerototwopi_(longrid_rad - start_lon)
+    sort_indices = np.argsort(rel_lon)
+    plotlon = longrid_rad[sort_indices]
+    plotr = rstreak[id_t, sort_indices]
+    
+    # remove nans
+    mask = np.isfinite(plotr)
+    plotlon = plotlon[mask]
+    plotr = plotr[mask]
+    
+    # #add in the connection to the inner boundary
+    r_min = model.r[0].to(u.km).value
+    dr = plotr[-1] - r_min
+    plotr = np.append(plotr, r_min)
+    #compute the long of the footpoint assuming a constant solar wind speed
+    dt = (dr * u.km / (350 *u.km /u.s)).to(u.s)
+    dlon = (2*np.pi)*(dt/model.rotation_period).value 
+    plotlon = np.append(plotlon, H._zerototwopi_(plotlon[-1] + dlon))
+    
+    
+    
+    return plotlon, (plotr*u.km).to(u.solRad).value, optimal_lon, optimal_t
