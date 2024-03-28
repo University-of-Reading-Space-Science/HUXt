@@ -130,7 +130,14 @@ def plot(model, time, save=False, tag='', fighandle=np.nan, axhandle=np.nan,
 
             obslon = H._zerototwopi_(obs.lon[id_t] + deltalon)
             ax.plot(obslon, obs.r[id_t], style, markersize=16, label=body)
-
+            
+        
+        # Add on a legend.
+        if annotateplot:
+            fig.legend(ncol=5, loc='lower center', frameon=False, handletextpad=0.2, columnspacing=1.0)
+            
+        ax.patch.set_facecolor('slategrey')
+        fig.subplots_adjust(left=0.05, bottom=0.16, right=0.95, top=0.99)
 
         # Add color bar
         pos = ax.get_position()
@@ -143,12 +150,8 @@ def plot(model, time, save=False, tag='', fighandle=np.nan, axhandle=np.nan,
         cbar1 = fig.colorbar(cnt, cax=cbaxes, orientation='horizontal')
         cbar1.set_label(ylab)
         cbar1.set_ticks(np.arange(plotvmin, plotvmax, dv * 10))
-
-        # Add on a legend.
+        
         if annotateplot:
-            fig.legend(ncol=5, loc='lower center', frameon=False, handletextpad=0.2, columnspacing=1.0)
-            ax.patch.set_facecolor('slategrey')
-    
             # Add label
             label = "   Time: {:3.2f} days".format(model.time_out[id_t].to(u.day).value)
             label = label + '\n ' + (model.time_init + time).strftime('%Y-%m-%d %H:%M')
@@ -156,8 +159,6 @@ def plot(model, time, save=False, tag='', fighandle=np.nan, axhandle=np.nan,
     
             label = "HUXt2D \nLat: {:3.0f} deg".format(model.latitude.to(u.deg).value)
             fig.text(0.175, pos.y0, label, fontsize=16)
-            
-            fig.subplots_adjust(left=0.05, bottom=0.16, right=0.95, top=0.99)
 
         # plot any tracked streaklines
         if model.track_streak:
@@ -1015,7 +1016,7 @@ def trace_field_line_out(v_trl_kms, longrid_rad, rgrid_km, tgrid_s,
         rot_period_s: the  HUXt rotation period, in seconds
 
     Returns:
-        r_streak_km: An array of test particle distances for all time and longitudes
+        r_streak_km: An array of test particle distances for each longitude at given time step
     """
 
     
@@ -1064,12 +1065,12 @@ def trace_field_line_out(v_trl_kms, longrid_rad, rgrid_km, tgrid_s,
                 if  r_streak_km[it+1, ilon] > rgrid_km[-1]:
                     r_streak_km[it+1, ilon] = np.nan
      
-    return r_streak_km
+    return r_streak_km[id_t_stop,:]
         
 
 @jit(nopython=True)
 def min_distance_streakline_point(streak_lon_rad, streak_r_km, 
-                              point_lon_rad, point_r_km, d = 100000):
+                              point_lon_rad, point_r_km, d = 5000):
 
     
     """
@@ -1207,14 +1208,12 @@ def _return_distance_for_given_t_(t, start_lon, v_trl_kms = np.nan, longrid_rad 
                              start_lon, t, time_stop_s, rot_period_s)
 
     
-    id_t_stop = np.argmin(np.abs(tgrid_s - time_stop_s))
-    
         
     #order the longitude points starting at the initial lon
     rel_lons = np.mod( longrid_rad - start_lon, 2*np.pi)
     sort_indices = np.argsort(rel_lons)
     plotlon = longrid_rad[sort_indices]
-    plotr= r_streak[id_t_stop,sort_indices]
+    plotr= r_streak[sort_indices]
     
     
     
@@ -1251,14 +1250,12 @@ def _return_distance_for_given_lon_(start_lon, t, v_trl_kms = np.nan, longrid_ra
                              start_lon, t, time_stop_s, rot_period_s)
 
     
-    id_t_stop = np.argmin(np.abs(tgrid_s - time_stop_s))
-    
         
     #order the longitude points starting at the initial lon
     rel_lons = np.mod( longrid_rad - start_lon, 2*np.pi)
     sort_indices = np.argsort(rel_lons)
     plotlon = longrid_rad[sort_indices]
-    plotr= r_streak[id_t_stop,sort_indices]
+    plotr= r_streak[sort_indices]
     
     
     
@@ -1351,13 +1348,12 @@ def find_Earth_connected_field_line(model, time):
     
     #make the field line nice for plotting
     #====================================
-    id_t = np.argmin(np.abs(tgrid_s - time_s))
     
     # order  points in increasing angle from the initial value
     rel_lon = H._zerototwopi_(longrid_rad - start_lon)
     sort_indices = np.argsort(rel_lon)
     plotlon = longrid_rad[sort_indices]
-    plotr = rstreak[id_t, sort_indices]
+    plotr = rstreak[sort_indices]
     
     # remove nans
     mask = np.isfinite(plotr)
