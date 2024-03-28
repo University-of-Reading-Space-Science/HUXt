@@ -22,7 +22,8 @@ mpl.rc("legend", fontsize=16)
 
 @u.quantity_input(time=u.day)
 def plot(model, time, save=False, tag='', fighandle=np.nan, axhandle=np.nan, 
-         minimalplot=False, plotHCS=True, trace_earth_connection =False):
+         minimalplot=False, plotHCS=True, annotateplot = True, 
+         trace_earth_connection =False):
     """
     Make a contour plot on polar axis of the solar wind solution at a specific time.
     Args:
@@ -130,11 +131,6 @@ def plot(model, time, save=False, tag='', fighandle=np.nan, axhandle=np.nan,
             obslon = H._zerototwopi_(obs.lon[id_t] + deltalon)
             ax.plot(obslon, obs.r[id_t], style, markersize=16, label=body)
 
-        # Add on a legend.
-        fig.legend(ncol=5, loc='lower center', frameon=False, handletextpad=0.2, columnspacing=1.0)
-
-        ax.patch.set_facecolor('slategrey')
-        fig.subplots_adjust(left=0.05, bottom=0.16, right=0.95, top=0.99)
 
         # Add color bar
         pos = ax.get_position()
@@ -148,13 +144,20 @@ def plot(model, time, save=False, tag='', fighandle=np.nan, axhandle=np.nan,
         cbar1.set_label(ylab)
         cbar1.set_ticks(np.arange(plotvmin, plotvmax, dv * 10))
 
-        # Add label
-        label = "   Time: {:3.2f} days".format(model.time_out[id_t].to(u.day).value)
-        label = label + '\n ' + (model.time_init + time).strftime('%Y-%m-%d %H:%M')
-        fig.text(0.70, pos.y0, label, fontsize=16)
-
-        label = "HUXt2D \nLat: {:3.0f} deg".format(model.latitude.to(u.deg).value)
-        fig.text(0.175, pos.y0, label, fontsize=16)
+        # Add on a legend.
+        if annotateplot:
+            fig.legend(ncol=5, loc='lower center', frameon=False, handletextpad=0.2, columnspacing=1.0)
+            ax.patch.set_facecolor('slategrey')
+    
+            # Add label
+            label = "   Time: {:3.2f} days".format(model.time_out[id_t].to(u.day).value)
+            label = label + '\n ' + (model.time_init + time).strftime('%Y-%m-%d %H:%M')
+            fig.text(0.70, pos.y0, label, fontsize=16)
+    
+            label = "HUXt2D \nLat: {:3.0f} deg".format(model.latitude.to(u.deg).value)
+            fig.text(0.175, pos.y0, label, fontsize=16)
+            
+            fig.subplots_adjust(left=0.05, bottom=0.16, right=0.95, top=0.99)
 
         # plot any tracked streaklines
         if model.track_streak:
@@ -201,6 +204,7 @@ def plot(model, time, save=False, tag='', fighandle=np.nan, axhandle=np.nan,
                 r = model.hcs_particles_r[i, id_t, 0, :] * u.km.to(u.solRad)
                 lons = model.lon
                 ax.plot(lons, r, 'w.')
+                
     if trace_earth_connection:
         plotlon, plotr, optimal_lon, optimal_t = find_Earth_connected_field_line(model, time)
         ax.plot(plotlon, plotr, 'w')
@@ -214,49 +218,6 @@ def plot(model, time, save=False, tag='', fighandle=np.nan, axhandle=np.nan,
 
     return fig, ax
 
-
-# def animate(model, tag, plotHCS=True, outputfilepath=''):
-#     """
-#     Animate the model solution, and save as an MP4.
-#     Args:
-#         model: An instance of the HUXt class with a completed solution.
-#         tag: String to append to the filename of the animation.
-#         plotHCS: Boolean flag on whether to plot the heliospheric current sheet location.
-#         outputfilepath: full path, including filename if output is to be saved anywhere other than huxt/figures
-#     Returns:
-#         None
-#     """
-
-#     # Set the duration of the movie
-#     # Scaled so a 5-day simulation with dt_scale=4 is a 10-second movie.
-#     duration = model.simtime.value * (10 / 432000)
-
-
-#     def make_frame(t):
-#         """
-#         Produce the frame required by MoviePy.VideoClip.
-#         Args:
-#             t: time through the movie
-#         Returns:
-#             frame: An image array for rendering to movie clip.
-#         """
-#         # Get the time index closest to this fraction of movie duration
-#         i = np.int32((model.nt_out - 1) * t / duration)
-#         fig, ax = plot(model, model.time_out[i], plotHCS=plotHCS)
-#         frame = mplfig_to_npimage(fig)
-#         plt.close('all')
-#         return frame
-
-#     if outputfilepath:
-#         filepath = outputfilepath
-#     else:
-#         cr_num = np.int32(model.cr_num.value)
-#         filename = "HUXt_CR{:03d}_{}_movie.mp4".format(cr_num, tag)
-#         filepath = os.path.join(model._figure_dir_, filename)
-
-#     animation = mpy.VideoClip(make_frame, duration=duration)
-#     animation.write_videofile(filepath, fps=24, codec='libx264')
-#     return
 
 def animate(model, tag, duration=10, fps=20, plotHCS=True, 
             trace_earth_connection = False, outputfilepath=''):
@@ -794,45 +755,6 @@ def plot3d_radial_lat_slice(model3d, time, lon=np.NaN * u.deg, save=False, tag='
     return fig, ax
 
 
-# def animate_3d(model3d, lon=np.NaN * u.deg, tag='', outputfilepath=''):
-#     """
-#     Animate the model solution, and save as an MP4.
-#     Args:
-#         model3d: An instance of HUXt3d
-#         lon: The longitude along which to render the latitudinal slice.
-#         tag: String to append to the filename of the animation.
-#         outputfilepath: full path, including filename if output is to be saved anywhere other than huxt/figures
-#     Returns:
-#         None
-#     """
-
-#     # Set the duration of the movie
-#     # Scaled so a 5-day simulation with dt_scale=4 is a 10-second movie.
-#     model = model3d.HUXtlat[0]
-#     duration = model.simtime.value * (10 / 432000)
-
-#     def make_frame_3d(t):
-#         """
-#         Produce the frame required by MoviePy.VideoClip.
-#             t: time through the movie
-#         """
-#         # Get the time index closest to this fraction of movie duration
-#         i = np.int32((model.nt_out - 1) * t / duration)
-#         fig, ax = plot3d_radial_lat_slice(model3d, model.time_out[i], lon)
-#         frame = mplfig_to_npimage(fig)
-#         plt.close('all')
-#         return frame
-
-#     if outputfilepath:
-#         filepath = outputfilepath
-#     else:
-#         cr_num = np.int32(model.cr_num.value)
-#         filename = "HUXt_CR{:03d}_{}_movie.mp4".format(cr_num, tag)
-#         filepath = os.path.join(model._figure_dir_, filename)
-
-#     animation = mpy.VideoClip(make_frame_3d, duration=duration)
-#     animation.write_videofile(filepath, fps=24, codec='libx264')
-#     return
 
 def animate_3d(model3d, lon=0.0 * u.deg, tag='', duration=10, fps=20, plotHCS=True, outputfilepath=''):
     """
