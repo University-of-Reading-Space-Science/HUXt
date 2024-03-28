@@ -1299,7 +1299,7 @@ def find_Earth_connected_field_line(model, time):
     v_trl_kms = model.v_grid.to(u.km/u.s).value
     rot_period_s = model.rotation_period.to(u.s).value
     
-    #get the current Earth position
+    #get the current Earth position, ignore spin up if it's been added
     id_t = np.argmin(np.abs(tgrid_s - time_s))
     earth_pos = model.get_observer('Earth')
     r_Earth_km = earth_pos.r[id_t].to(u.km).value
@@ -1312,9 +1312,21 @@ def find_Earth_connected_field_line(model, time):
     
     #check if fieldline tracing will need to start before the model run start
     if time < buffertime:
-        #print('respinning for buffer period')
-        v_trl_kms, tgrid_s = respinup_model(v_trl_kms, tgrid_s, rgrid_km, longrid_rad, 
+        #see if it's already spun up.
+        if hasattr(model, 'v_grid_spunup'):
+            #print('using pre-existing spin up')
+            v_trl_kms = model.v_grid_spunup
+            tgrid_s = model.time_spunup
+        else:
+            #print('respinning for buffer period')
+            v_trl_kms, tgrid_s = respinup_model(v_trl_kms, tgrid_s, rgrid_km, longrid_rad, 
                            rot_period_s, buffer_time_s)
+            
+            #store the data in the model class, so it doesn't have to be spun-up again
+            model.v_grid_spunup = v_trl_kms
+            model.time_spunup = tgrid_s
+
+            
 
     
     time_start_s = (time - buffertime).to(u.s).value
