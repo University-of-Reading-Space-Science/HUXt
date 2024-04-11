@@ -434,7 +434,7 @@ def plot_timeseries(model, radius, lon, save=False, tag=''):
     return fig, ax
 
 
-def get_observer_timeseries(model, observer='Earth'):
+def get_observer_timeseries(model, observer='Earth', suppress_warning = False):
     """
     Compute the solar wind time series at an observer location. Returns a pandas dataframe with the 
     solar wind speed time series interpolated from the model solution using the
@@ -460,7 +460,7 @@ def get_observer_timeseries(model, observer='Earth'):
     deltalon = obs_pos.lon_hae - earth_pos.lon_hae
     model_lon_obs = H._zerototwopi_(model_lon_earth + deltalon.value)
 
-    if model.nlon == 1:
+    if model.nlon == 1 and not suppress_warning:
         print('Single longitude simulated. Extracting time series at Observer r')
 
     time = np.ones(model.nt_out) * np.nan
@@ -1327,10 +1327,8 @@ def find_Earth_connected_field_line(model, time):
             model.time_spunup = tgrid_s
 
             
-
     
     time_start_s = (time - buffertime).to(u.s).value
-    
     start_lon = H._zerototwopi_(lon_Earth_rad - 1)#2 * np.pi * buffer_time_s / rot_period_s)
     
     #first minimise the longitude for a fixed time

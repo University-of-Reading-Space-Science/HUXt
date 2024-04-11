@@ -939,7 +939,7 @@ def ConeFile_to_ConeCME_list_time(filepath, time):
 
 def set_time_dependent_boundary(vgrid_Carr, time_grid, starttime, simtime, r_min=215 * u.solRad, r_max=1290 * u.solRad,
                                 dt_scale=50, latitude=0 * u.deg, frame='sidereal', lon_start=0 * u.rad,
-                                lon_stop=2 * np.pi * u.rad, bgrid_Carr=np.nan):
+                                lon_stop=2 * np.pi * u.rad, lon_out = np.nan, bgrid_Carr=np.nan):
     """
     A function to compute an explicitly time dependent inner boundary condition for HUXt, rather than due to
     synodic/sidereal rotation of static coronal structure.
@@ -954,6 +954,7 @@ def set_time_dependent_boundary(vgrid_Carr, time_grid, starttime, simtime, r_min
         dt_scale: The output timestep of HUXt in terms of multiples of the intrinsic timestep.
         latitude: The latitude (from equator) to run HUXt along
         frame: String, "synodic" or "sidereal", specifying the rotating frame of reference
+        lon_out: Longitude for single 1-d run. Frame will be synodic
         lon_start: Longitude of one edge of the longitudinal domain of HUXt
         lon_stop: Longitude of the other edge of the longitudinal domain of HUXt
         bgrid_Carr: input magnetic polarity as a function of Carrington longitude and time
@@ -972,13 +973,22 @@ def set_time_dependent_boundary(vgrid_Carr, time_grid, starttime, simtime, r_min
     cr, cr_lon_init = datetime2huxtinputs(starttime)
 
     # set up the dummy model class
-    model = H.HUXt(v_boundary=np.ones(128) * 400 * u.km / u.s,
-                   lon_start=lon_start, lon_stop=lon_stop,
-                   latitude=latitude,
-                   r_min=r_min, r_max=r_max,
-                   simtime=simtime, dt_scale=dt_scale,
-                   cr_num=cr, cr_lon_init=cr_lon_init,
-                   frame=frame)
+    if np.isfinite(lon_out):
+        model = H.HUXt(v_boundary=np.ones(128) * 400 * u.km / u.s,
+                       lon_out=lon_out,
+                       latitude=latitude,
+                       r_min=r_min, r_max=r_max,
+                       simtime=simtime, dt_scale=dt_scale,
+                       cr_num=cr, cr_lon_init=cr_lon_init,
+                       frame='synodic')  
+    else:
+        model = H.HUXt(v_boundary=np.ones(128) * 400 * u.km / u.s,
+                       lon_start=lon_start, lon_stop=lon_stop,
+                       latitude=latitude,
+                       r_min=r_min, r_max=r_max,
+                       simtime=simtime, dt_scale=dt_scale,
+                       cr_num=cr, cr_lon_init=cr_lon_init,
+                       frame=frame)
 
     # extract the values from the model class
     buffertime = model.buffertime  # standard buffer time seems insufficient
@@ -1048,28 +1058,53 @@ def set_time_dependent_boundary(vgrid_Carr, time_grid, starttime, simtime, r_min
 
     if do_b:
         # set up the model class with these data initialised
-        model = H.HUXt(v_boundary=np.ones(128) * 400 * u.km / u.s,
-                       simtime=simtime,
-                       cr_num=cr, cr_lon_init=cr_lon_init,
-                       r_min=r_min, r_max=r_max,
-                       dt_scale=dt_scale, latitude=latitude,
-                       frame=frame,
-                       lon_start=lon_start, lon_stop=lon_stop,
-                       input_v_ts=input_ambient_ts,
-                       input_b_ts=input_ambient_ts_b,
-                       input_t_ts=model_time)
+        
+        if np.isfinite(lon_out):
+            model = H.HUXt(v_boundary=np.ones(128) * 400 * u.km / u.s,
+                           simtime=simtime,
+                           cr_num=cr, cr_lon_init=cr_lon_init,
+                           r_min=r_min, r_max=r_max,
+                           dt_scale=dt_scale, latitude=latitude,
+                           frame='synodic',
+                           lon_out=lon_out,
+                           input_v_ts=input_ambient_ts,
+                           input_b_ts=input_ambient_ts_b,
+                           input_t_ts=model_time)
+        else:
+            model = H.HUXt(v_boundary=np.ones(128) * 400 * u.km / u.s,
+                           simtime=simtime,
+                           cr_num=cr, cr_lon_init=cr_lon_init,
+                           r_min=r_min, r_max=r_max,
+                           dt_scale=dt_scale, latitude=latitude,
+                           frame=frame,
+                           lon_start=lon_start, lon_stop=lon_stop,
+                           input_v_ts=input_ambient_ts,
+                           input_b_ts=input_ambient_ts_b,
+                           input_t_ts=model_time)
 
     else:
         # set up the model class without B
-        model = H.HUXt(v_boundary=np.ones(128) * 400 * u.km / u.s,
-                       simtime=simtime,
-                       cr_num=cr, cr_lon_init=cr_lon_init,
-                       r_min=r_min, r_max=r_max,
-                       dt_scale=dt_scale, latitude=latitude,
-                       frame=frame,
-                       lon_start=lon_start, lon_stop=lon_stop,
-                       input_v_ts=input_ambient_ts,
-                       input_t_ts=model_time)
+        if np.isfinite(lon_out):
+            model = H.HUXt(v_boundary=np.ones(128) * 400 * u.km / u.s,
+                           simtime=simtime,
+                           cr_num=cr, cr_lon_init=cr_lon_init,
+                           r_min=r_min, r_max=r_max,
+                           dt_scale=dt_scale, latitude=latitude,
+                           frame='synodic',
+                           lon_out=lon_out,
+                           input_v_ts=input_ambient_ts,
+                           input_t_ts=model_time)
+            
+        else:
+            model = H.HUXt(v_boundary=np.ones(128) * 400 * u.km / u.s,
+                           simtime=simtime,
+                           cr_num=cr, cr_lon_init=cr_lon_init,
+                           r_min=r_min, r_max=r_max,
+                           dt_scale=dt_scale, latitude=latitude,
+                           frame=frame,
+                           lon_start=lon_start, lon_stop=lon_stop,
+                           input_v_ts=input_ambient_ts,
+                           input_t_ts=model_time)
 
     return model
 
