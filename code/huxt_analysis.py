@@ -111,6 +111,9 @@ def plot(model, time, save=False, tag='', fighandle=np.nan, axhandle=np.nan,
     ax.set_ylim(0, model.r.value.max())
     ax.set_yticklabels([])
     ax.set_xticklabels([])
+    
+    #plot the Sun
+    ax.plot(0, 0, 'o', color=[1.0, 0.5, 0.25], markersize=16)
 
     if not minimalplot:
         # determine which bodies should be plotted
