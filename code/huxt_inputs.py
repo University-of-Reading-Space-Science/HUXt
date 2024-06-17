@@ -937,6 +937,53 @@ def ConeFile_to_ConeCME_list_time(filepath, time):
     return cme_list
 
 
+def consolidate_cme_lists(cmelist_list, t_thresh = 0.1*u.day, 
+                          lon_thresh = 10*u.deg, lat_thresh = 10*u.deg):
+    
+    """
+    a function which takes a list of CME lists, as produced by multiple
+    Hin.ConeFile_to_ConeCME_list_time outputs, and produces a consolidated list
+    
+    The list of cme lists should be in order from oldest to newest
+    
+    threshold parameters can be passed to define what counts as the same CME
+    in multiple lists
+    
+    also removes duplicate CMEs within a single list, which are sometimes present
+    """
+    
+    #now go through each CME list and add in any new events 
+    cmelist_master = [cmelist_list[0][0]]
+    for cmelist in cmelist_list:
+        for cme in cmelist:
+            #get properties of the CME
+            this_time = cme.t_launch
+            this_long = cme.longitude_huxt
+            this_lat = cme.latitude
+            same_cme = False
+            
+            #compare with properties of CMEs currently in the list
+            for idx, existingcme in enumerate(cmelist_master):
+                existing_time = existingcme.t_launch
+                existing_long = existingcme.longitude_huxt
+                existing_lat = existingcme.latitude
+                
+                #require a similar time, lat and long to be the same CME
+                if ((abs(this_time - existing_time) < t_thresh) & 
+                    (H._zerototwopi_(this_long - existing_long) < lon_thresh) &
+                    (abs(this_lat - existing_lat) < lat_thresh)):
+                    same_cme = True
+                    
+                    #use the values from the newer cone file
+                    cmelist_master[idx] = cme
+                    
+            #if it's a new CME, add it to the list  
+            if not same_cme:
+                cmelist_master.append(cme)
+            
+    return cmelist_master
+
+
 def set_time_dependent_boundary(vgrid_Carr, time_grid, starttime, simtime, r_min=215 * u.solRad, r_max=1290 * u.solRad,
                                 dt_scale=50, latitude=0 * u.deg, frame='sidereal', lon_start=0 * u.rad,
                                 lon_stop=2 * np.pi * u.rad, lon_out = np.nan, bgrid_Carr=np.nan):
