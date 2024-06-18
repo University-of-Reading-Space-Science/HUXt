@@ -740,6 +740,19 @@ def getMetOfficeWSAandCone(startdate, enddate, datadir=''):
     """Downloads the most recent WSA output and coneCME files for a given time window from the Met Office system.
     Requires an API key to be set as a system environment variable saves wsa and cone files to datadir, which defaults
     to the current directory. UTC date format is "%Y-%m-%dT%H:%M:%S". Outputs the filepaths to the WSA and cone files.
+    
+    Args:
+        startdate : A DATETIME object representing the start of the download window 
+        enddate : A DATETIME object representing the end of the download window,
+                    normally the current forecast date
+        datadir : Optional argument if a non-default download location is needed
+
+    Returns:
+       success :   True if both cone and wsa files were successfullly downloaded
+       wsafilepath: filepath for the WSA output
+       conefilepath: filepath for the cone CME file
+       model_time : time-stamp of the associated enlil run
+    
     """
     version = 'v1'
     api_key = os.getenv("API_KEY")
@@ -788,7 +801,7 @@ def getMetOfficeWSAandCone(startdate, enddate, datadir=''):
                     open(conefilepath, "wb").write(response_cone.content)
                     found_cone = True
             i = i - 1
-            if found_wsa and found_wsa:
+            if found_wsa and found_cone:
                 success = True
                 break
 
@@ -1106,7 +1119,7 @@ def set_time_dependent_boundary(vgrid_Carr, time_grid, starttime, simtime, r_min
     if do_b:
         # set up the model class with these data initialised
         
-        if np.isfinite(lon_out):
+        if np.isfinite(lon_out):   #single longitude
             model = H.HUXt(v_boundary=np.ones(128) * 400 * u.km / u.s,
                            simtime=simtime,
                            cr_num=cr, cr_lon_init=cr_lon_init,
@@ -1117,7 +1130,7 @@ def set_time_dependent_boundary(vgrid_Carr, time_grid, starttime, simtime, r_min
                            input_v_ts=input_ambient_ts,
                            input_b_ts=input_ambient_ts_b,
                            input_t_ts=model_time)
-        else:
+        else:  #multiple longitudes
             model = H.HUXt(v_boundary=np.ones(128) * 400 * u.km / u.s,
                            simtime=simtime,
                            cr_num=cr, cr_lon_init=cr_lon_init,
@@ -1131,7 +1144,7 @@ def set_time_dependent_boundary(vgrid_Carr, time_grid, starttime, simtime, r_min
 
     else:
         # set up the model class without B
-        if np.isfinite(lon_out):
+        if np.isfinite(lon_out):  #single longitude
             model = H.HUXt(v_boundary=np.ones(128) * 400 * u.km / u.s,
                            simtime=simtime,
                            cr_num=cr, cr_lon_init=cr_lon_init,
@@ -1142,7 +1155,7 @@ def set_time_dependent_boundary(vgrid_Carr, time_grid, starttime, simtime, r_min
                            input_v_ts=input_ambient_ts,
                            input_t_ts=model_time)
             
-        else:
+        else:  #multiple longitudes
             model = H.HUXt(v_boundary=np.ones(128) * 400 * u.km / u.s,
                            simtime=simtime,
                            cr_num=cr, cr_lon_init=cr_lon_init,
@@ -1172,7 +1185,8 @@ def _zerototwopi_(angles):
     return angles_out
 
 
-def generate_vCarr_from_OMNI(runstart, runend, nlon_grid=None, dt=1 * u.day, ref_r=215 * u.solRad, corot_type='both'):
+def generate_vCarr_from_OMNI(runstart, runend, nlon_grid = None, omni = None, 
+                             dt=1*u.day, ref_r=215*u.solRad, corot_type='both'):
     """
     A function to download OMNI data and generate V_carr and time_grid for use with set_time_dependent_boundary
 
@@ -1200,52 +1214,62 @@ def generate_vCarr_from_OMNI(runstart, runend, nlon_grid=None, dt=1 * u.day, ref
     if not (nlon_grid == nlon):
         print('Warning: vCarr generated for different longitude resolution than current HUXt default')
 
-    # download an additional 28 days either side
-    starttime = runstart - datetime.timedelta(days=28)
-    endtime = runend + datetime.timedelta(days=28)
+    #if omni data is not supplied, download it
+    if omni is None:
+        # download an additional 28 days either side
+        starttime = runstart - datetime.timedelta(days=28)
+        endtime = runend + datetime.timedelta(days=28)
 
-    # Download the 1hr OMNI data from CDAweb
-    trange = attrs.Time(starttime, endtime)
-    dataset = attrs.cdaweb.Dataset('OMNI2_H0_MRG1HR')
-    result = Fido.search(trange, dataset)
-    downloaded_files = Fido.fetch(result)
+        # Download the 1hr OMNI data from CDAweb
+        trange = attrs.Time(starttime, endtime)
+        dataset = attrs.cdaweb.Dataset('OMNI2_H0_MRG1HR')
+        result = Fido.search(trange, dataset)
+        downloaded_files = Fido.fetch(result)
 
-    # Import the OMNI data
-    omni = TimeSeries(downloaded_files, concatenate=True)
+        # Import the OMNI data
+        omni = TimeSeries(downloaded_files, concatenate=True)
     
-    # drop all except V and Bx_gse
-    columns = omni.columns
-    columns.remove('V')
-    columns.remove('BX_GSE')
-    for col in columns:
-        omni = omni.remove_column(col)
+        # drop all except V and Bx_gse
+        columns = omni.columns
+        columns.remove('V')
+        columns.remove('BX_GSE')
+        for col in columns:
+            omni = omni.remove_column(col)
+        
+        data = omni.to_dataframe()
+
+        # # Set invalid data points to NaN
+        id_bad = data['V'] == 9999.0
+        data.loc[id_bad, 'V'] = np.NaN
     
-    data = omni.to_dataframe()
+        # create a datetime column
+        data['datetime'] = data.index.to_pydatetime()
+        
+        # find the period of interest
+        mask = ((data['datetime'] > starttime) & (data['datetime'] < endtime))
+        omni = data[mask]
+        omni = omni.reset_index()
 
-    # # Set invalid data points to NaN
-    id_bad = data['V'] == 9999.0
-    data.loc[id_bad, 'V'] = np.NaN
+    omni['Time'] = Time(omni['datetime'])
 
-    # create a datetime column
-    data['datetime'] = data.index.to_pydatetime()
+    smjd = omni['Time'][0].mjd
+    fmjd = omni['Time'][len(omni) - 1].mjd
+    
+    # interpolate through OMNI V data gaps
+    omni_int = omni.interpolate(method='linear', axis=0).ffill().bfill()
+    del omni
+
 
     # compute the syndoic rotation period
     daysec = 24 * 60 * 60 * u.s
     synodic_period = 27.2753 * daysec  # Solar Synodic rotation period from Earth.
     omega_synodic = 2 * np.pi * u.rad / synodic_period
 
-    # find the period of interest
-    mask = ((data['datetime'] > starttime) & (data['datetime'] < endtime))
-    omni = data[mask]
-    omni = omni.reset_index()
-    omni['Time'] = Time(omni['datetime'])
-
-    smjd = omni['Time'][0].mjd
-    fmjd = omni['Time'][len(omni) - 1].mjd
-
-    # interpolate through OMNI V data gaps
-    omni_int = omni.interpolate(method='linear', axis=0).ffill().bfill()
-    del omni
+   
+    
+    
+    
+   
 
     # compute carrington longitudes
     cr = np.ones(len(omni_int))

@@ -3,6 +3,7 @@ import os
 import astropy.units as u
 import matplotlib.pyplot as plt
 import matplotlib as mpl
+import datetime
 from matplotlib.animation import FuncAnimation
 import numpy as np
 import pandas as pd
@@ -116,12 +117,22 @@ def plot(model, time, save=False, tag='', fighandle=np.nan, axhandle=np.nan,
     ax.plot(0, 0, 'o', color=[1.0, 0.5, 0.25], markersize=16)
 
     if not minimalplot:
+        
         # determine which bodies should be plotted
-        plot_observers = zip(['EARTH', 'VENUS', 'MERCURY', 'STA', 'STB'],
-                             ['ko', 'mo', 'co', 'rs', 'y^'])
-        if model.r[0] > 200 * u.solRad:
-            plot_observers = zip(['EARTH', 'MARS', 'JUPITER', 'SATURN'],
-                                 ['ko', 'mo', 'ro', 'cs'])
+        plot_observers = list(zip(['EARTH'], ['ko']))
+        plot_observers.append(('STA','r*'))
+        if model.time_init < datetime.datetime(2016,8,21):
+            plot_observers.append(('STB','y*'))
+        if model.r[-1] < 350 * u.solRad:
+            plot_observers.append(('VENUS', 'mo'))
+            plot_observers.append(('MERCURY', 'co'))
+        if model.r[-1] > 350 * u.solRad:
+            plot_observers.append(('MARS', 'ro'))
+        if model.r[-1] > 1100 * u.solRad:
+            plot_observers.append(('JUPITER', 'mo'))   
+        if model.r[-1] > 2000 * u.solRad:
+            plot_observers.append(('SATURN', 'yo'))      
+            
 
         # Add on observers 
         for body, style in plot_observers:
@@ -132,7 +143,7 @@ def plot(model, time, save=False, tag='', fighandle=np.nan, axhandle=np.nan,
                 deltalon = earth_pos.lon_hae[id_t] - earth_pos.lon_hae[0]
 
             obslon = H._zerototwopi_(obs.lon[id_t] + deltalon)
-            ax.plot(obslon, obs.r[id_t], style, markersize=16, label=body)
+            ax.plot(obslon, obs.r[id_t], style, markersize=14, label=body)
             
         
         # Add on a legend.
