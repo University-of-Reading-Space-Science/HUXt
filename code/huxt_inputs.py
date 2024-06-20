@@ -808,6 +808,7 @@ def getMetOfficeWSAandCone(startdate, enddate, datadir=''):
     return success, wsafilepath, conefilepath, model_time
 
 
+
 def datetime2huxtinputs(dt):
     """
     A function to convert a datetime into the relevant Carrington rotation number and longitude
@@ -1265,11 +1266,6 @@ def generate_vCarr_from_OMNI(runstart, runend, nlon_grid = None, omni = None,
     synodic_period = 27.2753 * daysec  # Solar Synodic rotation period from Earth.
     omega_synodic = 2 * np.pi * u.rad / synodic_period
 
-   
-    
-    
-    
-   
 
     # compute carrington longitudes
     cr = np.ones(len(omni_int))

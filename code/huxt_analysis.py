@@ -120,12 +120,12 @@ def plot(model, time, save=False, tag='', fighandle=np.nan, axhandle=np.nan,
         
         # determine which bodies should be plotted
         plot_observers = list(zip(['EARTH'], ['ko']))
-        plot_observers.append(('STA','r*'))
+        plot_observers.append(('STA','c*'))
         if model.time_init < datetime.datetime(2016,8,21):
             plot_observers.append(('STB','y*'))
         if model.r[-1] < 350 * u.solRad:
-            plot_observers.append(('VENUS', 'mo'))
-            plot_observers.append(('MERCURY', 'co'))
+            plot_observers.append(('VENUS', 'yo'))
+            plot_observers.append(('MERCURY', 'mo'))
         if model.r[-1] > 350 * u.solRad:
             plot_observers.append(('MARS', 'ro'))
         if model.r[-1] > 1100 * u.solRad:
