@@ -846,6 +846,10 @@ def import_cone2bc_parameters(filename):
 
     # Get the number of cmes.
     n_cme = int(data[13].split('=')[1].split(',')[0])
+    
+    if n_cme == 0:
+        print('Warning: No CMEs in conefile: ' + filename)
+        return {}
 
     # Pull out the rows corresponding to the CME parameters
     cme_sub = data[14:-3].copy()
@@ -873,6 +877,8 @@ def import_cone2bc_parameters(filename):
         if param_name == 'ldates':
             param_val = param_val.strip("'")
         else:
+            if param_val == '.':  #I presume this is short hand for zero?
+                param_val='0.0'
             param_val = float(param_val)
 
         cmes[cme_id][param_name] = param_val
