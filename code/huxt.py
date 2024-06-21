@@ -1276,7 +1276,7 @@ def huxt_constants():
     nlong = 128  # Number of longitude bins for a full longitude grid [128]
     dr = 1.5 * u.solRad  # Radial grid step. With v_max, this sets the model time step [1.5*u.solRad]
     nlat = 45  # Number of latitude bins for a full latitude grid [45]
-    v_max = 2000 * u.km / u.s  # Maximum expected solar wind speed. Sets timestep [2000*u.km / u.s]
+    v_max = 3000 * u.km / u.s  # Maximum expected solar wind speed. Sets timestep [2000*u.km / u.s]
 
     # CONSTANTS - DON'T CHANGE
     twopi = 2.0 * np.pi

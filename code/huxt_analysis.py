@@ -98,16 +98,17 @@ def plot(model, time, save=False, tag='', fighandle=np.nan, axhandle=np.nan,
         c.set_edgecolor("face")
 
     # Add on CME boundaries
-    cme_colors = ['r', 'c', 'm', 'y', 'deeppink', 'darkorange']
-    for j, cme in enumerate(model.cmes):
-        cid = np.mod(j, len(cme_colors))
-        cme_lons = cme.coords[id_t]['lon']
-        cme_r = cme.coords[id_t]['r'].to(u.solRad)
-        if np.any(np.isfinite(cme_r)):
-            # Pad out to close the profile.
-            cme_lons = np.append(cme_lons, cme_lons[0])
-            cme_r = np.append(cme_r, cme_r[0])
-            ax.plot(cme_lons, cme_r, '-', color=cme_colors[cid], linewidth=3)
+    if model.track_cmes:
+        cme_colors = ['r', 'c', 'm', 'y', 'deeppink', 'darkorange']
+        for j, cme in enumerate(model.cmes):
+            cid = np.mod(j, len(cme_colors))
+            cme_lons = cme.coords[id_t]['lon']
+            cme_r = cme.coords[id_t]['r'].to(u.solRad)
+            if np.any(np.isfinite(cme_r)):
+                # Pad out to close the profile.
+                cme_lons = np.append(cme_lons, cme_lons[0])
+                cme_r = np.append(cme_r, cme_r[0])
+                ax.plot(cme_lons, cme_r, '-', color=cme_colors[cid], linewidth=3)
 
     ax.set_ylim(0, model.r.value.max())
     ax.set_yticklabels([])
