@@ -149,10 +149,15 @@ def plot(model, time, save=False, tag='', fighandle=np.nan, axhandle=np.nan,
         
         # Add on a legend.
         if annotateplot:
-            fig.legend(ncol=5, loc='lower center', frameon=False, handletextpad=0.2, columnspacing=1.0)
+            ax.legend(ncol=5, loc='lower center', frameon=False, fontsize=14, 
+                      handletextpad=0.2, columnspacing=1.0,  bbox_to_anchor=(0.5, -0.22))
             
         ax.patch.set_facecolor('slategrey')
-        fig.subplots_adjust(left=0.05, bottom=0.16, right=0.95, top=0.99)
+        pos = ax.get_position()
+        new_pos = [pos.x0, pos.y0 + 0.1, pos.width, pos.height]
+        ax.set_position(new_pos)
+        
+        #fig.subplots_adjust(left=0.05, bottom=0.16, right=0.95, top=0.99)
 
         # Add color bar
         pos = ax.get_position()
@@ -168,12 +173,13 @@ def plot(model, time, save=False, tag='', fighandle=np.nan, axhandle=np.nan,
         
         if annotateplot:
             # Add label
-            label = "   Time: {:3.2f} days".format(model.time_out[id_t].to(u.day).value)
+            label = "{:3.2f} days".format(model.time_out[id_t].to(u.day).value)
             label = label + '\n ' + (model.time_init + time).strftime('%Y-%m-%d %H:%M')
-            fig.text(0.70, pos.y0, label, fontsize=16)
+            ax.text(0.98, 0.0, label, fontsize=15, transform=ax.transAxes,
+                    horizontalalignment='right')
     
             label = "HUXt2D \nLat: {:3.0f} deg".format(model.latitude.to(u.deg).value)
-            fig.text(0.175, pos.y0, label, fontsize=16)
+            ax.text(0.02, 0.0, label, fontsize=15, transform=ax.transAxes,)
 
         # plot any tracked streaklines
         if model.track_streak:
