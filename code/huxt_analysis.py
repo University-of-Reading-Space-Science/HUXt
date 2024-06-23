@@ -58,7 +58,7 @@ def plot(model, time, save=False, tag='', fighandle=np.nan, axhandle=np.nan,
     plotvmin = 200
     plotvmax = 810
     dv = 10
-    ylab = "Solar Wind Speed (km/s)"
+    ylab = r"$V_{SW}$" + "\n[km/s]"
 
     # Insert into full array
     if lon_arr.size != model.lon.size:
@@ -161,25 +161,29 @@ def plot(model, time, save=False, tag='', fighandle=np.nan, axhandle=np.nan,
 
         # Add color bar
         pos = ax.get_position()
-        dw = 0.005
-        dh = 0.045
+        dw = 0.004
+        dh = 0.06
         left = pos.x0 + dw
         bottom = pos.y0 - dh
         wid = pos.width - 2 * dw
-        cbaxes = fig.add_axes([left, bottom, wid, 0.03])
+        cbaxes = fig.add_axes([left, bottom, wid*0.84, 0.03])
         cbar1 = fig.colorbar(cnt, cax=cbaxes, orientation='horizontal')
-        cbar1.set_label(ylab)
+        #cbar1.set_label(ylab)
         cbar1.set_ticks(np.arange(plotvmin, plotvmax, dv * 10))
+        cbaxes.text(1.15, -0.4, ylab, fontsize=15, transform=cbaxes.transAxes,
+                    horizontalalignment='center')
+        
+      
         
         if annotateplot:
             # Add label
             label = "{:3.2f} days".format(model.time_out[id_t].to(u.day).value)
             label = label + '\n ' + (model.time_init + time).strftime('%Y-%m-%d %H:%M')
-            ax.text(0.98, 0.0, label, fontsize=15, transform=ax.transAxes,
+            ax.text(0.98, -0.01, label, fontsize=15, transform=ax.transAxes,
                     horizontalalignment='right')
     
             label = "HUXt2D \nLat: {:3.0f} deg".format(model.latitude.to(u.deg).value)
-            ax.text(0.02, 0.0, label, fontsize=15, transform=ax.transAxes,)
+            ax.text(0.02, -0.01, label, fontsize=15, transform=ax.transAxes,)
 
         # plot any tracked streaklines
         if model.track_streak:
@@ -485,6 +489,7 @@ def get_observer_timeseries(model, observer='Earth', suppress_warning = False):
         print('Single longitude simulated. Extracting time series at Observer r')
 
     time = np.ones(model.nt_out) * np.nan
+    mjd = np.ones(model.nt_out) * np.nan
     lon = np.ones(model.nt_out) * np.nan
     rad = np.ones(model.nt_out) * np.nan
     speed = np.ones(model.nt_out) * np.nan
@@ -492,6 +497,7 @@ def get_observer_timeseries(model, observer='Earth', suppress_warning = False):
 
     for t in range(model.nt_out):
         time[t] = (model.time_init + model.time_out[t]).jd
+        mjd[t] = (model.time_init + model.time_out[t]).mjd
 
         # find the nearest longitude cell
         model_lons = model.lon.value
@@ -529,7 +535,8 @@ def get_observer_timeseries(model, observer='Earth', suppress_warning = False):
 
     time = pd.to_datetime(time, unit='D', origin='julian')
 
-    time_series = pd.DataFrame(data={'time': time, 'r': rad, 'lon': lon, 'vsw': speed, 'bpol': bpol})
+    time_series = pd.DataFrame(data={'time': time, 'r': rad, 'lon': lon, 
+                                     'vsw': speed, 'bpol': bpol, 'mjd': mjd})
     return time_series
 
 
