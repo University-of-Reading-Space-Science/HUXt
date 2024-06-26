@@ -1197,7 +1197,7 @@ def _zerototwopi_(angles):
     return angles_out
 
 
-def generate_vCarr_from_OMNI(runstart, runend, nlon_grid = None, omni = None, 
+def generate_vCarr_from_OMNI(runstart, runend, nlon_grid = None, omni_input = None, 
                              dt=1*u.day, ref_r=215*u.solRad, corot_type='both'):
     """
     A function to download OMNI data and generate V_carr and time_grid for use with set_time_dependent_boundary
@@ -1227,7 +1227,7 @@ def generate_vCarr_from_OMNI(runstart, runend, nlon_grid = None, omni = None,
         print('Warning: vCarr generated for different longitude resolution than current HUXt default')
 
     #if omni data is not supplied, download it
-    if omni is None:
+    if omni_input is None:
         # download an additional 28 days either side
         starttime = runstart - datetime.timedelta(days=28)
         endtime = runend + datetime.timedelta(days=28)
@@ -1261,15 +1261,22 @@ def generate_vCarr_from_OMNI(runstart, runend, nlon_grid = None, omni = None,
         mask = ((data['datetime'] > starttime) & (data['datetime'] < endtime))
         omni = data[mask]
         omni = omni.reset_index()
-
-    omni['Time'] = Time(omni['datetime'])
-
-    smjd = omni['Time'][0].mjd
-    fmjd = omni['Time'][len(omni) - 1].mjd
-    
+    else:
+        #create a copy of the input data, so the original data is unchanged.
+        omni = omni_input.copy()
+        
     # interpolate through OMNI V data gaps
     omni_int = omni.interpolate(method='linear', axis=0).ffill().bfill()
     del omni
+
+    omni_int['Time'] = Time(omni_int['datetime'])
+
+    smjd = omni_int['Time'][0].mjd
+    fmjd = omni_int['Time'][len(omni_int) - 1].mjd
+    
+
+    
+
 
 
     # compute the syndoic rotation period
@@ -1304,9 +1311,9 @@ def generate_vCarr_from_OMNI(runstart, runend, nlon_grid = None, omni = None,
         # time lag to reference radius
         delta_r = ref_r.to(u.km).value - omni_int['R'][t]
         delta_t = delta_r / omni_int['V'][t] / daysec.value
-        omni_int['mjd_ref'][t] = omni_int['mjd_ref'][t] + delta_t
+        omni_int.loc[t, 'mjd_ref'] = omni_int.loc[t,'mjd_ref'] + delta_t
         # change in Carr long of the measurement
-        omni_int['Carr_lon_ref'][t] = omni_int['Carr_lon_ref'][t] - delta_t * daysec.value * 2 * np.pi / synodic_period.value
+        omni_int.loc[t,'Carr_lon_ref'] = omni_int.loc[t,'Carr_lon_ref'] - delta_t * daysec.value * 2 * np.pi / synodic_period.value
 
     # sort the omni data by Carr_lon_ref for interpolation
     omni_temp = omni_int.copy()
