@@ -1042,7 +1042,7 @@ def set_time_dependent_boundary(vgrid_Carr, time_grid, starttime, simtime, r_min
 
     # set up the dummy model class
     if np.isfinite(lon_out):
-        model = H.HUXt(v_boundary=np.ones(128) * 400 * u.km / u.s,
+        model = H.HUXt(v_boundary=np.ones(nlon) * 400 * u.km / u.s,
                        lon_out=lon_out,
                        latitude=latitude,
                        r_min=r_min, r_max=r_max,
@@ -1050,7 +1050,7 @@ def set_time_dependent_boundary(vgrid_Carr, time_grid, starttime, simtime, r_min
                        cr_num=cr, cr_lon_init=cr_lon_init,
                        frame='synodic', track_cmes = track_cmes)  
     else:
-        model = H.HUXt(v_boundary=np.ones(128) * 400 * u.km / u.s,
+        model = H.HUXt(v_boundary=np.ones(nlon) * 400 * u.km / u.s,
                        lon_start=lon_start, lon_stop=lon_stop,
                        latitude=latitude,
                        r_min=r_min, r_max=r_max,

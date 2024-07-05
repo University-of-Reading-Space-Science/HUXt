@@ -94,8 +94,11 @@ def plot(model, time, save=False, tag='', fighandle=np.nan, axhandle=np.nan,
     cnt = ax.contourf(lon, rad, v, levels=levels, cmap=mymap, extend='both')
 
     # Set edge color of contours the same, for good rendering in PDFs
-    for c in cnt.collections:
-        c.set_edgecolor("face")
+    # for c in cnt.collections:
+    #     c.set_edgecolor("face")
+    #collections are deprecated in future matplotlib. I think the following is a direct substitution:
+    cnt.set(edgecolor="face")
+
 
     # Add on CME boundaries
     if model.track_cmes:
