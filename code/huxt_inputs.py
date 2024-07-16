@@ -18,6 +18,8 @@ from sunpy.net import Fido
 from sunpy.net import attrs
 from sunpy.timeseries import TimeSeries
 import requests
+import pandas as pd
+from dtaidistance import dtw
 
 import huxt as H
 
@@ -807,7 +809,42 @@ def getMetOfficeWSAandCone(startdate, enddate, datadir=''):
 
     return success, wsafilepath, conefilepath, model_time
 
+def get_omni(starttime, endtime):
+    """
+    A function to grab and process the OMNI COHO1HR data using FIDO
+    
+    Args:
+        starttime : datetime for start of requested interval
+        endtime : datetime for start of requested interval
 
+    Returns:
+        omni: Dataframe of the OMNI timeseries
+
+    """
+    trange = attrs.Time(starttime, endtime)
+    dataset = attrs.cdaweb.Dataset('OMNI_COHO1HR_MERGED_MAG_PLASMA')
+    result = Fido.search(trange, dataset)
+    downloaded_files = Fido.fetch(result)
+    
+    # Import the OMNI data
+    data = TimeSeries(downloaded_files, concatenate=True)
+    
+    omni = data.to_dataframe()
+    del data
+
+    # # Set invalid data points to NaN
+    id_bad = omni['V'] == 9999.0
+    omni.loc[id_bad, 'V'] = np.NaN
+    
+    #create a BX_GSE field that is expected by some HUXt fucntions
+    omni['BX_GSE'] = -omni['BR']
+    
+    # create a datetime column
+    omni['datetime'] = omni.index
+    #reset the index 
+    omni = omni.reset_index()
+    
+    return omni
 
 def datetime2huxtinputs(dt):
     """
@@ -822,9 +859,14 @@ def datetime2huxtinputs(dt):
         cr_lon_init : The Carrington longitude of Earth at the given datetime, as a float, with units of u.rad
 
     """
-
+    def remainder(cr_frac):
+        if np.isscalar(cr_frac):
+            return int(np.floor(cr_frac))
+        else:
+            return np.floor(cr_frac).astype(int)
+        
     cr_frac = sun.carrington_rotation_number(dt)
-    cr = int(np.floor(cr_frac))
+    cr = remainder(cr_frac)
     cr_lon_init = 2 * np.pi * (1 - (cr_frac - cr)) * u.rad
 
     return cr, cr_lon_init
@@ -1208,7 +1250,7 @@ def generate_vCarr_from_OMNI(runstart, runend, nlon_grid = None, omni_input = No
         nlon_grid: Int. If none specified, will be set to the current HUXt value (usually 128)
         dt: time resolution, in days is 1*u.day.
         ref_r: radial distance to produce v at, 215*u.solRad by default.
-        corot_type: STring that determines corot type (both, back, forward)
+        corot_type: String that determines corot type (both, back, forward)
     Returns:
         Time: Array of times as modified Julian days
         Vcarr: Array of solar wind speeds mapped as a function of Carr long and time
@@ -1228,35 +1270,12 @@ def generate_vCarr_from_OMNI(runstart, runend, nlon_grid = None, omni_input = No
 
     #if omni data is not supplied, download it
     if omni_input is None:
+        
         # download an additional 28 days either side
         starttime = runstart - datetime.timedelta(days=28)
         endtime = runend + datetime.timedelta(days=28)
-
-        # Download the 1hr OMNI data from CDAweb
-        trange = attrs.Time(starttime, endtime)
-        dataset = attrs.cdaweb.Dataset('OMNI2_H0_MRG1HR')
-        result = Fido.search(trange, dataset)
-        downloaded_files = Fido.fetch(result)
-
-        # Import the OMNI data
-        omni = TimeSeries(downloaded_files, concatenate=True)
-    
-        # drop all except V and Bx_gse
-        columns = omni.columns
-        columns.remove('V')
-        columns.remove('BX_GSE')
-        for col in columns:
-            omni = omni.remove_column(col)
-        
-        data = omni.to_dataframe()
-
-        # # Set invalid data points to NaN
-        id_bad = data['V'] == 9999.0
-        data.loc[id_bad, 'V'] = np.NaN
-    
-        # create a datetime column
-        data['datetime'] = data.index.to_pydatetime()
-        
+        data = get_omni(starttime, endtime)
+ 
         # find the period of interest
         mask = ((data['datetime'] > starttime) & (data['datetime'] < endtime))
         omni = data[mask]
@@ -1320,8 +1339,10 @@ def generate_vCarr_from_OMNI(runstart, runend, nlon_grid = None, omni_input = No
     omni_temp = omni_temp.sort_values(by=['Carr_lon_ref'])
 
     # now remap these speeds back on to the original time steps
-    omni_int['V_ref'] = np.interp(omni_int['Carr_lon_unwrap'], omni_temp['Carr_lon_ref'], omni_temp['V'])
-    omni_int['Br_ref'] = np.interp(omni_int['Carr_lon_unwrap'], omni_temp['Carr_lon_ref'], -omni_temp['BX_GSE'])
+    omni_int['V_ref'] = np.interp(omni_int['Carr_lon_unwrap'], 
+                                  omni_temp['Carr_lon_ref'], omni_temp['V'])
+    omni_int['Br_ref'] = np.interp(omni_int['Carr_lon_unwrap'],
+                                   omni_temp['Carr_lon_ref'], -omni_temp['BX_GSE'])
 
     # compute the longitudinal and time grids
     dphi_grid = 360 / nlon_grid
@@ -1349,14 +1370,18 @@ def generate_vCarr_from_OMNI(runstart, runend, nlon_grid = None, omni_input = No
         dt_back = (dlong_back / omega_synodic).to(u.day)
         dt_forward = (dlong_forward / omega_synodic).to(u.day)
 
-        vgrid_carr_recon_back[:, t] = np.interp(time_grid[t] - dt_back.value, omni_int['mjd'], omni_int['V_ref'],
+        vgrid_carr_recon_back[:, t] = np.interp(time_grid[t] - dt_back.value,
+                                                omni_int['mjd'], omni_int['V_ref'],
                                                 left=np.nan, right=np.nan)
-        bgrid_carr_recon_back[:, t] = np.interp(time_grid[t] - dt_back.value, omni_int['mjd'], omni_int['Br_ref'],
+        bgrid_carr_recon_back[:, t] = np.interp(time_grid[t] - dt_back.value, 
+                                                omni_int['mjd'], omni_int['Br_ref'],
                                                 left=np.nan, right=np.nan)
 
-        vgrid_carr_recon_forward[:, t] = np.interp(time_grid[t] + dt_forward.value, omni_int['mjd'], omni_int['V_ref'],
+        vgrid_carr_recon_forward[:, t] = np.interp(time_grid[t] + dt_forward.value,
+                                                   omni_int['mjd'], omni_int['V_ref'],
                                                    left=np.nan, right=np.nan)
-        bgrid_carr_recon_forward[:, t] = np.interp(time_grid[t] + dt_forward.value, omni_int['mjd'], omni_int['Br_ref'],
+        bgrid_carr_recon_forward[:, t] = np.interp(time_grid[t] + dt_forward.value, 
+                                                   omni_int['mjd'], omni_int['Br_ref'],
                                                    left=np.nan, right=np.nan)
 
         numerator = (dt_forward * vgrid_carr_recon_back[:, t] + dt_back * vgrid_carr_recon_forward[:, t])
@@ -1374,3 +1399,296 @@ def generate_vCarr_from_OMNI(runstart, runend, nlon_grid = None, omni_input = No
         return time_grid[mask], vgrid_carr_recon_back[:, mask], bgrid_carr_recon_back[:, mask]
     elif corot_type == 'forward':
         return time_grid[mask], vgrid_carr_recon_forward[:, mask], bgrid_carr_recon_forward[:, mask]
+
+
+
+
+
+def generate_vCarr_from_OMNI_DTW(runstart, runend, nlon = None, omni_input = None,
+                                 res  = '5h', psi_days = 5*u.day,  max_warp_days = 5*u.day,
+                                 dtw_on = 'V'):
+    
+    """
+    A function to download OMNI data and generate V_carr and time_grid for 
+    use with set_time_dependent_boundary. Uses dynamic time warping, rather than
+    corotation
+
+    Args:
+        runstart: Datetime object. Start of the interval
+        runend: Datetime object. End of the interval
+        nlon: Int. If none specified, will be set to the current HUXt value (usually 128)
+        res: String. Time averaging of OMNI prior to DTW. match to longitude (for nlon = 128, use '5h')
+        psi_days: Float, in units of days. DTW parameter, determining how many days can be ignored at the start/end of the fit.
+        max_warp_days: Float, in units of days. DTW parameter, determining maximum warp allowed.
+        dtw_on. String. Name of the omni dataframe column to be used to determine the DTW paths
+    Returns:
+        Time: Array of times as modified Julian days
+        Vcarr: Array of solar wind speeds mapped as a function of Carr long and time
+        bcarr: Array of Br mapped as a function of Carr long and time
+    """
+    
+    #set the default longitude grid, check specified value
+    all_lons_huxt, dlon_huxt, nlon_huxt = H.longitude_grid()
+    if nlon is None:
+        nlon = nlon_huxt
+    if not (nlon == nlon_huxt):
+        print('Warning: vCarr generated for different longitude resolution than current HUXt default')
+
+    
+   
+    # Download and process OMNI if not provided
+    
+    # download an additional 33 days previous and after (27 + 5 buffer)
+    starttime = runstart - datetime.timedelta(days=28 + psi_days.value)
+    endtime = runend + datetime.timedelta(days=28+ psi_days.value)
+
+    if omni_input is None:
+        # Download the 1hr OMNI data from CDAweb
+        omni = get_omni(starttime, endtime)
+    else:
+        #do some check on onmi_input?
+        if ( (omni_input.loc[0,'datetime']> starttime) | 
+             (omni_input.loc[0,'datetime']> starttime) ):
+            print('Warning: supplied OMNI data does not completely cover required interval (allow +/- 28 days)')    
+        omni = omni_input.copy()
+        
+    #extra processing
+
+    #add MJD, because datetime manipulation is a royal PITA
+    omni['mjd'] = Time(omni['datetime']).mjd
+    
+    #interpolate through the datagaps
+    omni[['V', 'BX_GSE']] = omni[['V', 'BX_GSE']].interpolate(method='linear', axis=0).ffill().bfill()
+    omni[[dtw_on]] = omni[[dtw_on]].interpolate(method='linear', axis=0).ffill().bfill()
+    
+    #get the carrington longitude
+    temp = datetime2huxtinputs(omni['datetime'].to_numpy())
+    omni['carr_lon'] = temp[1].value 
+    #unwrap this.
+    omni['clon_unwrap'] = np.unwrap(omni['carr_lon'].to_numpy()) 
+    
+    # interpolate to the required longitude grid 
+    
+
+    #average up to a given res for a clearer plot
+    omni_res = omni.resample(res, on='datetime').mean() 
+    omni_res['datetime'] = Time(omni_res['mjd'], format = 'mjd').datetime
+    omni_res.reset_index(drop=True, inplace=True)
+    
+    
+    #compute carrington longitude of earth for each point
+    temp = datetime2huxtinputs(omni_res['datetime'].to_numpy())
+    omni_res['carr_lon'] = temp[1].value
+    #unwrap this.
+    omni_res['clon_unwrap'] = np.unwrap(omni_res['carr_lon'].to_numpy()) 
+    
+    clon_min = omni_res['clon_unwrap'].min()
+    
+    #now interpolate this time series onto the required Carr long grid
+    #==================================================================
+    dlon = 2*np.pi/nlon
+    clon_unwrap_grid = - np.arange(-2*np.pi-dlon, -clon_min + 2*np.pi, dlon) 
+    
+    v_clon = np.interp(-clon_unwrap_grid, -omni_res['clon_unwrap'].to_numpy(), 
+                       omni_res['V'].to_numpy(),
+                       left=np.nan, right=np.nan)
+    mjd_clon = np.interp(-clon_unwrap_grid, -omni_res['clon_unwrap'].to_numpy(), 
+                       omni_res['mjd'].to_numpy(),
+                       left=np.nan, right=np.nan)
+    bx_clon = np.interp(-clon_unwrap_grid, -omni_res['clon_unwrap'].to_numpy(), 
+                       omni_res['BX_GSE'].to_numpy(),
+                       left=np.nan, right=np.nan)
+    dtwon_clon = np.interp(-clon_unwrap_grid, -omni_res['clon_unwrap'].to_numpy(), 
+                       omni_res[dtw_on].to_numpy(),
+                       left=np.nan, right=np.nan)
+
+    del omni_res
+    #bung this in a dataframe
+    data = {
+        'mjd': mjd_clon,
+        'V': v_clon,
+        'BX_GSE': bx_clon,
+        dtw_on : dtwon_clon,
+        'clon_unwrap' : clon_unwrap_grid
+    }
+    
+    omni_res = pd.DataFrame(data)
+    omni_res['carr_lon'] = np.mod(clon_unwrap_grid, 2*np.pi)
+    
+    #drop any times which are outside the original data, and therefore have nan mjds
+    omni_res = omni_res.dropna(subset=['mjd'])
+    omni_res.reset_index(drop=True, inplace=True)
+    #recompute the datetimes
+    omni_res['datetime'] = Time(omni_res['mjd'], format = 'mjd').datetime
+    
+    del omni
+    
+    #get the resulting time resolution and convert DTW params from days to steps
+    res_days = omni_res.loc[1,'mjd'] - omni_res.loc[0,'mjd']
+    psi_steps = int(psi_days.value/res_days)
+    max_warp_steps = int(max_warp_days.value/res_days)
+    
+    
+    #from this longitude-interpolated time series, create a current
+    #and lagged series of equal lengths and corresponding to same longitudes
+    L = len(omni_res)
+    
+    #find the index of the previous time of the final longitude
+    min_clon = omni_res.loc[L-1,'clon_unwrap']
+    t_lagged_end = np.argmin(np.abs(omni_res['clon_unwrap'] - (min_clon + 2*np.pi)))
+    
+    omni_lagged = omni_res.iloc[:t_lagged_end+1]
+    omni_lagged.reset_index(drop=True, inplace=True)
+    
+    #find the index of the previous time of initial longitude
+    max_clon = omni_res.loc[0,'clon_unwrap']
+    t_unlagged_start = np.argmin(np.abs(omni_res['clon_unwrap'] - (max_clon - 2*np.pi)))
+    
+    
+    omni_unlagged = omni_res.iloc[t_unlagged_start:]
+    omni_unlagged.reset_index(drop=True, inplace=True)
+    
+    
+    #now do the actual DTW 
+    #=====================
+
+    dtw2 = omni_unlagged[dtw_on].to_numpy()
+    dtw1 = omni_lagged[dtw_on].to_numpy()
+
+
+    #compute the DTW betweeen the behind and ahead using various parameters
+    path_v = dtw.warping_path(dtw1, dtw2, psi_neg=psi_steps, 
+                              window = max_warp_steps)
+    path_v_arr = np.array(path_v)
+        
+    
+    
+    #Now convert paths to a speeds on a regular grid
+    def find_y(x1, y1, x2, y2, x):
+        # Step 1: Calculate the slope
+        m = (y2 - y1) / (x2 - x1)
+        
+        # Step 2: Calculate the y-intercept
+        b = y1 - m * x1
+        
+        # Step 3: Calculate the y value for the given x
+        y = m * x + b
+        
+        return y
+
+    def gridpaths(paths, v1, v2, startpath, npoints):
+        #A function to grid data using DTW paths between two time series
+        #along the startingpath and for npoints evenaly spaced from 0 to 1 inclusive
+    
+        t = startpath
+        y_list = []
+        v_list = []
+    
+        #put in the starting values
+        v_list.append(v1[t])
+        y_list.append(0)
+        
+        #find all the paths that start at this time
+        mask = (paths[:,0] == t)
+        
+        
+        #check if any of these paths are a straight connection
+        if any(paths[mask,1] == t):
+            v_list.append(v2[t])
+            y_list.append(1)
+        else:
+            #find all the paths that cross this time
+            mask = (paths[:,0] < t) & (paths[:,1] > t) | (paths[:,0] > t) & (paths[:,1] < t)
+            crossing_paths = np.flipud(paths[mask,:])
+            #find the y value at which each path crosses this time and the speed
+            for path in crossing_paths:
+                y = find_y(path[0],0, path[1],1, t)
+                y_list.append(y)
+                
+                #the fractional distance along the path is also y?
+                v_at_y = v1[path[0]] * (1-y) + v2[path[1]] * y
+                v_list.append(v_at_y)
+            
+            #make sure y is ascending
+            zipped_lists = zip(y_list, v_list)
+    
+            # Sort the zipped list based on the first list (y_list)
+            sorted_zipped_lists = sorted(zipped_lists, key=lambda x: x[0])
+            
+            # Unzip the sorted list back into two separate lists
+            y_list_sorted, v_list_sorted = zip(*sorted_zipped_lists)
+            
+            # Convert the zipped objects back to lists (if needed)
+            y_list = list(y_list_sorted)
+            v_list = list(v_list_sorted)
+            
+            #put the last point in
+            v_list.append(v2[t])
+            y_list.append(1)
+            
+        
+        #now grid this data
+        yvals = np.arange(0,1+0.000001,1/(npoints-1))
+        vgrid_t = np.ones(npoints)*np.nan
+        for n in range(0, len(y_list)-1):
+            mask = (yvals >= y_list[n]) & (yvals < y_list[n+1])
+            vgrid_t[mask] = v_list[n]
+        vgrid_t[-1] = v_list[-1]
+        
+        return vgrid_t
+    
+    #set up the grid info
+    clon_grid = np.arange(dlon/2, 2*np.pi, dlon)
+    t_grid = omni_unlagged['mjd'].to_numpy()
+    #and the full grid
+    nt = len(t_grid)
+    t_grid_full = omni_res['mjd'].to_numpy()
+    nt_full = len(t_grid_full) 
+    
+    paths = path_v_arr
+    
+
+    # now map all this onto the Carrlon-t grid
+    #=========================================
+    vcarr_grid = np.ones((nlon,nt_full))*np.nan
+    bcarr_grid = np.ones((nlon,nt_full))*np.nan
+    
+    v2 = omni_unlagged['V'].to_numpy()
+    v1 = omni_lagged['V'].to_numpy()
+    b2 = omni_unlagged['BX_GSE'].to_numpy()
+    b1 = omni_lagged['BX_GSE'].to_numpy()
+    
+    
+    for t in range(0,nt):
+
+        #find the carrington longitude index this equates to
+        lon_id = np.argmin(np.abs(clon_grid - omni_unlagged.loc[t,'carr_lon']))
+        
+        
+        #find the time ranges that are covered by the current longitude
+        tmax = omni_unlagged.loc[t,'mjd']
+        tmin = omni_lagged.loc[t,'mjd']
+        mask_t = ((t_grid_full >= tmin) & (t_grid_full < tmax ))
+        
+        ntimes = np.nansum(mask_t)
+    
+        # as a test, just linearly intprolate between the two speeds at this lon
+        vgrid_t = gridpaths(paths, v1, v2, t, ntimes)
+        bgrid_t = gridpaths(paths, b1, b2, t, ntimes)
+        
+        #find where to put this in the full sequence
+        mask_t = ((t_grid_full >= tmin) & (t_grid_full < tmax ))
+        vcarr_grid[lon_id, mask_t] = vgrid_t
+        bcarr_grid[lon_id, mask_t] = bgrid_t
+        
+    
+    
+    #trim to the required interval
+    mask = ((t_grid_full >= Time(runstart).mjd) &
+            (t_grid_full <= Time(runend).mjd))
+    
+    time_trim = t_grid_full[mask]
+    vcarr_grid_trim = vcarr_grid[:, mask]
+    bcarr_grid_trim = bcarr_grid[:, mask]
+    
+    return time_trim, clon_grid, vcarr_grid_trim, bcarr_grid_trim

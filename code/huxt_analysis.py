@@ -14,6 +14,7 @@ from numba import jit
 from scipy.optimize import minimize
 
 import huxt as H
+from huxt_inputs import get_omni
 
 mpl.rc("axes", labelsize=16)
 mpl.rc("ytick", labelsize=16)
@@ -43,6 +44,13 @@ def plot(model, time, save=False, tag='', fighandle=np.nan, axhandle=np.nan,
 
     if (time < model.time_out.min()) | (time > (model.time_out.max())):
         print("Error, input time outside span of model times. Defaulting to closest time")
+
+    # if no fig and axis handles are given, create a new figure
+    if isinstance(fighandle, float):
+        fig, ax = plt.subplots(figsize=(10, 10), subplot_kw={"projection": "polar"})
+    else:
+        fig = fighandle
+        ax = axhandle    
 
     id_t = np.argmin(np.abs(model.time_out - time))
 
@@ -84,12 +92,6 @@ def plot(model, time, save=False, tag='', fighandle=np.nan, axhandle=np.nan,
     mymap.set_under([0, 0, 0])
     levels = np.arange(plotvmin, plotvmax + dv, dv)
 
-    # if no fig and axis handles are given, create a new figure
-    if isinstance(fighandle, float):
-        fig, ax = plt.subplots(figsize=(10, 10), subplot_kw={"projection": "polar"})
-    else:
-        fig = fighandle
-        ax = axhandle
 
     cnt = ax.contourf(lon, rad, v, levels=levels, cmap=mymap, extend='both')
 
@@ -205,25 +207,32 @@ def plot(model, time, save=False, tag='', fighandle=np.nan, axhandle=np.nan,
                 mask = np.isfinite(streak_r)
                 plotlon = np.array(streak_lon)[mask]
                 plotr = np.array(streak_r)[mask]
-                
-                #for plotting only, fix the inner most point on the inner bounday. 
-                r_min = model.r[0].to(u.solRad).value
-                dr = plotr[-1] - r_min
-                plotr = np.append(plotr, r_min)
-                #compute the long of the footpoint assuming a constant solar wind speed
-                dt = (dr * u.solRad / (350 *u.km /u.s)).to(u.s)
-                dlon = (2*np.pi)*(dt/model.rotation_period).value 
-                plotlon = np.append(plotlon, H._zerototwopi_(plotlon[-1] + dlon))
-                
-                #for plotting only, fix the outermost point on the outer boundary
-                r_max = model.r[-1].to(u.solRad).value
-                dr = r_max - plotr[0]
-                plotr = np.append(r_max, plotr)
-                #compute the long of the outer footpoint assuming a constant solar wind speed
-                dt = (dr * u.solRad / (450 *u.km /u.s)).to(u.s)
-                dlon = (2*np.pi)*(dt/model.rotation_period).value
-                plotlon = np.append(H._zerototwopi_(plotlon[0] - dlon), plotlon)
-                
+                if len(plotr) > 0:
+                    #for plotting only, fix the inner most point on the inner bounday. 
+                    r_min = model.r[0].to(u.solRad).value
+                    dr = plotr[-1] - r_min
+                    #compute the long of the footpoint assuming a constant solar wind speed
+                    dt = (dr * u.solRad / (350 *u.km /u.s)).to(u.s)
+                    dlon_streak = (2*np.pi)*(dt/model.rotation_period).value 
+                    inner_lon = H._zerototwopi_(plotlon[-1] + dlon_streak)
+                    #check that this new longitude was actually simulated
+                    if (np.nanmin(abs(model.lon - inner_lon*u.rad)) < dlon):
+                        plotr = np.append(plotr, r_min)
+                        plotlon = np.append(plotlon, inner_lon)
+                    
+
+                    #for plotting only, fix the outermost point on the outer boundary
+                    r_max = model.r[-1].to(u.solRad).value
+                    dr = r_max - plotr[0]
+                    #compute the long of the outer footpoint assuming a constant solar wind speed
+                    dt = (dr * u.solRad / (450 *u.km /u.s)).to(u.s)
+                    dlon_streak = (2*np.pi)*(dt/model.rotation_period).value
+                    outer_lon = H._zerototwopi_(plotlon[0] - dlon_streak)
+                    #check that this new longitude was actually simulated
+                    if (np.nanmin(abs(model.lon - outer_lon*u.rad)) < dlon):
+                        plotr = np.append(r_max, plotr)
+                        plotlon = np.append(outer_lon, plotlon)
+                    
                 #plot the streakline
                 ax.plot(plotlon, plotr, 'k')
 
@@ -543,6 +552,7 @@ def get_observer_timeseries(model, observer='Earth', suppress_warning = False):
     return time_series
 
 
+
 def plot_earth_timeseries(model, plot_omni=True):
     """
     A function to plot the HUXt Earth time series. With option to download and
@@ -575,24 +585,9 @@ def plot_earth_timeseries(model, plot_omni=True):
     endtime = huxt_ts['time'][len(huxt_ts) - 1]
 
     if plot_omni:
-
-        # Download the 1hr OMNI data from CDAweb
-        trange = attrs.Time(starttime, endtime)
-        dataset = attrs.cdaweb.Dataset('OMNI2_H0_MRG1HR')
-        result = Fido.search(trange, dataset)
-        downloaded_files = Fido.fetch(result)
-
-        # Import the OMNI data
-        omni = TimeSeries(downloaded_files, concatenate=True)
-        data = omni.to_dataframe()
-
-        # Set invalid data points to NaN
-        id_bad = data['V'] == 9999.0
-        data.loc[id_bad, 'V'] = np.NaN
-
-        # Create a datetime column
-        data['datetime'] = data.index.to_pydatetime()
-
+        #grab teh omni data
+        data =  get_omni(starttime, endtime)
+        #plot the period of interest
         mask = (data['datetime'] >= starttime) & (data['datetime'] <= endtime)
         plotdata = data[mask]
         axs[0].plot(plotdata['datetime'], plotdata['V'], 'r', label='OMNI')
@@ -1170,7 +1165,8 @@ def respinup_model(v_trl_kms, tgrid_s, rgrid_km, longrid_rad,
                    rot_period_s, buffer_time_s):
     
     """
-    recreate the spin-up period to enable field-line tracing near the start of a model run
+    recreate steady-state solar wind conditions during the spin-up period 
+    to enable field-line tracing near the start of a model run
     
     Args:
         v_trl_kms: model.v_grid.value - 
