@@ -1,5 +1,18 @@
 # HUXt Changelog
 
+# V4.2.0
+## Bug fixes
+- Fixed plotting error for streaklines which assumed streaklines should be plotted at all longitudes.
+- Some bug fixes in `huxt_analysis.plot()`
+
+## Additions
+- Updated environment to solve dependency security issues
+- A Dynamic-Time-Warping method has been included for generating HUXt boundary conditions from OMNI data, `huxt_inputs.generate_vCarr_from_OMNI_DTW()`.
+- Increased support for running and plotting HUXt solutions to the outer planets.
+
+## Breaking changes
+- `v_max` set to 3000km/s, up from 2000km/s. This increases simulation times, but enables simulation of faster CMEs.
+
 # V4.1.1
 ## Bug fixes
 - In `huxt_inputs.set_time_dependent_boundary()` added a check to ensure input vgrid_Carr matches the longitudes of HUXt.

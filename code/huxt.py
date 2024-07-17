@@ -905,6 +905,17 @@ class HUXt:
             for cme in self.cmes:
                 assert (self.r[0] == cme.initial_height)
 
+        # check CME speeds aren't so fast they will butt up agains the CFL condition.
+        if len(self.cmes) > 0:
+            constants = huxt_constants()
+            v_max = constants['v_max']
+            for cme in self.cmes:
+
+                if cme.v >= v_max:
+                    raise ValueError(f'CME speed {cme.v} is larger than allowed for CFL limit of {v_max}')
+                elif cme.v >= 0.8 * v_max:
+                    print(f'Warning: CME speed of {cme.v} is close to CFL limit of {v_max}. Simulation may be unstable')
+
         # ======================================================================
         # Add CMEs
         # ======================================================================
