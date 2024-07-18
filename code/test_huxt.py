@@ -148,9 +148,9 @@ def test_streaklines():
 
     # load in the test data
     dirs = H._setup_dirs_()
-    test_case_path = os.path.join(dirs['test_data'], 'HUXt_CR2080_streaklines_case.hdf5')
+    test_case_path = os.path.join(dirs['test_data'], 'HUXt_CR2080_streaklines_test_case.hdf5')
     h5f = h5py.File(test_case_path, 'r')
-    vgrid = np.array(h5f['vgrid'])
+    vgrid = np.array(h5f['v_grid'])
     streakline_particles_r = np.array(h5f['streak_particles_r'])
     h5f.close()
 

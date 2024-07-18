@@ -4,11 +4,13 @@
 ## Bug fixes
 - Fixed plotting error for streaklines which assumed streaklines should be plotted at all longitudes.
 - Some bug fixes in `huxt_analysis.plot()`
+- The fields `streak_particles_r` and `hcs_particles_r` were not being saved by `huxt.save()`, which is now fixed. 
 
 ## Additions
 - Updated environment to solve dependency security issues
 - A Dynamic-Time-Warping method has been included for generating HUXt boundary conditions from OMNI data, `huxt_inputs.generate_vCarr_from_OMNI_DTW()`.
 - Increased support for running and plotting HUXt solutions to the outer planets.
+- Added a script to generate the reference simulations for the test suite to `/data/test_data`. This should be left alone - they only need to be run for certain breaking changes.
 
 ## Breaking changes
 - `v_max` set to 3000km/s, up from 2000km/s. This increases simulation times, but enables simulation of faster CMEs.
