@@ -572,7 +572,7 @@ class HUXt:
                  input_iscme_ts=np.NaN,
                  input_t_ts=np.nan * u.s,
                  track_cmes=True,
-                 cme_expansion = False):
+                 cme_expansion=False):
         """
         Initialise the HUXt model instance.
 
@@ -905,6 +905,17 @@ class HUXt:
             for cme in self.cmes:
                 assert (self.r[0] == cme.initial_height)
 
+        # check CME speeds aren't so fast they will butt up agains the CFL condition.
+        if len(self.cmes) > 0:
+            constants = huxt_constants()
+            v_max = constants['v_max']
+            for cme in self.cmes:
+
+                if cme.v >= v_max:
+                    raise ValueError(f'CME speed {cme.v} is larger than allowed for CFL limit of {v_max}')
+                elif cme.v >= 0.8 * v_max:
+                    print(f'Warning: CME speed of {cme.v} is close to CFL limit of {v_max}. Simulation may be unstable')
+
         # ======================================================================
         # Add CMEs
         # ======================================================================
@@ -1128,7 +1139,8 @@ class HUXt:
                             # Loop over the attributes of model instance and save select keys/attributes.
         keys = ['cr_num', 'cr_lon_init', 'simtime', 'dt', 'v_max', 'r_accel', 'alpha',
                 'dt_scale', 'time_out', 'dt_out', 'r', 'dr', 'lon', 'dlon', 'r_grid', 'lon_grid',
-                'v_grid', 'latitude', 'v_boundary', '_v_boundary_init_', 'cme_particles_r', 'cme_particles_v', 'frame']
+                'v_grid', 'latitude', 'v_boundary', '_v_boundary_init_', 'cme_particles_r', 'cme_particles_v',
+                'streak_particles_r', 'hcs_particles_r', 'frame']
 
         for k, v in self.__dict__.items():
 
@@ -1789,7 +1801,6 @@ def _upwind_step_(v_up, v_dn, dtdr, alpha, r_accel, rrel):
     return v_up_next
 
 
-
 @jit(nopython=True)
 def _is_in_cme_boundary_expanding_(r_boundary, lon, lat, time, cme_params):
     """
@@ -1812,7 +1823,7 @@ def _is_in_cme_boundary_expanding_(r_boundary, lon, lat, time, cme_params):
     cme_t_launch = cme_params[0]
     cme_lon = cme_params[1]
     cme_lat = cme_params[2]
-    #cme_width = cme_params[3]
+    # cme_width = cme_params[3]
     cme_v = cme_params[4]
     # cme_initial_height = cme_params[5]
     cme_radius = cme_params[6] # the physical width at the inner boundary
@@ -1823,7 +1834,7 @@ def _is_in_cme_boundary_expanding_(r_boundary, lon, lat, time, cme_params):
     # Compute y, the height of CME nose above the 30rS surface
     y = cme_v * (time - cme_t_launch)
     
-    #compute x, the radius of the cme currently threading the inner boundary
+    # compute x, the radius of the cme currently threading the inner boundary
     x = np.NaN
     if (y >= 0) & (y < cme_radius):
         # this is the front hemisphere of the spherical CME
@@ -1836,21 +1847,21 @@ def _is_in_cme_boundary_expanding_(r_boundary, lon, lat, time, cme_params):
         # this is the "mass" between the hemispheres
         x = cme_radius
     else:
-        #the CME is not threading the inner boundary
+        # the CME is not threading the inner boundary
         return False, dist_from_nose
             
-    #convert x back to an angular width
+    # convert x back to an angular width
     ang_width = np.arctan(x / r_boundary)
     
-    #compute the angle between the given point and the CME centre
+    # compute the angle between the given point and the CME centre
     delta_long = lon - cme_lon
     # Calculate the central angle between the reference point and the cme centroid
-    #using the spherical law of cosines
+    # using the spherical law of cosines
     central_angle = np.arccos(np.sin(lat) * np.sin(cme_lat) + 
                               np.cos(lat) * np.cos(cme_lat) * np.cos(delta_long))
 
     if central_angle <= ang_width:
-        #compute the fractional distance from nose to tail
+        # compute the fractional distance from nose to tail
         r_of_nose = cme_v * (time - cme_t_launch)
         nose_to_tail_r = (2 * cme_radius + cme_thickness)
         dist_from_nose = r_of_nose / nose_to_tail_r
