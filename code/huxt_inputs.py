@@ -809,7 +809,7 @@ def getMetOfficeWSAandCone(startdate, enddate, datadir=''):
 
     return success, wsafilepath, conefilepath, model_time
 
-def get_omni(starttime, endtime):
+def get_omni(starttime, endtime, datadir = None):
     """
     A function to grab and process the OMNI COHO1HR data using FIDO
     
@@ -841,6 +841,8 @@ def get_omni(starttime, endtime):
     
     # create a datetime column
     omni['datetime'] = omni.index
+    # add an mjd column too
+    omni['mjd'] = Time(omni['datetime']).mjd
     #reset the index 
     omni = omni.reset_index()
     
@@ -1405,7 +1407,7 @@ def generate_vCarr_from_OMNI(runstart, runend, nlon_grid = None, omni_input = No
 
 
 def generate_vCarr_from_OMNI_DTW(runstart, runend, nlon = None, omni_input = None,
-                                 res  = '5h', psi_days = 5*u.day,  max_warp_days = 5*u.day,
+                                 res  = '24h', psi_days = 7*u.day,  max_warp_days = 3*u.day,
                                  dtw_on = 'V'):
     
     """
@@ -1453,9 +1455,6 @@ def generate_vCarr_from_OMNI_DTW(runstart, runend, nlon = None, omni_input = Non
         omni = omni_input.copy()
         
     #extra processing
-
-    #add MJD, because datetime manipulation is a royal PITA
-    omni['mjd'] = Time(omni['datetime']).mjd
     
     #interpolate through the datagaps
     omni[['V', 'BX_GSE']] = omni[['V', 'BX_GSE']].interpolate(method='linear', axis=0).ffill().bfill()
@@ -1472,7 +1471,7 @@ def generate_vCarr_from_OMNI_DTW(runstart, runend, nlon = None, omni_input = Non
 
     #average up to a given res for a clearer plot
     omni_res = omni.resample(res, on='datetime').mean() 
-    omni_res['datetime'] = Time(omni_res['mjd'], format = 'mjd').datetime
+    omni_res['datetime'] = Time(omni_res['mjd'], format = 'mjd').to_datetime(leap_second_strict = 'silent')
     omni_res.reset_index(drop=True, inplace=True)
     
     
@@ -1691,4 +1690,4 @@ def generate_vCarr_from_OMNI_DTW(runstart, runend, nlon = None, omni_input = Non
     vcarr_grid_trim = vcarr_grid[:, mask]
     bcarr_grid_trim = bcarr_grid[:, mask]
     
-    return time_trim, clon_grid, vcarr_grid_trim, bcarr_grid_trim
+    return time_trim, clon_grid, vcarr_grid_trim, -bcarr_grid_trim
