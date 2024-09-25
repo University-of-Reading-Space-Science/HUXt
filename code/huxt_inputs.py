@@ -1,6 +1,8 @@
 import datetime
 import os
 import urllib
+from urllib.request import urlopen
+import json
 import ssl
 import copy
 
@@ -20,6 +22,7 @@ from sunpy.timeseries import TimeSeries
 import requests
 import pandas as pd
 from dtaidistance import dtw
+
 
 import huxt as H
 
@@ -929,6 +932,61 @@ def import_cone2bc_parameters(filename):
 
     return cmes
 
+def cone_dict_to_cme_list(model, cme_params):
+    """
+    a fcuntion to tranlsate a dictionary of cone parameters into a cme list
+    that can be used with model.solve(cme_list). Assumes an initial height of 
+    21.5 rS
+    Args:
+        model: A HUXt instance.
+        cme_params: the cone CME parameter dictionary produced by import_cone2bc_parameters.
+    returns:
+        cme_list: A list of ConeCME instances.
+    """
+    
+    #a functino to tranlsate a dictionary of cone parameters into a cme list
+    #that can be used with model.solve(cme_list)
+    
+    
+    cme_list = []
+    for cme_id, cme_val in cme_params.items():
+        # CME initialisation date
+        t_cme = Time(cme_val['ldates'])
+        # CME initialisation relative to model initialisation, in days
+        dt_cme = (t_cme - model.time_init).jd * u.day
+    
+        # Get lon, lat and speed
+        lon = cme_val['lon'] * u.deg
+        lat = cme_val['lat'] * u.deg
+        speed = cme_val['vcld'] * u.km / u.s
+    
+        # Get full angular width, cone2bc specifies angular half width under rmajor
+        wid = 2 * cme_val['rmajor'] * u.deg
+    
+        # Set the initial height to be 21.5 rS, the default for WSA
+        iheight = 21.5 * u.solRad
+    
+        # Thickness must be computed from CME cone initial radius and the xcld parameter,
+        # which specifies the relative elongation of the cloud, 1=spherical,
+        # 2=middle twice as long as cone radius e.g.
+        # compute initial radius of the cone
+        radius = np.abs(model.r[0] * np.tan(wid / 2.0))  # eqn on line 162 in ConeCME class
+        # Thickness determined from xcld and radius
+        thick = 5 * u.solRad  # (1.0 - cme_val['xcld']) * radius
+    
+        cme = H.ConeCME(t_launch=dt_cme, longitude=lon, latitude=lat,
+                        width=wid, v=speed, thickness=thick, initial_height=iheight)
+        cme_list.append(cme)
+    
+    # sort the CME list into chronological order
+    launch_times = np.ones(len(cme_list))
+    for i, cme in enumerate(cme_list):
+        launch_times[i] = cme.t_launch.value
+    id_sort = np.argsort(launch_times)
+    cme_list = [cme_list[i] for i in id_sort]
+    
+    return cme_list
+
 
 def ConeFile_to_ConeCME_list(model, filepath):
     """
@@ -942,43 +1000,7 @@ def ConeFile_to_ConeCME_list(model, filepath):
     """
 
     cme_params = import_cone2bc_parameters(filepath)
-
-    cme_list = []
-    for cme_id, cme_val in cme_params.items():
-        # CME initialisation date
-        t_cme = Time(cme_val['ldates'])
-        # CME initialisation relative to model initialisation, in days
-        dt_cme = (t_cme - model.time_init).jd * u.day
-
-        # Get lon, lat and speed
-        lon = cme_val['lon'] * u.deg
-        lat = cme_val['lat'] * u.deg
-        speed = cme_val['vcld'] * u.km / u.s
-
-        # Get full angular width, cone2bc specifies angular half width under rmajor
-        wid = 2 * cme_val['rmajor'] * u.deg
-
-        # Set the initial height to be 21.5 rS, the default for WSA
-        iheight = 21.5 * u.solRad
-
-        # Thickness must be computed from CME cone initial radius and the xcld parameter,
-        # which specifies the relative elongation of the cloud, 1=spherical,
-        # 2=middle twice as long as cone radius e.g.
-        # compute initial radius of the cone
-        radius = np.abs(model.r[0] * np.tan(wid / 2.0))  # eqn on line 162 in ConeCME class
-        # Thickness determined from xcld and radius
-        thick = 5 * u.solRad  # (1.0 - cme_val['xcld']) * radius
-
-        cme = H.ConeCME(t_launch=dt_cme, longitude=lon, latitude=lat,
-                        width=wid, v=speed, thickness=thick, initial_height=iheight)
-        cme_list.append(cme)
-
-    # sort the CME list into chronological order
-    launch_times = np.ones(len(cme_list))
-    for i, cme in enumerate(cme_list):
-        launch_times[i] = cme.t_launch.value
-    id_sort = np.argsort(launch_times)
-    cme_list = [cme_list[i] for i in id_sort]
+    cme_list = cone_dict_to_cme_list(model, cme_params)
 
     return cme_list
 
@@ -1691,3 +1713,225 @@ def generate_vCarr_from_OMNI_DTW(runstart, runend, nlon = None, omni_input = Non
     bcarr_grid_trim = bcarr_grid[:, mask]
     
     return time_trim, clon_grid, vcarr_grid_trim, -bcarr_grid_trim
+
+
+
+
+
+def get_DONKI_ICMEs(startdate, enddate, location = 'Earth', ICME_duration = 1.5*u.day):
+    #scrape the DONKI database of interplanetary shocks at Earth or STEREO. Create
+    #a pseudo-ICME list in the same format as Cane and Richardson
+
+    #construct the url
+    startdate_str = startdate.strftime('%Y-%m-%d')
+    stopdate_str = enddate.strftime('%Y-%m-%d')
+    url_head = "https://kauai.ccmc.gsfc.nasa.gov/DONKI/WS/get/IPS?startDate=" 
+    url = url_head + startdate_str + '&endDate=' + stopdate_str
+    
+    #read teh json file
+    response = urlopen(url)
+    
+    if response.status == 200:
+        data = json.loads(response.read().decode("utf-8"))
+    
+        
+        #convert to DataFrame
+        df = pd.DataFrame(data)
+        
+        #only include ICMEs at given location
+        mask = df['location'] == location
+        icmes = df[mask]
+        icmes = icmes.reset_index()
+        
+        
+        #put it in the same format as the Cane&Richardson ICME list
+        L = len(icmes)
+        for i in range(0,L):
+            icmes.loc[i,'Shock_time'] = datetime.datetime.strptime(icmes.loc[i,'eventTime'], '%Y-%m-%dT%H:%MZ')
+            
+        #add a guess at the ICME end time
+        icmes['ICME_end'] = icmes['Shock_time'] + datetime.timedelta(days = ICME_duration.value)
+    else:
+        print("No repsonse for " + url)
+        icmes = None
+    
+    return icmes
+    
+    
+
+def get_DONKI_coneCMEs(startdate, enddate, mostAccOnly = 'true', catalog = 'ALL'):
+    
+    #get the DONKI cone fits to coronagraph observations over a given interval
+    #these are returned as a dictionary of parameters, that then must be converted
+    #to cone CME objects for use in HUXt
+
+    startdate_str = startdate.strftime('%Y-%m-%d')
+    stopdate_str = enddate.strftime('%Y-%m-%d')
+    url_head = "https://kauai.ccmc.gsfc.nasa.gov/DONKI/WS/get/CMEAnalysis?startDate=" 
+    url_1 = url_head + startdate_str + '&endDate=' + stopdate_str 
+    url_2 =  '&mostAccurateOnly=' + mostAccOnly + '&catalog=' + catalog
+    url = url_1 +url_2
+    #read the json file
+    response = urlopen(url)
+    
+    if response.status == 200:
+        data = json.loads(response.read().decode("utf-8"))
+    
+        
+        #convert to DataFrame
+        df = pd.DataFrame(data)
+        
+        #standardise the headers
+        df_renamed = df.rename(columns={'time21_5': 'ldates', 
+                                        'latitude': 'lat', 
+                                        'longitude': 'lon', 
+                                        'halfAngle': 'rmajor', 
+                                        'speed': 'vcld'})
+        #convert to a dictionary
+        cme_params = df_renamed.to_dict(orient = 'index')
+         
+    else:
+        print("No repsonse for " + url)
+        cme_params = None
+        
+    return cme_params
+
+
+def get_DONKI_cme_list(model, startdate, enddate, 
+                    mostAccOnly = 'true', catalog = 'ALL'):
+    
+    #returns coneCME list from DONKI for use with HUXt.
+    
+    cme_params = get_DONKI_coneCMEs(startdate, enddate, 
+                       mostAccOnly = mostAccOnly, 
+                       catalog = catalog)
+    cme_list = cone_dict_to_cme_list(model, cme_params)
+    
+    return cme_list
+
+
+
+def remove_ICMEs(data_df, icmes, interpolate = True, 
+                 icme_buffer = 0.1*u.day, interp_buffer = 1*u.day,
+                 params = ['V', 'BX_GSE'], fill_vals = None):
+    """
+    A function to remove ICMEs from a given time series
+
+    Parameters
+    ----------
+    data_df : pd.dataframe
+        Time series with 'mjd' and reset index, such as provided by get_omni
+    icmes : list
+        
+    interpolate : bool
+        Whether to interpolate through ICMEs NaNs. The default is True.
+    icme_buffer : float with units of day
+        How much additional data to remove about the ICME boundaries. The default is 0.1*u.day.
+    interp_buffer : float, with units of day
+        How much of an average to take up and downstream. The default is 1*u.day.
+    params : list of strings
+        which parameters to remove. The default is ['V', 'BX_GSE'].
+    fill_vals : list of floats, possibly with units
+        the fill values to use for interpolation if the upstream or downstream 
+        data are all nans
+    Returns
+    -------
+    data: pd.dataframe with ICMEs removed from required params
+
+    """
+    
+    #create a copy of the dataframe, rather than alter the original
+    data = data_df.copy()
+    
+    
+    #convert the ICME shock and end times to MJD
+    icmes['shock_mjd'] = Time(icmes['Shock_time'].to_numpy()).mjd
+    icmes['end_mjd'] = Time(icmes['ICME_end'].to_numpy()).mjd
+    
+    #go throught the ICME list and remove/interpolate through any that are in the 
+    #OMNI data
+    
+    
+    icme_buffer_d = icme_buffer.to(u.day).value
+    interp_buffer_d = interp_buffer.to(u.day).value
+    
+    #first remove all ICMEs and add NaNs to the required parameters
+    for i in range(0,len(icmes)):
+        
+        icme_start = icmes['shock_mjd'][i] -  icme_buffer_d
+        icme_stop = icmes['end_mjd'][i] + icme_buffer_d
+        
+        mask_icme = ( (data['mjd'] >= icme_start)  &
+                      (data['mjd'] <= icme_stop) )
+        
+        if any(mask_icme):
+            print('removing ICME #' + str(i))
+            for param in params:
+                data.loc[mask_icme,param] = np.nan
+
+           
+    
+    #then interpolate through these gaps
+    if interpolate:
+        
+        #check the fill vals
+        if fill_vals is None:
+            fill_vals = []
+            for i in range(0, len(params)):
+                fill_vals.append(np.nan)
+        else:
+            assert(len(params) == len(fill_vals))
+            
+            
+        # loop through each ICME, determine the up and downstream conditions 
+        # and interpolate through
+        for i in range(0,len(icmes)):
+            
+            icme_start = icmes['shock_mjd'][i] -  icme_buffer_d
+            icme_stop = icmes['end_mjd'][i] + icme_buffer_d
+            
+            mask_icme = ( (data['mjd'] >= icme_start)  &
+                         (data['mjd'] <= icme_stop) )
+            
+            
+            mask_upstream = ( (data['mjd'] >= icmes['shock_mjd'][i] - interp_buffer_d)  &
+                          (data['mjd'] <= icmes['shock_mjd'][i] ) )
+            
+            mask_downstream = ( (data['mjd'] >= icmes['end_mjd'][i])  &
+                          (data['mjd'] <= icmes['end_mjd'][i] + interp_buffer_d ) )
+            
+            
+            
+            for param, fill_val in zip(params, fill_vals):
+                #compute the up and down stream average values
+                if any(mask_upstream):
+                    v_up = data.loc[mask_upstream, param].mean()
+                else:
+                    v_up = fill_val
+                    
+                if any(mask_downstream):
+                    v_down = data.loc[mask_downstream, param].mean()
+                else:
+                    v_down = fill_val
+                    
+                #if the average values are nans, use the fill values
+                if np.isnan(v_up):
+                    v_up = fill_val
+                if np.isnan(v_down):
+                    v_down = fill_val
+                    
+                dv = v_down - v_up
+                    
+                #linearly interpolate between the up and down stream values
+                if any(mask_icme):
+                    icme_duration = icme_stop - icme_start
+                    
+                    #time through ICME, from start
+                    time_through_icme = data.loc[mask_icme,'mjd'] - icme_start
+                    time_through_icme_frac = time_through_icme/icme_duration
+                    
+                    #linearly interpolate
+                    vseries = (v_up + dv * time_through_icme_frac).astype(np.float32)
+                    
+                    data.loc[mask_icme,param] = vseries
+    return data
