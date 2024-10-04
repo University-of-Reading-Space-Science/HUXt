@@ -1875,11 +1875,9 @@ def _is_in_cme_boundary_expanding_(r_boundary, lon, lat, time, cme_params):
     if central_angle <= ang_width:
         # compute the fractional distance from nose to tail
         r_of_nose = cme_v * (time - cme_t_launch)
-        if (time - cme_t_launch) < 0.25*24*60*60:
-            nose_to_tail_r = (2 * cme_radius + cme_thickness)
-            dist_from_nose = r_of_nose / nose_to_tail_r
-        
-            isincme = True
+        nose_to_tail_r = (2 * cme_radius + cme_thickness)
+        dist_from_nose = r_of_nose / nose_to_tail_r
+        isincme = True
 
     return isincme, dist_from_nose
 
