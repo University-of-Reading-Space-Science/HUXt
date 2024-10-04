@@ -1493,7 +1493,18 @@ def _setup_dirs_():
 
         with open(config_file, 'r') as file:
             lines = file.read().splitlines()
-            dirs = {line.split(',')[0]: os.path.join(root, line.split(',')[1]) for line in lines}
+            dirs = {}
+            for line in lines:
+                line_key = line.split(',')[0]
+                line_val = line.split(',')[1]
+                
+                #convert the path contained in the line_val to the current OS version
+                components = line_val.split('/')
+
+                # Join the components using os.path.join
+                new_path = os.path.join(*components)
+                
+                dirs[line_key] = os.path.join(root, new_path)
 
         dirs['root'] = root
 
@@ -1756,7 +1767,8 @@ def add_cmes_to_input_series(vinput, model_time, lon, r_boundary, cme_params, la
                         # v_EXP = 0.266 * v_LE - 70.6
                         # v_update_cme[n] = cme[4] + v_EXP * (0.5 - dist_from_nose) 
                         
-                        v_update_cme[n] = cme[4] + 0.75 * cme[4] * (0.5 - dist_from_nose) 
+                        #v_update_cme[n] = cme[4] + 0.75 * cme[4] * (0.5 - dist_from_nose) 
+                        v_update_cme[n] = cme[4]*(1-dist_from_nose) + 300*(dist_from_nose) 
                     else:
                         v_update_cme[n] = cme[4]
 
@@ -1863,10 +1875,11 @@ def _is_in_cme_boundary_expanding_(r_boundary, lon, lat, time, cme_params):
     if central_angle <= ang_width:
         # compute the fractional distance from nose to tail
         r_of_nose = cme_v * (time - cme_t_launch)
-        nose_to_tail_r = (2 * cme_radius + cme_thickness)
-        dist_from_nose = r_of_nose / nose_to_tail_r
+        if (time - cme_t_launch) < 0.25*24*60*60:
+            nose_to_tail_r = (2 * cme_radius + cme_thickness)
+            dist_from_nose = r_of_nose / nose_to_tail_r
         
-        isincme = True
+            isincme = True
 
     return isincme, dist_from_nose
 
