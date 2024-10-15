@@ -1759,7 +1759,8 @@ def get_DONKI_ICMEs(startdate, enddate, location = 'Earth', ICME_duration = 1.5*
     
     
 
-def get_DONKI_coneCMEs(startdate, enddate, mostAccOnly = 'true', catalog = 'ALL'):
+def get_DONKI_coneCMEs(startdate, enddate, mostAccOnly = 'true', catalog = 'ALL',
+                       feature = 'LE'):
     
     #get the DONKI cone fits to coronagraph observations over a given interval
     #these are returned as a dictionary of parameters, that then must be converted
@@ -1769,8 +1770,11 @@ def get_DONKI_coneCMEs(startdate, enddate, mostAccOnly = 'true', catalog = 'ALL'
     stopdate_str = enddate.strftime('%Y-%m-%d')
     url_head = "https://kauai.ccmc.gsfc.nasa.gov/DONKI/WS/get/CMEAnalysis?startDate=" 
     url_1 = url_head + startdate_str + '&endDate=' + stopdate_str 
-    url_2 =  '&mostAccurateOnly=' + mostAccOnly + '&catalog=' + catalog
-    url = url_1 +url_2
+    url_2 =  '&mostAccurateOnly=' + mostAccOnly + '&feature=' + feature
+    url_3 = '&catalog=' + catalog
+    url = url_1 + url_2 + url_3
+    
+    print(url)
     #read the json file
     response = urlopen(url)
     
@@ -1798,13 +1802,13 @@ def get_DONKI_coneCMEs(startdate, enddate, mostAccOnly = 'true', catalog = 'ALL'
 
 
 def get_DONKI_cme_list(model, startdate, enddate, 
-                    mostAccOnly = 'true', catalog = 'ALL'):
+                    mostAccOnly = 'true', catalog = 'ALL', feature = 'LE'):
     
     #returns coneCME list from DONKI for use with HUXt.
     
     cme_params = get_DONKI_coneCMEs(startdate, enddate, 
                        mostAccOnly = mostAccOnly, 
-                       catalog = catalog)
+                       catalog = catalog, feature = feature)
     cme_list = cone_dict_to_cme_list(model, cme_params)
     
     return cme_list
