@@ -148,9 +148,7 @@ class ConeCME:
     @u.quantity_input(width=u.deg)
     @u.quantity_input(thickness=u.solRad)
     def __init__(self, t_launch=0.0 * u.s, longitude=0.0 * u.deg, latitude=0.0 * u.deg, v=1000.0 * (u.km / u.s),
-                 width=30.0 * u.deg,
-                 thickness=5.0 * u.solRad,
-                 initial_height=30 * u.solRad):
+                 width=30.0 * u.deg, thickness=5.0 * u.solRad, initial_height=30 * u.solRad):
         """
         Set up a Cone CME with specified parameters.
         Args:

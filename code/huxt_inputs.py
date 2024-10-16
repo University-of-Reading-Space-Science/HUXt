@@ -23,7 +23,6 @@ import requests
 import pandas as pd
 from dtaidistance import dtw
 
-
 import huxt as H
 
 
@@ -80,7 +79,6 @@ def get_MAS_boundary_conditions(cr=np.NaN, observatory='', runtype='', runnumber
     _boundary_dir_ = dirs['boundary_conditions']
 
     # Example URL: http://www.predsci.com/data/runs/cr2010-medium/mdi_mas_mas_std_0101/helio/br_r0.hdf
-    # heliomas_url_front = 'https://shadow.predsci.com/data/runs/cr'
     heliomas_url_front = 'http://www.predsci.com/data/runs/cr'
     heliomas_url_end = '_r0.hdf'
 
@@ -305,8 +303,8 @@ def get_MAS_vr_map(cr):
 
 def get_MAS_br_map(cr):
     """
-    A function to download, read and process MAS output to provide HUXt boundary
-    conditions as lat-long maps, along with angle from equator for the maps.
+    A function to download, read and process MAS output to provide HUXt boundary conditions as lat-long maps,
+    along with angle from equator for the maps.
     Maps returned in native resolution, not HUXt resolution.
 
     Args:
@@ -347,8 +345,8 @@ def get_MAS_br_map(cr):
 @u.quantity_input(r_inner=u.solRad)
 def map_v_inwards(v_orig, r_orig, lon_orig, r_new):
     """
-    Function to map v from r_orig (in rs) to r_inner (in rs) accounting for 
-    residual acceleration, but neglecting stream interactions.
+    Function to map v from r_orig (in rs) to r_inner (in rs) accounting for residual acceleration, but neglecting
+    stream interactions.
 
     Args:
         v_orig: Solar wind speed at original radial distance. Units of km/s.
@@ -393,8 +391,8 @@ def map_v_inwards(v_orig, r_orig, lon_orig, r_new):
 @u.quantity_input(r_inner=u.solRad)
 def map_v_boundary_inwards(v_orig, r_orig, r_new, b_orig=np.nan):
     """
-    Function to map a longitudinal V series from r_outer (in rs) to r_inner (in rs)
-    accounting for residual acceleration, but neglecting stream interactions.
+    Function to map a longitudinal V series from r_outer (in rs) to r_inner (in rs) accounting for residual
+    acceleration, but neglecting stream interactions.
     Series returned on input grid
 
     Args:
@@ -540,12 +538,12 @@ def get_CorTom_vr_map(filepath):
     vr_colat = copy.copy(cortom_data['colat_rad'])
     vr_longs = copy.copy(cortom_data['lon_rad'])
 
-    vr_lats = (np.pi/2 - vr_colat) * u.rad
+    vr_lats = (np.pi / 2 - vr_colat) * u.rad
     # Flip so south pole at bottom
     vr_lats = np.flipud(vr_lats)
     vr_map = np.flipud(vr_map)
 
-    return vr_map*u.km/u.s, vr_longs*u.rad, vr_lats*u.rad
+    return vr_map * u.km / u.s, vr_longs * u.rad, vr_lats * u.rad
 
 
 def get_WSA_maps(filepath):
@@ -812,7 +810,8 @@ def getMetOfficeWSAandCone(startdate, enddate, datadir=''):
 
     return success, wsafilepath, conefilepath, model_time
 
-def get_omni(starttime, endtime, datadir = None):
+
+def get_omni(starttime, endtime):
     """
     A function to grab and process the OMNI COHO1HR data using FIDO
     
@@ -828,28 +827,29 @@ def get_omni(starttime, endtime, datadir = None):
     dataset = attrs.cdaweb.Dataset('OMNI_COHO1HR_MERGED_MAG_PLASMA')
     result = Fido.search(trange, dataset)
     downloaded_files = Fido.fetch(result)
-    
+
     # Import the OMNI data
     data = TimeSeries(downloaded_files, concatenate=True)
-    
+
     omni = data.to_dataframe()
     del data
 
-    # # Set invalid data points to NaN
+    # Set invalid data points to NaN
     id_bad = omni['V'] == 9999.0
     omni.loc[id_bad, 'V'] = np.NaN
-    
-    #create a BX_GSE field that is expected by some HUXt fucntions
+
+    # create a BX_GSE field that is expected by some HUXt fucntions
     omni['BX_GSE'] = -omni['BR']
-    
+
     # create a datetime column
     omni['datetime'] = omni.index
     # add an mjd column too
     omni['mjd'] = Time(omni['datetime']).mjd
-    #reset the index 
+    # reset the index
     omni = omni.reset_index()
-    
+
     return omni
+
 
 def datetime2huxtinputs(dt):
     """
@@ -864,12 +864,13 @@ def datetime2huxtinputs(dt):
         cr_lon_init : The Carrington longitude of Earth at the given datetime, as a float, with units of u.rad
 
     """
+
     def remainder(cr_frac):
         if np.isscalar(cr_frac):
             return int(np.floor(cr_frac))
         else:
             return np.floor(cr_frac).astype(int)
-        
+
     cr_frac = sun.carrington_rotation_number(dt)
     cr = remainder(cr_frac)
     cr_lon_init = 2 * np.pi * (1 - (cr_frac - cr)) * u.rad
@@ -893,7 +894,7 @@ def import_cone2bc_parameters(filename):
 
     # Get the number of cmes.
     n_cme = int(data[13].split('=')[1].split(',')[0])
-    
+
     if n_cme == 0:
         print('Warning: No CMEs in conefile: ' + filename)
         return {}
@@ -924,48 +925,44 @@ def import_cone2bc_parameters(filename):
         if param_name == 'ldates':
             param_val = param_val.strip("'")
         else:
-            if param_val == '.':  #I presume this is short hand for zero?
-                param_val='0.0'
+            if param_val == '.':  # I presume this is shorthand for zero?
+                param_val = '0.0'
             param_val = float(param_val)
 
         cmes[cme_id][param_name] = param_val
 
     return cmes
 
+
 def cone_dict_to_cme_list(model, cme_params):
     """
-    a fcuntion to tranlsate a dictionary of cone parameters into a cme list
-    that can be used with model.solve(cme_list). Assumes an initial height of 
-    21.5 rS
+    Function to tranlsate a dictionary of cone parameters into a cme list that can be used with model.solve(cme_list).
+    Assumes an initial height of 21.5 rS
     Args:
         model: A HUXt instance.
         cme_params: the cone CME parameter dictionary produced by import_cone2bc_parameters.
     returns:
         cme_list: A list of ConeCME instances.
     """
-    
-    #a functino to tranlsate a dictionary of cone parameters into a cme list
-    #that can be used with model.solve(cme_list)
-    
-    
+
     cme_list = []
     for cme_id, cme_val in cme_params.items():
         # CME initialisation date
         t_cme = Time(cme_val['ldates'])
         # CME initialisation relative to model initialisation, in days
         dt_cme = (t_cme - model.time_init).jd * u.day
-    
+
         # Get lon, lat and speed
         lon = cme_val['lon'] * u.deg
         lat = cme_val['lat'] * u.deg
         speed = cme_val['vcld'] * u.km / u.s
-    
+
         # Get full angular width, cone2bc specifies angular half width under rmajor
         wid = 2 * cme_val['rmajor'] * u.deg
-    
+
         # Set the initial height to be 21.5 rS, the default for WSA
         iheight = 21.5 * u.solRad
-    
+
         # Thickness must be computed from CME cone initial radius and the xcld parameter,
         # which specifies the relative elongation of the cloud, 1=spherical,
         # 2=middle twice as long as cone radius e.g.
@@ -973,25 +970,25 @@ def cone_dict_to_cme_list(model, cme_params):
         radius = np.abs(model.r[0] * np.tan(wid / 2.0))  # eqn on line 162 in ConeCME class
         # Thickness determined from xcld and radius
         thick = 5 * u.solRad  # (1.0 - cme_val['xcld']) * radius
-    
+
         cme = H.ConeCME(t_launch=dt_cme, longitude=lon, latitude=lat,
                         width=wid, v=speed, thickness=thick, initial_height=iheight)
         cme_list.append(cme)
-    
+
     # sort the CME list into chronological order
     launch_times = np.ones(len(cme_list))
     for i, cme in enumerate(cme_list):
         launch_times[i] = cme.t_launch.value
     id_sort = np.argsort(launch_times)
     cme_list = [cme_list[i] for i in id_sort]
-    
+
     return cme_list
 
 
 def ConeFile_to_ConeCME_list(model, filepath):
     """
-    A function to produce a list of ConeCMEs for input to HUXt derived from a cone2bc.in file, as is used with
-    to input Cone CMEs into Enlil. Assumes CME height of 21.5 rS
+    A function to produce a list of ConeCMEs for input to HUXt derived from a cone2bc.in file, as is used with  to input
+    Cone CMEs into Enlil. Assumes CME height of 21.5 rS
     Args:
         model: A HUXt instance.
         filepath: The path to the relevant cone2bc.in file.
@@ -1023,9 +1020,7 @@ def ConeFile_to_ConeCME_list_time(filepath, time):
     return cme_list
 
 
-def consolidate_cme_lists(cmelist_list, t_thresh = 0.1*u.day, 
-                          lon_thresh = 10*u.deg, lat_thresh = 10*u.deg):
-    
+def consolidate_cme_lists(cmelist_list, t_thresh=0.1 * u.day, lon_thresh=10 * u.deg, lat_thresh=10 * u.deg):
     """
     a function which takes a list of CME lists, as produced by multiple
     Hin.ConeFile_to_ConeCME_list_time outputs, and produces a consolidated list
@@ -1037,43 +1032,42 @@ def consolidate_cme_lists(cmelist_list, t_thresh = 0.1*u.day,
     
     also removes duplicate CMEs within a single list, which are sometimes present
     """
-    
-    #now go through each CME list and add in any new events 
+
+    # now go through each CME list and add in any new events
     cmelist_master = [cmelist_list[0][0]]
     for cmelist in cmelist_list:
         for cme in cmelist:
-            #get properties of the CME
+            # get properties of the CME
             this_time = cme.t_launch
             this_long = cme.longitude_huxt
             this_lat = cme.latitude
             same_cme = False
-            
-            #compare with properties of CMEs currently in the list
+
+            # compare with properties of CMEs currently in the list
             for idx, existingcme in enumerate(cmelist_master):
                 existing_time = existingcme.t_launch
                 existing_long = existingcme.longitude_huxt
                 existing_lat = existingcme.latitude
-                
-                #require a similar time, lat and long to be the same CME
-                if ((abs(this_time - existing_time) < t_thresh) & 
-                    (H._zerototwopi_(this_long - existing_long) < lon_thresh) &
-                    (abs(this_lat - existing_lat) < lat_thresh)):
+
+                # require a similar time, lat and long to be the same CME
+                if ((abs(this_time - existing_time) < t_thresh) &
+                        (H._zerototwopi_(this_long - existing_long) < lon_thresh) &
+                        (abs(this_lat - existing_lat) < lat_thresh)):
                     same_cme = True
-                    
-                    #use the values from the newer cone file
+
+                    # use the values from the newer cone file
                     cmelist_master[idx] = cme
-                    
-            #if it's a new CME, add it to the list  
+
+            # if it's a new CME, add it to the list
             if not same_cme:
                 cmelist_master.append(cme)
-            
+
     return cmelist_master
 
 
 def set_time_dependent_boundary(vgrid_Carr, time_grid, starttime, simtime, r_min=215 * u.solRad, r_max=1290 * u.solRad,
                                 dt_scale=50, latitude=0 * u.deg, frame='sidereal', lon_start=0 * u.rad,
-                                lon_stop=2 * np.pi * u.rad, lon_out = np.nan, bgrid_Carr=np.nan,
-                                track_cmes = True):
+                                lon_stop=2 * np.pi * u.rad, lon_out=np.nan, bgrid_Carr=np.nan, track_cmes=True):
     """
     A function to compute an explicitly time dependent inner boundary condition for HUXt, rather than due to
     synodic/sidereal rotation of static coronal structure.
@@ -1092,11 +1086,12 @@ def set_time_dependent_boundary(vgrid_Carr, time_grid, starttime, simtime, r_min
         lon_start: Longitude of one edge of the longitudinal domain of HUXt
         lon_stop: Longitude of the other edge of the longitudinal domain of HUXt
         bgrid_Carr: input magnetic polarity as a function of Carrington longitude and time
+        track_cmes: Bool, whether to track CMEs through the simulation.
     returns:
         model: A HUXt instance initialised with the fully time dependent boundary conditions.
     """
     all_lons, dlon, nlon = H.longitude_grid()
-    assert(len(vgrid_Carr[:,0]) == nlon)
+    assert (len(vgrid_Carr[:, 0]) == nlon)
 
     # see if br boundary conditions are supplied
     do_b = False
@@ -1114,7 +1109,7 @@ def set_time_dependent_boundary(vgrid_Carr, time_grid, starttime, simtime, r_min
                        r_min=r_min, r_max=r_max,
                        simtime=simtime, dt_scale=dt_scale,
                        cr_num=cr, cr_lon_init=cr_lon_init,
-                       frame='synodic', track_cmes = track_cmes)  
+                       frame='synodic', track_cmes=track_cmes)
     else:
         model = H.HUXt(v_boundary=np.ones(nlon) * 400 * u.km / u.s,
                        lon_start=lon_start, lon_stop=lon_stop,
@@ -1122,7 +1117,7 @@ def set_time_dependent_boundary(vgrid_Carr, time_grid, starttime, simtime, r_min
                        r_min=r_min, r_max=r_max,
                        simtime=simtime, dt_scale=dt_scale,
                        cr_num=cr, cr_lon_init=cr_lon_init,
-                       frame=frame, track_cmes = track_cmes)
+                       frame=frame, track_cmes=track_cmes)
 
     # extract the values from the model class
     buffertime = model.buffertime  # standard buffer time seems insufficient
@@ -1130,7 +1125,7 @@ def set_time_dependent_boundary(vgrid_Carr, time_grid, starttime, simtime, r_min
     frame = model.frame
     dt = model.dt
     cr_lon_init = model.cr_lon_init
-    
+
     latitude = model.latitude
     time_init = model.time_init
 
@@ -1192,8 +1187,8 @@ def set_time_dependent_boundary(vgrid_Carr, time_grid, starttime, simtime, r_min
 
     if do_b:
         # set up the model class with these data initialised
-        
-        if np.isfinite(lon_out):   #single longitude
+
+        if np.isfinite(lon_out):  # single longitude
             model = H.HUXt(v_boundary=np.ones(128) * 400 * u.km / u.s,
                            simtime=simtime,
                            cr_num=cr, cr_lon_init=cr_lon_init,
@@ -1204,8 +1199,8 @@ def set_time_dependent_boundary(vgrid_Carr, time_grid, starttime, simtime, r_min
                            input_v_ts=input_ambient_ts,
                            input_b_ts=input_ambient_ts_b,
                            input_t_ts=model_time,
-                           track_cmes = track_cmes)
-        else:  #multiple longitudes
+                           track_cmes=track_cmes)
+        else:  # multiple longitudes
             model = H.HUXt(v_boundary=np.ones(128) * 400 * u.km / u.s,
                            simtime=simtime,
                            cr_num=cr, cr_lon_init=cr_lon_init,
@@ -1216,11 +1211,11 @@ def set_time_dependent_boundary(vgrid_Carr, time_grid, starttime, simtime, r_min
                            input_v_ts=input_ambient_ts,
                            input_b_ts=input_ambient_ts_b,
                            input_t_ts=model_time,
-                           track_cmes = track_cmes)
+                           track_cmes=track_cmes)
 
     else:
         # set up the model class without B
-        if np.isfinite(lon_out):  #single longitude
+        if np.isfinite(lon_out):  # single longitude
             model = H.HUXt(v_boundary=np.ones(128) * 400 * u.km / u.s,
                            simtime=simtime,
                            cr_num=cr, cr_lon_init=cr_lon_init,
@@ -1230,9 +1225,9 @@ def set_time_dependent_boundary(vgrid_Carr, time_grid, starttime, simtime, r_min
                            lon_out=lon_out,
                            input_v_ts=input_ambient_ts,
                            input_t_ts=model_time,
-                           track_cmes = track_cmes)
-            
-        else:  #multiple longitudes
+                           track_cmes=track_cmes)
+
+        else:  # multiple longitudes
             model = H.HUXt(v_boundary=np.ones(128) * 400 * u.km / u.s,
                            simtime=simtime,
                            cr_num=cr, cr_lon_init=cr_lon_init,
@@ -1242,7 +1237,7 @@ def set_time_dependent_boundary(vgrid_Carr, time_grid, starttime, simtime, r_min
                            lon_start=lon_start, lon_stop=lon_stop,
                            input_v_ts=input_ambient_ts,
                            input_t_ts=model_time,
-                           track_cmes = track_cmes)
+                           track_cmes=track_cmes)
 
     return model
 
@@ -1263,8 +1258,8 @@ def _zerototwopi_(angles):
     return angles_out
 
 
-def generate_vCarr_from_OMNI(runstart, runend, nlon_grid = None, omni_input = None, 
-                             dt=1*u.day, ref_r=215*u.solRad, corot_type='both'):
+def generate_vCarr_from_OMNI(runstart, runend, nlon_grid=None, omni_input=None, dt=1 * u.day, ref_r=215 * u.solRad,
+                             corot_type='both'):
     """
     A function to download OMNI data and generate V_carr and time_grid for use with set_time_dependent_boundary
 
@@ -1272,6 +1267,7 @@ def generate_vCarr_from_OMNI(runstart, runend, nlon_grid = None, omni_input = No
         runstart: Start time as a datetime
         runend: End time as a datetime
         nlon_grid: Int. If none specified, will be set to the current HUXt value (usually 128)
+        omni_input: Optional input for supplying the OMNI data. If left as None, it will be downloaded at runtime.
         dt: time resolution, in days is 1*u.day.
         ref_r: radial distance to produce v at, 215*u.solRad by default.
         corot_type: String that determines corot type (both, back, forward)
@@ -1280,34 +1276,33 @@ def generate_vCarr_from_OMNI(runstart, runend, nlon_grid = None, omni_input = No
         Vcarr: Array of solar wind speeds mapped as a function of Carr long and time
         bcarr: Array of Br mapped as a function of Carr long and time
     """
-    
 
     # check the coro_type is one of the accepted values
     assert corot_type == 'both' or corot_type == 'back' or corot_type == 'forward'
-    
-    #set the default longitude grid, check specified value
+
+    # set the default longitude grid, check specified value
     all_lons, dlon, nlon = H.longitude_grid()
     if nlon_grid is None:
         nlon_grid = nlon
     if not (nlon_grid == nlon):
         print('Warning: vCarr generated for different longitude resolution than current HUXt default')
 
-    #if omni data is not supplied, download it
+    # if omni data is not supplied, download it
     if omni_input is None:
-        
+
         # download an additional 28 days either side
         starttime = runstart - datetime.timedelta(days=28)
         endtime = runend + datetime.timedelta(days=28)
         data = get_omni(starttime, endtime)
- 
+
         # find the period of interest
         mask = ((data['datetime'] > starttime) & (data['datetime'] < endtime))
         omni = data[mask]
         omni = omni.reset_index()
     else:
-        #create a copy of the input data, so the original data is unchanged.
+        # create a copy of the input data, so the original data is unchanged.
         omni = omni_input.copy()
-        
+
     # interpolate through OMNI V data gaps
     omni_int = omni.interpolate(method='linear', axis=0).ffill().bfill()
     del omni
@@ -1316,17 +1311,11 @@ def generate_vCarr_from_OMNI(runstart, runend, nlon_grid = None, omni_input = No
 
     smjd = omni_int['Time'][0].mjd
     fmjd = omni_int['Time'][len(omni_int) - 1].mjd
-    
-
-    
-
-
 
     # compute the syndoic rotation period
     daysec = 24 * 60 * 60 * u.s
     synodic_period = 27.2753 * daysec  # Solar Synodic rotation period from Earth.
     omega_synodic = 2 * np.pi * u.rad / synodic_period
-
 
     # compute carrington longitudes
     cr = np.ones(len(omni_int))
@@ -1349,21 +1338,22 @@ def generate_vCarr_from_OMNI(runstart, runend, nlon_grid = None, omni_input = No
     # map each point back/forward to the reference radial distance
     omni_int['mjd_ref'] = omni_int['mjd']
     omni_int['Carr_lon_ref'] = omni_int['Carr_lon_unwrap']
-    
+
     for t in range(0, len(omni_int)):
         # time lag to reference radius
         delta_r = ref_r.to(u.km).value - omni_int['R'][t]
         delta_t = delta_r / omni_int['V'][t] / daysec.value
-        omni_int.loc[t, 'mjd_ref'] = omni_int.loc[t,'mjd_ref'] + delta_t
+        omni_int.loc[t, 'mjd_ref'] = omni_int.loc[t, 'mjd_ref'] + delta_t
         # change in Carr long of the measurement
-        omni_int.loc[t,'Carr_lon_ref'] = omni_int.loc[t,'Carr_lon_ref'] - delta_t * daysec.value * 2 * np.pi / synodic_period.value
+        omni_int.loc[t, 'Carr_lon_ref'] = omni_int.loc[
+                                              t, 'Carr_lon_ref'] - delta_t * daysec.value * 2 * np.pi / synodic_period.value
 
     # sort the omni data by Carr_lon_ref for interpolation
     omni_temp = omni_int.copy()
     omni_temp = omni_temp.sort_values(by=['Carr_lon_ref'])
 
     # now remap these speeds back on to the original time steps
-    omni_int['V_ref'] = np.interp(omni_int['Carr_lon_unwrap'], 
+    omni_int['V_ref'] = np.interp(omni_int['Carr_lon_unwrap'],
                                   omni_temp['Carr_lon_ref'], omni_temp['V'])
     omni_int['Br_ref'] = np.interp(omni_int['Carr_lon_unwrap'],
                                    omni_temp['Carr_lon_ref'], -omni_temp['BX_GSE'])
@@ -1397,14 +1387,14 @@ def generate_vCarr_from_OMNI(runstart, runend, nlon_grid = None, omni_input = No
         vgrid_carr_recon_back[:, t] = np.interp(time_grid[t] - dt_back.value,
                                                 omni_int['mjd'], omni_int['V_ref'],
                                                 left=np.nan, right=np.nan)
-        bgrid_carr_recon_back[:, t] = np.interp(time_grid[t] - dt_back.value, 
+        bgrid_carr_recon_back[:, t] = np.interp(time_grid[t] - dt_back.value,
                                                 omni_int['mjd'], omni_int['Br_ref'],
                                                 left=np.nan, right=np.nan)
 
         vgrid_carr_recon_forward[:, t] = np.interp(time_grid[t] + dt_forward.value,
                                                    omni_int['mjd'], omni_int['V_ref'],
                                                    left=np.nan, right=np.nan)
-        bgrid_carr_recon_forward[:, t] = np.interp(time_grid[t] + dt_forward.value, 
+        bgrid_carr_recon_forward[:, t] = np.interp(time_grid[t] + dt_forward.value,
                                                    omni_int['mjd'], omni_int['Br_ref'],
                                                    left=np.nan, right=np.nan)
 
@@ -1425,13 +1415,8 @@ def generate_vCarr_from_OMNI(runstart, runend, nlon_grid = None, omni_input = No
         return time_grid[mask], vgrid_carr_recon_forward[:, mask], bgrid_carr_recon_forward[:, mask]
 
 
-
-
-
-def generate_vCarr_from_OMNI_DTW(runstart, runend, nlon = None, omni_input = None,
-                                 res  = '24h', psi_days = 7*u.day,  max_warp_days = 3*u.day,
-                                 dtw_on = 'V'):
-    
+def generate_vCarr_from_OMNI_DTW(runstart, runend, nlon=None, omni_input=None, res='24h', psi_days=7 * u.day,
+                                 max_warp_days=3 * u.day, dtw_on='V'):
     """
     A function to download OMNI data and generate V_carr and time_grid for 
     use with set_time_dependent_boundary. Uses dynamic time warping, rather than
@@ -1441,6 +1426,7 @@ def generate_vCarr_from_OMNI_DTW(runstart, runend, nlon = None, omni_input = Non
         runstart: Datetime object. Start of the interval
         runend: Datetime object. End of the interval
         nlon: Int. If none specified, will be set to the current HUXt value (usually 128)
+        omni_input: Optional input of OMNI data. If left as None is downloaded at runtime.
         res: String. Time averaging of OMNI prior to DTW. match to longitude (for nlon = 128, use '5h')
         psi_days: Float, in units of days. DTW parameter, determining how many days can be ignored at the start/end of the fit.
         max_warp_days: Float, in units of days. DTW parameter, determining maximum warp allowed.
@@ -1450,374 +1436,388 @@ def generate_vCarr_from_OMNI_DTW(runstart, runend, nlon = None, omni_input = Non
         Vcarr: Array of solar wind speeds mapped as a function of Carr long and time
         bcarr: Array of Br mapped as a function of Carr long and time
     """
-    
-    #set the default longitude grid, check specified value
+
+    # set the default longitude grid, check specified value
     all_lons_huxt, dlon_huxt, nlon_huxt = H.longitude_grid()
     if nlon is None:
         nlon = nlon_huxt
     if not (nlon == nlon_huxt):
         print('Warning: vCarr generated for different longitude resolution than current HUXt default')
 
-    
-   
     # Download and process OMNI if not provided
-    
+
     # download an additional 33 days previous and after (27 + 5 buffer)
     starttime = runstart - datetime.timedelta(days=28 + psi_days.value)
-    endtime = runend + datetime.timedelta(days=28+ psi_days.value)
+    endtime = runend + datetime.timedelta(days=28 + psi_days.value)
 
     if omni_input is None:
         # Download the 1hr OMNI data from CDAweb
         omni = get_omni(starttime, endtime)
     else:
-        #do some check on onmi_input?
-        if ( (omni_input.loc[0,'datetime']> starttime) | 
-             (omni_input.loc[0,'datetime']> starttime) ):
-            print('Warning: supplied OMNI data does not completely cover required interval (allow +/- 28 days)')    
+        # do some check on onmi_input?
+        if ((omni_input.loc[0, 'datetime'] > starttime) |
+                (omni_input.loc[0, 'datetime'] > starttime)):
+            print('Warning: supplied OMNI data does not completely cover required interval (allow +/- 28 days)')
         omni = omni_input.copy()
-        
-    #extra processing
-    
-    #interpolate through the datagaps
+
+    # extra processing
+
+    # interpolate through the datagaps
     omni[['V', 'BX_GSE']] = omni[['V', 'BX_GSE']].interpolate(method='linear', axis=0).ffill().bfill()
     omni[[dtw_on]] = omni[[dtw_on]].interpolate(method='linear', axis=0).ffill().bfill()
-    
-    #get the carrington longitude
-    temp = datetime2huxtinputs(omni['datetime'].to_numpy())
-    omni['carr_lon'] = temp[1].value 
-    #unwrap this.
-    omni['clon_unwrap'] = np.unwrap(omni['carr_lon'].to_numpy()) 
-    
-    # interpolate to the required longitude grid 
-    
 
-    #average up to a given res for a clearer plot
-    omni_res = omni.resample(res, on='datetime').mean() 
-    omni_res['datetime'] = Time(omni_res['mjd'], format = 'mjd').to_datetime(leap_second_strict = 'silent')
+    # get the carrington longitude
+    temp = datetime2huxtinputs(omni['datetime'].to_numpy())
+    omni['carr_lon'] = temp[1].value
+    # unwrap this.
+    omni['clon_unwrap'] = np.unwrap(omni['carr_lon'].to_numpy())
+
+    # interpolate to the required longitude grid 
+
+    # average up to a given res for a clearer plot
+    omni_res = omni.resample(res, on='datetime').mean()
+    omni_res['datetime'] = Time(omni_res['mjd'], format='mjd').to_datetime(leap_second_strict='silent')
     omni_res.reset_index(drop=True, inplace=True)
-    
-    
-    #compute carrington longitude of earth for each point
+
+    # compute carrington longitude of earth for each point
     temp = datetime2huxtinputs(omni_res['datetime'].to_numpy())
     omni_res['carr_lon'] = temp[1].value
-    #unwrap this.
-    omni_res['clon_unwrap'] = np.unwrap(omni_res['carr_lon'].to_numpy()) 
-    
+    # unwrap this.
+    omni_res['clon_unwrap'] = np.unwrap(omni_res['carr_lon'].to_numpy())
+
     clon_min = omni_res['clon_unwrap'].min()
-    
-    #now interpolate this time series onto the required Carr long grid
-    #==================================================================
-    dlon = 2*np.pi/nlon
-    clon_unwrap_grid = - np.arange(-2*np.pi-dlon, -clon_min + 2*np.pi, dlon) 
-    
-    v_clon = np.interp(-clon_unwrap_grid, -omni_res['clon_unwrap'].to_numpy(), 
+
+    # now interpolate this time series onto the required Carr long grid
+    # ==================================================================
+    dlon = 2 * np.pi / nlon
+    clon_unwrap_grid = - np.arange(-2 * np.pi - dlon, -clon_min + 2 * np.pi, dlon)
+
+    v_clon = np.interp(-clon_unwrap_grid, -omni_res['clon_unwrap'].to_numpy(),
                        omni_res['V'].to_numpy(),
                        left=np.nan, right=np.nan)
-    mjd_clon = np.interp(-clon_unwrap_grid, -omni_res['clon_unwrap'].to_numpy(), 
-                       omni_res['mjd'].to_numpy(),
-                       left=np.nan, right=np.nan)
-    bx_clon = np.interp(-clon_unwrap_grid, -omni_res['clon_unwrap'].to_numpy(), 
-                       omni_res['BX_GSE'].to_numpy(),
-                       left=np.nan, right=np.nan)
-    dtwon_clon = np.interp(-clon_unwrap_grid, -omni_res['clon_unwrap'].to_numpy(), 
-                       omni_res[dtw_on].to_numpy(),
-                       left=np.nan, right=np.nan)
+    mjd_clon = np.interp(-clon_unwrap_grid, -omni_res['clon_unwrap'].to_numpy(),
+                         omni_res['mjd'].to_numpy(),
+                         left=np.nan, right=np.nan)
+    bx_clon = np.interp(-clon_unwrap_grid, -omni_res['clon_unwrap'].to_numpy(),
+                        omni_res['BX_GSE'].to_numpy(),
+                        left=np.nan, right=np.nan)
+    dtwon_clon = np.interp(-clon_unwrap_grid, -omni_res['clon_unwrap'].to_numpy(),
+                           omni_res[dtw_on].to_numpy(),
+                           left=np.nan, right=np.nan)
 
     del omni_res
-    #bung this in a dataframe
-    data = {
-        'mjd': mjd_clon,
-        'V': v_clon,
-        'BX_GSE': bx_clon,
-        dtw_on : dtwon_clon,
-        'clon_unwrap' : clon_unwrap_grid
-    }
-    
+    # bung this in a dataframe
+    data = {'mjd': mjd_clon, 'V': v_clon, 'BX_GSE': bx_clon, dtw_on: dtwon_clon, 'clon_unwrap': clon_unwrap_grid}
+
     omni_res = pd.DataFrame(data)
-    omni_res['carr_lon'] = np.mod(clon_unwrap_grid, 2*np.pi)
-    
-    #drop any times which are outside the original data, and therefore have nan mjds
+    omni_res['carr_lon'] = np.mod(clon_unwrap_grid, 2 * np.pi)
+
+    # drop any times which are outside the original data, and therefore have nan mjds
     omni_res = omni_res.dropna(subset=['mjd'])
     omni_res.reset_index(drop=True, inplace=True)
-    #recompute the datetimes
-    omni_res['datetime'] = Time(omni_res['mjd'], format = 'mjd').datetime
-    
+    # recompute the datetimes
+    omni_res['datetime'] = Time(omni_res['mjd'], format='mjd').datetime
+
     del omni
-    
-    #get the resulting time resolution and convert DTW params from days to steps
-    res_days = omni_res.loc[1,'mjd'] - omni_res.loc[0,'mjd']
-    psi_steps = int(psi_days.value/res_days)
-    max_warp_steps = int(max_warp_days.value/res_days)
-    
-    
-    #from this longitude-interpolated time series, create a current
-    #and lagged series of equal lengths and corresponding to same longitudes
+
+    # get the resulting time resolution and convert DTW params from days to steps
+    res_days = omni_res.loc[1, 'mjd'] - omni_res.loc[0, 'mjd']
+    psi_steps = int(psi_days.value / res_days)
+    max_warp_steps = int(max_warp_days.value / res_days)
+
+    # from this longitude-interpolated time series, create a current
+    # and lagged series of equal lengths and corresponding to same longitudes
     L = len(omni_res)
-    
-    #find the index of the previous time of the final longitude
-    min_clon = omni_res.loc[L-1,'clon_unwrap']
-    t_lagged_end = np.argmin(np.abs(omni_res['clon_unwrap'] - (min_clon + 2*np.pi)))
-    
-    omni_lagged = omni_res.iloc[:t_lagged_end+1]
+
+    # find the index of the previous time of the final longitude
+    min_clon = omni_res.loc[L - 1, 'clon_unwrap']
+    t_lagged_end = np.argmin(np.abs(omni_res['clon_unwrap'] - (min_clon + 2 * np.pi)))
+
+    omni_lagged = omni_res.iloc[:t_lagged_end + 1]
     omni_lagged.reset_index(drop=True, inplace=True)
-    
-    #find the index of the previous time of initial longitude
-    max_clon = omni_res.loc[0,'clon_unwrap']
-    t_unlagged_start = np.argmin(np.abs(omni_res['clon_unwrap'] - (max_clon - 2*np.pi)))
-    
-    
+
+    # find the index of the previous time of initial longitude
+    max_clon = omni_res.loc[0, 'clon_unwrap']
+    t_unlagged_start = np.argmin(np.abs(omni_res['clon_unwrap'] - (max_clon - 2 * np.pi)))
+
     omni_unlagged = omni_res.iloc[t_unlagged_start:]
     omni_unlagged.reset_index(drop=True, inplace=True)
-    
-    
-    #now do the actual DTW 
-    #=====================
+
+    # now do the actual DTW
+    # =====================
 
     dtw2 = omni_unlagged[dtw_on].to_numpy()
     dtw1 = omni_lagged[dtw_on].to_numpy()
 
-
-    #compute the DTW betweeen the behind and ahead using various parameters
-    path_v = dtw.warping_path(dtw1, dtw2, psi_neg=psi_steps, 
-                              window = max_warp_steps)
+    # compute the DTW betweeen the behind and ahead using various parameters
+    path_v = dtw.warping_path(dtw1, dtw2, psi_neg=psi_steps,
+                              window=max_warp_steps)
     path_v_arr = np.array(path_v)
-        
-    
-    
-    #Now convert paths to a speeds on a regular grid
+
+    # Now convert paths to a speeds on a regular grid
     def find_y(x1, y1, x2, y2, x):
-        # Step 1: Calculate the slope
+        """
+        Simple gradient calcualtion to compute y from straight line fit to x
+        Args:
+            x1: Lower x limit
+            y1: Lower y limit
+            x2: Upper x limit
+            y2: Upper y limit
+            x: The x value to compute y at.
+
+        Returns:
+            y: The computed y value
+        """
         m = (y2 - y1) / (x2 - x1)
-        
-        # Step 2: Calculate the y-intercept
         b = y1 - m * x1
-        
-        # Step 3: Calculate the y value for the given x
         y = m * x + b
-        
         return y
 
     def gridpaths(paths, v1, v2, startpath, npoints):
-        #A function to grid data using DTW paths between two time series
-        #along the startingpath and for npoints evenaly spaced from 0 to 1 inclusive
-    
+        """
+        A function to grid data using DTW paths between two time series
+        along the startingpath and for npoints evenaly spaced from 0 to 1 inclusive
+        Args:
+            paths:
+            v1:
+            v2:
+            startpath:
+            npoints:
+
+        Returns:
+            vgrid_t:
+        """
+
         t = startpath
         y_list = []
         v_list = []
-    
-        #put in the starting values
+
+        # put in the starting values
         v_list.append(v1[t])
         y_list.append(0)
-        
-        #find all the paths that start at this time
-        mask = (paths[:,0] == t)
-        
-        
-        #check if any of these paths are a straight connection
-        if any(paths[mask,1] == t):
+
+        # find all the paths that start at this time
+        mask = (paths[:, 0] == t)
+
+        # check if any of these paths are a straight connection
+        if any(paths[mask, 1] == t):
             v_list.append(v2[t])
             y_list.append(1)
         else:
-            #find all the paths that cross this time
-            mask = (paths[:,0] < t) & (paths[:,1] > t) | (paths[:,0] > t) & (paths[:,1] < t)
-            crossing_paths = np.flipud(paths[mask,:])
-            #find the y value at which each path crosses this time and the speed
+            # find all the paths that cross this time
+            mask = (paths[:, 0] < t) & (paths[:, 1] > t) | (paths[:, 0] > t) & (paths[:, 1] < t)
+            crossing_paths = np.flipud(paths[mask, :])
+            # find the y value at which each path crosses this time and the speed
             for path in crossing_paths:
-                y = find_y(path[0],0, path[1],1, t)
+                y = find_y(path[0], 0, path[1], 1, t)
                 y_list.append(y)
-                
-                #the fractional distance along the path is also y?
-                v_at_y = v1[path[0]] * (1-y) + v2[path[1]] * y
+
+                # the fractional distance along the path is also y?
+                v_at_y = v1[path[0]] * (1 - y) + v2[path[1]] * y
                 v_list.append(v_at_y)
-            
-            #make sure y is ascending
+
+            # make sure y is ascending
             zipped_lists = zip(y_list, v_list)
-    
+
             # Sort the zipped list based on the first list (y_list)
             sorted_zipped_lists = sorted(zipped_lists, key=lambda x: x[0])
-            
+
             # Unzip the sorted list back into two separate lists
             y_list_sorted, v_list_sorted = zip(*sorted_zipped_lists)
-            
+
             # Convert the zipped objects back to lists (if needed)
             y_list = list(y_list_sorted)
             v_list = list(v_list_sorted)
-            
-            #put the last point in
+
+            # put the last point in
             v_list.append(v2[t])
             y_list.append(1)
-            
-        
-        #now grid this data
-        yvals = np.arange(0,1+0.000001,1/(npoints-1))
-        vgrid_t = np.ones(npoints)*np.nan
-        for n in range(0, len(y_list)-1):
-            mask = (yvals >= y_list[n]) & (yvals < y_list[n+1])
+
+        # now grid this data
+        yvals = np.arange(0, 1 + 0.000001, 1 / (npoints - 1))
+        vgrid_t = np.ones(npoints) * np.nan
+        for n in range(0, len(y_list) - 1):
+            mask = (yvals >= y_list[n]) & (yvals < y_list[n + 1])
             vgrid_t[mask] = v_list[n]
         vgrid_t[-1] = v_list[-1]
-        
+
         return vgrid_t
-    
-    #set up the grid info
-    clon_grid = np.arange(dlon/2, 2*np.pi, dlon)
+
+    # set up the grid info
+    clon_grid = np.arange(dlon / 2, 2 * np.pi, dlon)
     t_grid = omni_unlagged['mjd'].to_numpy()
-    #and the full grid
+    # and the full grid
     nt = len(t_grid)
     t_grid_full = omni_res['mjd'].to_numpy()
-    nt_full = len(t_grid_full) 
-    
+    nt_full = len(t_grid_full)
+
     paths = path_v_arr
-    
 
     # now map all this onto the Carrlon-t grid
-    #=========================================
-    vcarr_grid = np.ones((nlon,nt_full))*np.nan
-    bcarr_grid = np.ones((nlon,nt_full))*np.nan
-    
+    # =========================================
+    vcarr_grid = np.ones((nlon, nt_full)) * np.nan
+    bcarr_grid = np.ones((nlon, nt_full)) * np.nan
+
     v2 = omni_unlagged['V'].to_numpy()
     v1 = omni_lagged['V'].to_numpy()
     b2 = omni_unlagged['BX_GSE'].to_numpy()
     b1 = omni_lagged['BX_GSE'].to_numpy()
-    
-    
-    for t in range(0,nt):
 
-        #find the carrington longitude index this equates to
-        lon_id = np.argmin(np.abs(clon_grid - omni_unlagged.loc[t,'carr_lon']))
-        
-        
-        #find the time ranges that are covered by the current longitude
-        tmax = omni_unlagged.loc[t,'mjd']
-        tmin = omni_lagged.loc[t,'mjd']
-        mask_t = ((t_grid_full >= tmin) & (t_grid_full < tmax ))
-        
+    for t in range(0, nt):
+        # find the carrington longitude index this equates to
+        lon_id = np.argmin(np.abs(clon_grid - omni_unlagged.loc[t, 'carr_lon']))
+
+        # find the time ranges that are covered by the current longitude
+        tmax = omni_unlagged.loc[t, 'mjd']
+        tmin = omni_lagged.loc[t, 'mjd']
+        mask_t = ((t_grid_full >= tmin) & (t_grid_full < tmax))
+
         ntimes = np.nansum(mask_t)
-    
+
         # as a test, just linearly intprolate between the two speeds at this lon
         vgrid_t = gridpaths(paths, v1, v2, t, ntimes)
         bgrid_t = gridpaths(paths, b1, b2, t, ntimes)
-        
-        #find where to put this in the full sequence
-        mask_t = ((t_grid_full >= tmin) & (t_grid_full < tmax ))
+
+        # find where to put this in the full sequence
+        mask_t = ((t_grid_full >= tmin) & (t_grid_full < tmax))
         vcarr_grid[lon_id, mask_t] = vgrid_t
         bcarr_grid[lon_id, mask_t] = bgrid_t
-        
-    
-    
-    #trim to the required interval
+
+    # trim to the required interval
     mask = ((t_grid_full >= Time(runstart).mjd) &
             (t_grid_full <= Time(runend).mjd))
-    
+
     time_trim = t_grid_full[mask]
     vcarr_grid_trim = vcarr_grid[:, mask]
     bcarr_grid_trim = bcarr_grid[:, mask]
-    
+
     return time_trim, clon_grid, vcarr_grid_trim, -bcarr_grid_trim
 
 
+def get_DONKI_ICMEs(startdate, enddate, location='Earth', ICME_duration=1.5 * u.day):
+    """
+    Scrape the DONKI database of interplanetary shocks at Earth or STEREO, to create a pseudo-ICME list in the same
+    format as the Cane and Richardson list.
+    Args:
+        startdate: Datetime of the start of the window
+        enddate: Datetime of the end of the window
+        location: Earth or STEREO A/B
+        ICME_duration: Timespan of the assumed ICME duration. Should have units of days.
 
+    Returns:
+        icmes: A dataframe of ICMEs
+    """
+    # scrape the DONKI database of interplanetary shocks at Earth or STEREO. Create
+    # a pseudo-ICME list in the same format as Cane and Richardson
 
-
-def get_DONKI_ICMEs(startdate, enddate, location = 'Earth', ICME_duration = 1.5*u.day):
-    #scrape the DONKI database of interplanetary shocks at Earth or STEREO. Create
-    #a pseudo-ICME list in the same format as Cane and Richardson
-
-    #construct the url
+    # construct the url
     startdate_str = startdate.strftime('%Y-%m-%d')
     stopdate_str = enddate.strftime('%Y-%m-%d')
-    url_head = "https://kauai.ccmc.gsfc.nasa.gov/DONKI/WS/get/IPS?startDate=" 
+    url_head = "https://kauai.ccmc.gsfc.nasa.gov/DONKI/WS/get/IPS?startDate="
     url = url_head + startdate_str + '&endDate=' + stopdate_str
-    
-    #read teh json file
+
+    # read teh json file
     response = urlopen(url)
-    
+
     if response.status == 200:
         data = json.loads(response.read().decode("utf-8"))
-    
-        
-        #convert to DataFrame
+
+        # convert to DataFrame
         df = pd.DataFrame(data)
-        
-        #only include ICMEs at given location
+
+        # only include ICMEs at given location
         mask = df['location'] == location
         icmes = df[mask]
         icmes = icmes.reset_index()
-        
-        
-        #put it in the same format as the Cane&Richardson ICME list
+
+        # put it in the same format as the Cane&Richardson ICME list
         L = len(icmes)
-        for i in range(0,L):
-            icmes.loc[i,'Shock_time'] = datetime.datetime.strptime(icmes.loc[i,'eventTime'], '%Y-%m-%dT%H:%MZ')
-            
-        #add a guess at the ICME end time
-        icmes['ICME_end'] = icmes['Shock_time'] + datetime.timedelta(days = ICME_duration.value)
+        for i in range(0, L):
+            icmes.loc[i, 'Shock_time'] = datetime.datetime.strptime(icmes.loc[i, 'eventTime'], '%Y-%m-%dT%H:%MZ')
+
+        # add a guess at the ICME end time
+        icmes['ICME_end'] = icmes['Shock_time'] + datetime.timedelta(days=ICME_duration.value)
     else:
         print("No repsonse for " + url)
         icmes = None
-    
-    return icmes
-    
-    
 
-def get_DONKI_coneCMEs(startdate, enddate, mostAccOnly = 'true', catalog = 'ALL',
-                       feature = 'LE'):
-    
-    #get the DONKI cone fits to coronagraph observations over a given interval
-    #these are returned as a dictionary of parameters, that then must be converted
-    #to cone CME objects for use in HUXt
+    return icmes
+
+
+def get_DONKI_coneCMEs(startdate, enddate, mostAccOnly='true', catalog='ALL', feature='LE'):
+    """
+    Function to retrieve Cone CME paramters from the DONKI catalogue over a given time window.
+    Args:
+        startdate: Datetime of the start of the window
+        enddate: Datetime of the end of the window
+        mostAccOnly: Only download the best fit per feature (could be LE or shock)
+        catalog: Which catalogue to search. Default to all.
+        feature: LE or shock. Default to LE.
+
+    Returns:
+        cme_params: A dictionary of Cone CME parameters
+    """
 
     startdate_str = startdate.strftime('%Y-%m-%d')
     stopdate_str = enddate.strftime('%Y-%m-%d')
-    url_head = "https://kauai.ccmc.gsfc.nasa.gov/DONKI/WS/get/CMEAnalysis?startDate=" 
-    url_1 = url_head + startdate_str + '&endDate=' + stopdate_str 
-    url_2 =  '&mostAccurateOnly=' + mostAccOnly + '&feature=' + feature
+    url_head = "https://kauai.ccmc.gsfc.nasa.gov/DONKI/WS/get/CMEAnalysis?startDate="
+    url_1 = url_head + startdate_str + '&endDate=' + stopdate_str
+    url_2 = '&mostAccurateOnly=' + mostAccOnly + '&feature=' + feature
     url_3 = '&catalog=' + catalog
     url = url_1 + url_2 + url_3
-    
+
     print(url)
-    #read the json file
+    # read the json file
     response = urlopen(url)
-    
+
     if response.status == 200:
         data = json.loads(response.read().decode("utf-8"))
-    
-        
-        #convert to DataFrame
+
+        # convert to DataFrame
         df = pd.DataFrame(data)
-        
-        #standardise the headers
-        df_renamed = df.rename(columns={'time21_5': 'ldates', 
-                                        'latitude': 'lat', 
-                                        'longitude': 'lon', 
-                                        'halfAngle': 'rmajor', 
+
+        # standardise the headers
+        df_renamed = df.rename(columns={'time21_5': 'ldates',
+                                        'latitude': 'lat',
+                                        'longitude': 'lon',
+                                        'halfAngle': 'rmajor',
                                         'speed': 'vcld'})
-        #convert to a dictionary
-        cme_params = df_renamed.to_dict(orient = 'index')
-         
+        # convert to a dictionary
+        cme_params = df_renamed.to_dict(orient='index')
+
     else:
         print("No repsonse for " + url)
         cme_params = None
-        
+
     return cme_params
 
 
-def get_DONKI_cme_list(model, startdate, enddate, 
-                    mostAccOnly = 'true', catalog = 'ALL', feature = 'LE'):
-    
-    #returns coneCME list from DONKI for use with HUXt.
-    
-    cme_params = get_DONKI_coneCMEs(startdate, enddate, 
-                       mostAccOnly = mostAccOnly, 
-                       catalog = catalog, feature = feature)
+def get_DONKI_cme_list(model, startdate, enddate, mostAccOnly='true', catalog='ALL', feature='LE'):
+    """
+    Retrieves a list of Cone CME parameters from the DONKI catalogue and produces a list of coneCME objects for use in
+    HUXt.
+    Args:
+        model: A HUXt model instance
+        startdate: Datetime object of the start of the window to retrieve CME paramters.
+        enddate:  Datetime object of the end of the window to retrieve CME paramters.
+        mostAccOnly: Only download the best fit per feature (could be LE or shock)
+        catalog: Which catalogue to search. Default to all.
+        feature: LE or Shock. default to LE
+
+    Returns:
+        cme_list: A list of ConeCME objects.
+    """
+
+    cme_params = get_DONKI_coneCMEs(startdate, enddate,
+                                    mostAccOnly=mostAccOnly,
+                                    catalog=catalog, feature=feature)
     cme_list = cone_dict_to_cme_list(model, cme_params)
-    
+
     return cme_list
 
 
-
-def remove_ICMEs(data_df, icmes, interpolate = True, 
-                 icme_buffer = 0.1*u.day, interp_buffer = 1*u.day,
-                 params = ['V', 'BX_GSE'], fill_vals = None):
+def remove_ICMEs(data_df, icmes, interpolate=True, icme_buffer=0.1 * u.day, interp_buffer=1 * u.day,
+                 params=['V', 'BX_GSE'], fill_vals=None):
     """
     A function to remove ICMEs from a given time series
 
@@ -1843,99 +1843,90 @@ def remove_ICMEs(data_df, icmes, interpolate = True,
     data: pd.dataframe with ICMEs removed from required params
 
     """
-    
-    #create a copy of the dataframe, rather than alter the original
+
+    # create a copy of the dataframe, rather than alter the original
     data = data_df.copy()
-    
-    
-    #convert the ICME shock and end times to MJD
+
+    # convert the ICME shock and end times to MJD
     icmes['shock_mjd'] = Time(icmes['Shock_time'].to_numpy()).mjd
     icmes['end_mjd'] = Time(icmes['ICME_end'].to_numpy()).mjd
-    
-    #go throught the ICME list and remove/interpolate through any that are in the 
-    #OMNI data
-    
-    
+
+    # go throught the ICME list and remove/interpolate through any that are in the OMNI data
+
     icme_buffer_d = icme_buffer.to(u.day).value
     interp_buffer_d = interp_buffer.to(u.day).value
-    
-    #first remove all ICMEs and add NaNs to the required parameters
-    for i in range(0,len(icmes)):
-        
-        icme_start = icmes['shock_mjd'][i] -  icme_buffer_d
+
+    # first remove all ICMEs and add NaNs to the required parameters
+    for i in range(0, len(icmes)):
+
+        icme_start = icmes['shock_mjd'][i] - icme_buffer_d
         icme_stop = icmes['end_mjd'][i] + icme_buffer_d
-        
-        mask_icme = ( (data['mjd'] >= icme_start)  &
-                      (data['mjd'] <= icme_stop) )
-        
+
+        mask_icme = ((data['mjd'] >= icme_start) &
+                     (data['mjd'] <= icme_stop))
+
         if any(mask_icme):
             print('removing ICME #' + str(i))
             for param in params:
-                data.loc[mask_icme,param] = np.nan
+                data.loc[mask_icme, param] = np.nan
 
-           
-    
-    #then interpolate through these gaps
+    # then interpolate through these gaps
     if interpolate:
-        
-        #check the fill vals
+
+        # check the fill vals
         if fill_vals is None:
             fill_vals = []
             for i in range(0, len(params)):
                 fill_vals.append(np.nan)
         else:
-            assert(len(params) == len(fill_vals))
-            
-            
+            assert (len(params) == len(fill_vals))
+
         # loop through each ICME, determine the up and downstream conditions 
         # and interpolate through
-        for i in range(0,len(icmes)):
-            
-            icme_start = icmes['shock_mjd'][i] -  icme_buffer_d
+        for i in range(0, len(icmes)):
+
+            icme_start = icmes['shock_mjd'][i] - icme_buffer_d
             icme_stop = icmes['end_mjd'][i] + icme_buffer_d
-            
-            mask_icme = ( (data['mjd'] >= icme_start)  &
-                         (data['mjd'] <= icme_stop) )
-            
-            
-            mask_upstream = ( (data['mjd'] >= icmes['shock_mjd'][i] - interp_buffer_d)  &
-                          (data['mjd'] <= icmes['shock_mjd'][i] ) )
-            
-            mask_downstream = ( (data['mjd'] >= icmes['end_mjd'][i])  &
-                          (data['mjd'] <= icmes['end_mjd'][i] + interp_buffer_d ) )
-            
-            
-            
+
+            mask_icme = ((data['mjd'] >= icme_start) &
+                         (data['mjd'] <= icme_stop))
+
+            mask_upstream = ((data['mjd'] >= icmes['shock_mjd'][i] - interp_buffer_d) &
+                             (data['mjd'] <= icmes['shock_mjd'][i]))
+
+            mask_downstream = ((data['mjd'] >= icmes['end_mjd'][i]) &
+                               (data['mjd'] <= icmes['end_mjd'][i] + interp_buffer_d))
+
             for param, fill_val in zip(params, fill_vals):
-                #compute the up and down stream average values
+                # compute the up and down stream average values
                 if any(mask_upstream):
                     v_up = data.loc[mask_upstream, param].mean()
                 else:
                     v_up = fill_val
-                    
+
                 if any(mask_downstream):
                     v_down = data.loc[mask_downstream, param].mean()
                 else:
                     v_down = fill_val
-                    
-                #if the average values are nans, use the fill values
+
+                # if the average values are nans, use the fill values
                 if np.isnan(v_up):
                     v_up = fill_val
                 if np.isnan(v_down):
                     v_down = fill_val
-                    
+
                 dv = v_down - v_up
-                    
-                #linearly interpolate between the up and down stream values
+
+                # linearly interpolate between the up and down stream values
                 if any(mask_icme):
                     icme_duration = icme_stop - icme_start
-                    
-                    #time through ICME, from start
-                    time_through_icme = data.loc[mask_icme,'mjd'] - icme_start
-                    time_through_icme_frac = time_through_icme/icme_duration
-                    
-                    #linearly interpolate
+
+                    # time through ICME, from start
+                    time_through_icme = data.loc[mask_icme, 'mjd'] - icme_start
+                    time_through_icme_frac = time_through_icme / icme_duration
+
+                    # linearly interpolate
                     vseries = (v_up + dv * time_through_icme_frac).astype(np.float32)
-                    
-                    data.loc[mask_icme,param] = vseries
+
+                    data.loc[mask_icme, param] = vseries
     return data
