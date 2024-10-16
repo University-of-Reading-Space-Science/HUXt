@@ -1,5 +1,10 @@
 # HUXt Changelog
 
+# V4.2.1
+
+## Additions
+- Add functions to `huxt_inputs` for downloading CME paramters and producing ConeCME objects from the DONKI catalogue
+
 # V4.2.0
 ## Bug fixes
 - Fixed plotting error for streaklines which assumed streaklines should be plotted at all longitudes.
