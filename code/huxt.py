@@ -147,8 +147,14 @@ class ConeCME:
     @u.quantity_input(v=(u.km / u.s))
     @u.quantity_input(width=u.deg)
     @u.quantity_input(thickness=u.solRad)
-    def __init__(self, t_launch=0.0 * u.s, longitude=0.0 * u.deg, latitude=0.0 * u.deg, v=1000.0 * (u.km / u.s),
-                 width=30.0 * u.deg, thickness=5.0 * u.solRad, initial_height=30 * u.solRad):
+    @u.quantity_input(fixed_duration=u.s)
+    
+    def __init__(self, t_launch=0.0 * u.s, longitude=0.0 * u.deg, 
+                 latitude=0.0 * u.deg, v=1000.0 * (u.km / u.s),
+                 width=30.0 * u.deg, thickness=5.0 * u.solRad,
+                 initial_height=30 * u.solRad, cme_expansion = False,
+                 cme_fixed_duration = False, fixed_duration = 6*60*60*u.s):
+
         """
         Set up a Cone CME with specified parameters.
         Args:
@@ -159,9 +165,13 @@ class ConeCME:
             width: Angular width of the CME, in degrees.
             thickness: Thickness of the CME cone, in solar radii.
             initial_height: Height (in solRad) that corresponds to the launch time.
+            cme_expansion : Whether to insert a declining speed profile at the inner boundary
+            cme_fixed_duration : Whether to fix the CME duration, or do a standard cone CME
+            fixed_duration : If fixed duration, the value to use
         Returns:
             None
         """
+ 
         self.t_launch = t_launch  # Time of CME launch, after the start of the simulation
         lon = _zerototwopi_(longitude.to(u.rad).value) * u.rad
         self.longitude = lon  # User-supplied Longitudinal launch direction of the CME
@@ -174,6 +184,9 @@ class ConeCME:
         self.coords = {}
         self.frame = 'NA'
         self.longitude_huxt = -1 * u.rad  # the HUXt longitude, adjusted for sidereal frame if necessary
+        self.cme_expansion = cme_expansion
+        self.cme_fixed_duration = cme_fixed_duration
+        self.fixed_duration = fixed_duration
         return
 
     def parameter_array(self):
@@ -183,10 +196,18 @@ class ConeCME:
         Returns:
             None
         """
-        cme_parameters = [self.t_launch.to('s').value, self.longitude_huxt.to('rad').value,
+        cme_parameters = [self.t_launch.to('s').value, 
+                          self.longitude_huxt.to('rad').value,
                           self.latitude.to('rad').value,
-                          self.width.to('rad').value, self.v.value, self.initial_height.to('km').value,
-                          self.radius.to('km').value, self.thickness.to('km').value, self.longitude.to('rad').value]
+                          self.width.to('rad').value, 
+                          self.v.value, 
+                          self.initial_height.to('km').value,
+                          self.radius.to('km').value, 
+                          self.thickness.to('km').value, 
+                          self.longitude.to('rad').value,
+                          self.cme_expansion,
+                          self.cme_fixed_duration,
+                          self.fixed_duration.to('s').value]
         return cme_parameters
 
     def _track_(self, model, cme_id):
@@ -569,8 +590,7 @@ class HUXt:
                  input_b_ts=np.nan,
                  input_iscme_ts=np.NaN,
                  input_t_ts=np.nan * u.s,
-                 track_cmes=True,
-                 cme_expansion=False):
+                 track_cmes=True):
         """
         Initialise the HUXt model instance.
 
@@ -596,7 +616,6 @@ class HUXt:
                                If used as keyword input argument, overrides ConeCMEs past to huxt.sovle().
             save_full_v: Boolean flag to determine if full v field (including spin up) is saved for post-processing.
             track_cmes: Boolean flag to determine if CMEs are tracked at run time (small speed reduction).
-            cme_expansion: Boolean flag to determine whether CMEs are inserted with a declining velocity profile
         """
 
         # some constants and units
@@ -736,8 +755,6 @@ class HUXt:
 
         self.track_cmes = track_cmes  # If true, cmes are tracked, which costs a little extra computation time
         
-        self.cme_expansion = cme_expansion #if true, cmes inserted with declining velocity profile
-
         # Numpy array of model parameters for parsing to external functions that use numba
         self.model_params = np.array([self.dtdr.value, self.alpha.value, self.r_accel.value,
                                       self.dt_scale.value, self.nt_out, self.nr, self.nlon,
@@ -946,7 +963,7 @@ class HUXt:
                 v, isincme = add_cmes_to_input_series(self.input_v_ts[:, i],
                                                       self.model_time, lon_out, 
                                                       self.r[0].to('km').value, cme_params, 
-                                                      self.latitude.value, self.cme_expansion)
+                                                      self.latitude.value)
 
                 self.input_v_ts[:, i] = v
                 self.input_iscme_ts[:, i] = isincme
@@ -1115,8 +1132,13 @@ class HUXt:
                     cmegrp.create_dataset(k, data=v)
 
                 if k not in ["coords", "frame"]:
-                    dset = cmegrp.create_dataset(k, data=v.value)
-                    dset.attrs['unit'] = v.unit.to_string()
+                    #check if the CME property has a value (new BOOLs do not)
+                    if hasattr(v, 'value'):
+                        dset = cmegrp.create_dataset(k, data=v.value)
+                        dset.attrs['unit'] = v.unit.to_string()
+                    else:
+                        dset = cmegrp.create_dataset(k, data=v)
+                        dset.attrs['unit'] = 'None'
 
                 out_file.flush()
                 # Now handle the dictionary of CME boundary coordinates coords > time_out > position
@@ -1286,7 +1308,7 @@ def huxt_constants():
     nlong = 128  # Number of longitude bins for a full longitude grid [128]
     dr = 1.5 * u.solRad  # Radial grid step. With v_max, this sets the model time step [1.5*u.solRad]
     nlat = 45  # Number of latitude bins for a full latitude grid [45]
-    v_max = 3000 * u.km / u.s  # Maximum expected solar wind speed. Sets timestep [2000*u.km / u.s]
+    v_max = 4000 * u.km / u.s  # Maximum expected solar wind speed. Sets timestep [2000*u.km / u.s]
 
     # CONSTANTS - DON'T CHANGE
     twopi = 2.0 * np.pi
@@ -1728,7 +1750,7 @@ def solve_radial(vinput, binput, iscmeinput, model_time, rrel, params,
 
 
 @jit(nopython=True)
-def add_cmes_to_input_series(vinput, model_time, lon, r_boundary, cme_params, latitude, cme_expansion):
+def add_cmes_to_input_series(vinput, model_time, lon, r_boundary, cme_params, latitude):
     """
     Add CMEs to the model input time series
     Args:
@@ -1747,6 +1769,7 @@ def add_cmes_to_input_series(vinput, model_time, lon, r_boundary, cme_params, la
     n_cme = cme_params.shape[0]
     v = vinput
     isincme = v * 0
+    
 
     for t, time in enumerate(model_time):
 
@@ -1756,8 +1779,9 @@ def add_cmes_to_input_series(vinput, model_time, lon, r_boundary, cme_params, la
             v_update_cme = np.zeros(n_cme) * np.nan
             for n in range(n_cme):
                 cme = cme_params[n, :]
+                cme_expansion = cme[9]
                 # Check if this point is within the cone CME
-                iscme, dist_from_nose = _is_in_cme_boundary_expanding_(r_boundary, lon, latitude, time, cme)
+                iscme, dist_from_nose = _is_in_cme_boundary_(r_boundary, lon, latitude, time, cme)
                 if iscme: 
                     if cme_expansion:
                         # #use Owens2005 empirical relations
@@ -1766,7 +1790,7 @@ def add_cmes_to_input_series(vinput, model_time, lon, r_boundary, cme_params, la
                         # v_update_cme[n] = cme[4] + v_EXP * (0.5 - dist_from_nose) 
                         
                         #v_update_cme[n] = cme[4] + 0.75 * cme[4] * (0.5 - dist_from_nose) 
-                        v_update_cme[n] = cme[4]*(1-dist_from_nose) + 300*(dist_from_nose) 
+                        v_update_cme[n] = cme[4]*(1-dist_from_nose) + 200*(dist_from_nose) 
                     else:
                         v_update_cme[n] = cme[4]
 
@@ -1812,7 +1836,7 @@ def _upwind_step_(v_up, v_dn, dtdr, alpha, r_accel, rrel):
 
 
 @jit(nopython=True)
-def _is_in_cme_boundary_expanding_(r_boundary, lon, lat, time, cme_params):
+def _is_in_cme_boundary_(r_boundary, lon, lat, time, cme_params):
     """
     Check whether a given lat, lon point on the inner boundary is within a given CME.
     Returns the fraction of the distance between nose and tail, which can be used to 
@@ -1827,8 +1851,7 @@ def _is_in_cme_boundary_expanding_(r_boundary, lon, lat, time, cme_params):
          isincme: Boolean, True if coordinate is on or inside the CME domain.
          dist_from_nose: Float, fractional distance from nose to tail.
     """
-    isincme = False
-    dist_from_nose = 0.0
+
 
     cme_t_launch = cme_params[0]
     cme_lon = cme_params[1]
@@ -1838,7 +1861,16 @@ def _is_in_cme_boundary_expanding_(r_boundary, lon, lat, time, cme_params):
     # cme_initial_height = cme_params[5]
     cme_radius = cme_params[6] # the physical width at the inner boundary
     cme_thickness = cme_params[7]
-
+    cme_fixed_duration = cme_params[10]
+    fixed_duration = cme_params[11]
+    
+    #change the cme speed so that it produces the correct pulse duration
+    if cme_fixed_duration:
+        cme_v = (cme_radius*2 + cme_thickness)/fixed_duration
+        
+        
+    isincme = False
+    dist_from_nose = 0.0
 
 
     # Compute y, the height of CME nose above the 30rS surface
@@ -1940,7 +1972,19 @@ def load_HUXt_run(filepath):
             thickness = cme_data['thickness'][()] * u.Unit(cme_data['thickness'].attrs['unit'])
             thickness = thickness.to('solRad')
             v = cme_data['v'][()] * u.Unit(cme_data['v'].attrs['unit'])
-            cme = ConeCME(t_launch=t_launch, longitude=lon, latitude=lat, v=v, width=width, thickness=thickness)
+            
+            #check for the new (post 4.2.1) cone CME parameters
+            if 'cme_expansion' in cme_data:
+                cme_expansion = cme_data['cme_expansion'][()]
+                cme_fixed_duration = cme_data['cme_fixed_duration'][()]
+                fixed_duration = cme_data['fixed_duration'][()] * u.Unit(cme_data['fixed_duration'].attrs['unit'])
+                
+                cme = ConeCME(t_launch=t_launch, longitude=lon, latitude=lat, v=v, width=width, thickness=thickness,
+                              cme_expansion = cme_expansion, cme_fixed_duration = cme_fixed_duration,
+                              fixed_duration = fixed_duration)
+            else:
+                cme = ConeCME(t_launch=t_launch, longitude=lon, latitude=lat, v=v, width=width, thickness=thickness)
+            
             cme.frame = cme_data['frame'][()].decode("utf-8")
 
             # Now sort out coordinates.
