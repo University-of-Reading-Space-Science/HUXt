@@ -1,5 +1,11 @@
 # HUXt Changelog
 
+# V4.2.2
+## Additions
+- Added a `__version__` attribute to `huxt.ConeCME` and `huxt.HUXt` classes
+- Added functionality to `huxt.ConeCME` to give the CME a fixed injection duration. This alleviates a feature/bug of the cone CME geometry where slower CMEs result in longer duration perturbations to the boundary conditions. This is activated by setting `cme_fixed_duration` to `True` and providing the CME duration in hours to `fixed_duration`.
+- Added functionality to `huxt.ConeCME` to give the CME an expanding profile, with the flag `cme_expansion`. If this is `True`, then the CME velocity profile on the inner boundary decreases with time, corresponding to an expanding CME. As per Owens et al. 2005.
+
 # V4.2.1
 
 ## Additions

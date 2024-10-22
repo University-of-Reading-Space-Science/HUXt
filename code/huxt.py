@@ -186,6 +186,7 @@ class ConeCME:
         self.cme_expansion = cme_expansion
         self.cme_fixed_duration = cme_fixed_duration
         self.fixed_duration = fixed_duration
+        self.__version__ = get_version()
         return
 
     def parameter_array(self):
@@ -624,6 +625,7 @@ class HUXt:
         self.kms = constants['kms']
         self.alpha = constants['alpha']  # Scale parameter for residual SW acceleration
         self.r_accel = constants['r_accel']  # Spatial scale parameter for residual SW acceleration
+        self.__version__ = get_version()
 
         # set the frame fo reference. Synodic keeps ES line at 0 longitude.
         # sidereal means Earth moves to increasing longitude with time
@@ -1782,11 +1784,7 @@ def add_cmes_to_input_series(vinput, model_time, lon, r_boundary, cme_params, la
                 iscme, dist_from_nose = _is_in_cme_boundary_(r_boundary, lon, latitude, time, cme)
                 if iscme: 
                     if cme_expansion:
-                        # #use Owens2005 empirical relations
-                        # v_LE = 1.3 * cme[4] - 57.7
-                        # v_EXP = 0.266 * v_LE - 70.6
-                        # v_update_cme[n] = cme[4] + v_EXP * (0.5 - dist_from_nose)
-                        # v_update_cme[n] = cme[4] + 0.75 * cme[4] * (0.5 - dist_from_nose)
+                        # use Owens2005 empirical relations
                         v_update_cme[n] = cme[4]*(1-dist_from_nose) + 200*dist_from_nose
                     else:
                         v_update_cme[n] = cme[4]
@@ -2066,3 +2064,7 @@ def bgrid_from_hcs(hcs_particles_r, input_b_ts, model_time, time_out, r_grid, lo
                     else:
                         bgrid[t, r_i:, ilon] = 1.0
     return bgrid
+
+
+def get_version():
+    return "4.2.2"
