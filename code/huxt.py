@@ -148,12 +148,11 @@ class ConeCME:
     @u.quantity_input(width=u.deg)
     @u.quantity_input(thickness=u.solRad)
     @u.quantity_input(fixed_duration=u.s)
-    
     def __init__(self, t_launch=0.0 * u.s, longitude=0.0 * u.deg, 
                  latitude=0.0 * u.deg, v=1000.0 * (u.km / u.s),
                  width=30.0 * u.deg, thickness=5.0 * u.solRad,
-                 initial_height=30 * u.solRad, cme_expansion = False,
-                 cme_fixed_duration = False, fixed_duration = 6*60*60*u.s):
+                 initial_height=30 * u.solRad, cme_expansion=False,
+                 cme_fixed_duration=False, fixed_duration=6*60*60*u.s):
 
         """
         Set up a Cone CME with specified parameters.
@@ -1092,7 +1091,7 @@ class HUXt:
                 lons = self.lon.value
 
             self.b_grid = bgrid_from_hcs(self.hcs_particles_r, self.input_b_ts,
-                                         self.model_time.value, lon_grid,
+                                         self.model_time.value,
                                          self.time_out.value,
                                          self.r.to(u.km).value, lons)
 
@@ -1229,7 +1228,7 @@ class HUXt3d:
                  latitude_max=30 * u.deg, latitude_min=-30 * u.deg,
                  r_min=30 * u.solRad, r_max=240 * u.solRad,
                  lon_out=np.NaN * u.rad, lon_start=np.NaN * u.rad, lon_stop=np.NaN * u.rad,
-                 simtime=5.0 * u.day, dt_scale=1.0, cme_expansion = True):
+                 simtime=5.0 * u.day, dt_scale=1.0):
         """
         Initialise the HUXt3D instance.
 
@@ -1282,7 +1281,7 @@ class HUXt3d:
                                      cr_num=cr_num, cr_lon_init=cr_lon_init,
                                      r_min=r_min, r_max=r_max,
                                      lon_out=lon_out, lon_start=lon_start, lon_stop=lon_stop,
-                                     simtime=simtime, dt_scale=dt_scale, cme_expansion=cme_expansion))
+                                     simtime=simtime, dt_scale=dt_scale))
         return
 
     def solve(self, cme_list):
@@ -1308,7 +1307,7 @@ def huxt_constants():
     nlong = 128  # Number of longitude bins for a full longitude grid [128]
     dr = 1.5 * u.solRad  # Radial grid step. With v_max, this sets the model time step [1.5*u.solRad]
     nlat = 45  # Number of latitude bins for a full latitude grid [45]
-    v_max = 4000 * u.km / u.s  # Maximum expected solar wind speed. Sets timestep [2000*u.km / u.s]
+    v_max = 3000 * u.km / u.s  # Maximum expected solar wind speed. Sets timestep [2000*u.km / u.s]
 
     # CONSTANTS - DON'T CHANGE
     twopi = 2.0 * np.pi
@@ -1769,7 +1768,6 @@ def add_cmes_to_input_series(vinput, model_time, lon, r_boundary, cme_params, la
     n_cme = cme_params.shape[0]
     v = vinput
     isincme = v * 0
-    
 
     for t, time in enumerate(model_time):
 
@@ -1787,10 +1785,9 @@ def add_cmes_to_input_series(vinput, model_time, lon, r_boundary, cme_params, la
                         # #use Owens2005 empirical relations
                         # v_LE = 1.3 * cme[4] - 57.7
                         # v_EXP = 0.266 * v_LE - 70.6
-                        # v_update_cme[n] = cme[4] + v_EXP * (0.5 - dist_from_nose) 
-                        
-                        #v_update_cme[n] = cme[4] + 0.75 * cme[4] * (0.5 - dist_from_nose) 
-                        v_update_cme[n] = cme[4]*(1-dist_from_nose) + 200*(dist_from_nose) 
+                        # v_update_cme[n] = cme[4] + v_EXP * (0.5 - dist_from_nose)
+                        # v_update_cme[n] = cme[4] + 0.75 * cme[4] * (0.5 - dist_from_nose)
+                        v_update_cme[n] = cme[4]*(1-dist_from_nose) + 200*dist_from_nose
                     else:
                         v_update_cme[n] = cme[4]
 
@@ -1852,7 +1849,6 @@ def _is_in_cme_boundary_(r_boundary, lon, lat, time, cme_params):
          dist_from_nose: Float, fractional distance from nose to tail.
     """
 
-
     cme_t_launch = cme_params[0]
     cme_lon = cme_params[1]
     cme_lat = cme_params[2]
@@ -1864,20 +1860,17 @@ def _is_in_cme_boundary_(r_boundary, lon, lat, time, cme_params):
     cme_fixed_duration = cme_params[10]
     fixed_duration = cme_params[11]
     
-    #change the cme speed so that it produces the correct pulse duration
+    # change the cme speed so that it produces the correct pulse duration
     if cme_fixed_duration:
         cme_v = (cme_radius*2 + cme_thickness)/fixed_duration
-        
-        
+
     isincme = False
     dist_from_nose = 0.0
 
-
-    # Compute y, the height of CME nose above the 30rS surface
+    # Compute y, the height of CME nose above the surface
     y = cme_v * (time - cme_t_launch)
     
     # compute x, the radius of the cme currently threading the inner boundary
-    x = np.NaN
     if (y >= 0) & (y < cme_radius):
         # this is the front hemisphere of the spherical CME
         x = np.sqrt(y * (2 * cme_radius - y))  # compute x, the distance of the current longitude from the nose
@@ -1904,11 +1897,10 @@ def _is_in_cme_boundary_(r_boundary, lon, lat, time, cme_params):
 
     if central_angle <= ang_width:
         isincme = True
-        #also compute the fractional distance from nose to tail
+        # also compute the fractional distance from nose to tail
         r_of_nose = cme_v * (time - cme_t_launch)
         nose_to_tail_r = (2 * cme_radius + cme_thickness)
         dist_from_nose = r_of_nose / nose_to_tail_r
-
 
     return isincme, dist_from_nose
 
@@ -1973,15 +1965,15 @@ def load_HUXt_run(filepath):
             thickness = thickness.to('solRad')
             v = cme_data['v'][()] * u.Unit(cme_data['v'].attrs['unit'])
             
-            #check for the new (post 4.2.1) cone CME parameters
+            # check for the new (post 4.2.1) cone CME parameters
             if 'cme_expansion' in cme_data:
                 cme_expansion = cme_data['cme_expansion'][()]
                 cme_fixed_duration = cme_data['cme_fixed_duration'][()]
                 fixed_duration = cme_data['fixed_duration'][()] * u.Unit(cme_data['fixed_duration'].attrs['unit'])
                 
                 cme = ConeCME(t_launch=t_launch, longitude=lon, latitude=lat, v=v, width=width, thickness=thickness,
-                              cme_expansion = cme_expansion, cme_fixed_duration = cme_fixed_duration,
-                              fixed_duration = fixed_duration)
+                              cme_expansion=cme_expansion, cme_fixed_duration=cme_fixed_duration,
+                              fixed_duration=fixed_duration)
             else:
                 cme = ConeCME(t_launch=t_launch, longitude=lon, latitude=lat, v=v, width=width, thickness=thickness)
             
@@ -2017,22 +2009,20 @@ def load_HUXt_run(filepath):
         model.cmes = cme_list
 
     else:
-        # File doesnt exist return nothing
+        # File doesn't exist return nothing
         raise FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT), filepath)
 
     return model, cme_list
 
 
 @jit(nopython=True)
-def bgrid_from_hcs(hcs_particles_r, input_b_ts, model_time, lon_grid, time_out,
-                   r_grid, lons):
+def bgrid_from_hcs(hcs_particles_r, input_b_ts, model_time, time_out, r_grid, lons):
     """
     Create the b polarity grid from the tracked HCS positions
     Args:
         hcs_particles_r: HCS r valus as a function of long and time, in km (model.hcs_particles_r)
         input_b_ts : Inner boundary b polarity time series (model.input_b_ts)
         model_time: Time (rel to model start) of inner boundary values (model.model_time)
-        lon_grid : Longitude grid of input_b_ts, in radians
         time_out : model output time steps
         r_grid: Radial grid in km
         lons : model output longitudes, in radians
