@@ -869,7 +869,7 @@ class HUXt:
         if not self.input_v_ts_flag:
             self.ts_from_vlong()
 
-            # ======================================================================
+        # ======================================================================
         # Process CME list
         # ======================================================================
         # Make a copy of the CME list objects so that the originals are not modified
@@ -914,7 +914,9 @@ class HUXt:
             # Also sort the list of ConeCMEs so that it corresponds ot cme_params
             self.cmes = [self.cmes[i] for i in id_sort]
         else:
-            cme_params = np.NaN * np.zeros((1, 10))
+            #create dummy cme
+            dummy_cme = ConeCME()
+            cme_params = np.NaN * np.zeros((1, len(dummy_cme.parameter_array())))
 
         # sanity check the CME initial height is the same as the model inner boundary
         if len(self.cmes) > 0:
