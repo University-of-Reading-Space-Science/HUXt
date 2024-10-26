@@ -1964,6 +1964,7 @@ def load_HUXt_run(filepath):
             width = cme_data['width'][()] * u.Unit(cme_data['width'].attrs['unit'])
             thickness = cme_data['thickness'][()] * u.Unit(cme_data['thickness'].attrs['unit'])
             thickness = thickness.to('solRad')
+            initial_height = cme_data['initial_height'][()] * u.Unit(cme_data['initial_height'].attrs['unit'])
             v = cme_data['v'][()] * u.Unit(cme_data['v'].attrs['unit'])
             
             # check for the new (post 4.2.1) cone CME parameters
@@ -1973,10 +1974,11 @@ def load_HUXt_run(filepath):
                 fixed_duration = cme_data['fixed_duration'][()] * u.Unit(cme_data['fixed_duration'].attrs['unit'])
                 
                 cme = ConeCME(t_launch=t_launch, longitude=lon, latitude=lat, v=v, width=width, thickness=thickness,
-                              cme_expansion=cme_expansion, cme_fixed_duration=cme_fixed_duration,
-                              fixed_duration=fixed_duration)
+                              initial_height=initial_height, cme_expansion=cme_expansion,
+                              cme_fixed_duration=cme_fixed_duration, fixed_duration=fixed_duration)
             else:
-                cme = ConeCME(t_launch=t_launch, longitude=lon, latitude=lat, v=v, width=width, thickness=thickness)
+                cme = ConeCME(t_launch=t_launch, longitude=lon, latitude=lat, v=v, width=width, thickness=thickness,
+                              initial_height=initial_height)
             
             cme.frame = cme_data['frame'][()].decode("utf-8")
 
