@@ -1,5 +1,10 @@
 # HUXt Changelog
 
+# V4.2.3
+## Bug fixes
+- HUXt was intermittently erroring due to an assumption that `coneCME.parameter_array()` would an array of length 10. This assumption was broken with the addition of the `cme_expansion` and `cme_fixed_duration` options. This has now been fixed.
+- There was an error in load_HUXt_run, which was incorrectly loading ConeCME objects, as it wasn't loading the initial_height parameter, and was instead defaulting to 30 Rs. 
+
 # V4.2.2
 ## Additions
 - Added a `__version__` attribute to `huxt.ConeCME` and `huxt.HUXt` classes
