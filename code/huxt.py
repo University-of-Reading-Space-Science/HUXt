@@ -914,7 +914,7 @@ class HUXt:
             # Also sort the list of ConeCMEs so that it corresponds ot cme_params
             self.cmes = [self.cmes[i] for i in id_sort]
         else:
-            #create dummy cme
+            # create dummy cme
             dummy_cme = ConeCME()
             cme_params = np.NaN * np.zeros((1, len(dummy_cme.parameter_array())))
 
@@ -955,21 +955,22 @@ class HUXt:
                                                self.nlon), dtype='int')
 
             n_cme = len(self.cmes)
-            # Loop through model longitudes and add the CMEs
-            for i in range(self.lon.size):
-                if self.lon.size == 1:
-                    lon_out = self.lon.value
-                else:
-                    lon_out = self.lon[i].value
+            if n_cme > 0:
+                # Loop through model longitudes and add the CMEs
+                for i in range(self.lon.size):
+                    if self.lon.size == 1:
+                        lon_out = self.lon.value
+                    else:
+                        lon_out = self.lon[i].value
 
-                # Add the CMEs to the input series
-                v, isincme = add_cmes_to_input_series(self.input_v_ts[:, i],
-                                                      self.model_time, lon_out, 
-                                                      self.r[0].to('km').value, cme_params, 
-                                                      self.latitude.value)
+                    # Add the CMEs to the input series
+                    v, isincme = add_cmes_to_input_series(self.input_v_ts[:, i],
+                                                          self.model_time, lon_out,
+                                                          self.r[0].to('km').value, cme_params,
+                                                          self.latitude.value)
 
-                self.input_v_ts[:, i] = v
-                self.input_iscme_ts[:, i] = isincme
+                    self.input_v_ts[:, i] = v
+                    self.input_iscme_ts[:, i] = isincme
 
         # Set up the CME test particle position field
         self.cme_particles_r = np.zeros((n_cme, self.nt_out, 2, self.nlon)) * u.dimensionless_unscaled
