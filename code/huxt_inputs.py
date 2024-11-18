@@ -5,6 +5,7 @@ from urllib.request import urlopen
 import json
 import ssl
 import copy
+import pickle
 
 import astropy.units as u
 from astropy.io import fits
@@ -712,31 +713,54 @@ def get_PFSS_long_profile(filepath, lat=0.0 * u.deg):
     return vr * u.km / u.s
 
 
-def get_CorTom_long_profile(filepath, lat=0.0 * u.deg):
+def get_CorTom_vr_map(filepath):
     """
-    Function to read and process CorTom (Coronal Tomography) output to provide a longitude profile at a specified
-    latitude of the solar wind speed for use as boundary conditions in HUXt.
+    A function to load, read and process CorTom output to provide HUXt V boundary conditions as lat-long maps.
+    Maps returned in native resolution, not HUXt resolution.
+    Maps are not transformed - make sure the CorTom maps are Carrington maps
 
     Args:
-        filepath: A complete path to the CorTom data file
-        lat: Latitude at which to extract the longitudinal profile, measure up from equator. Float with units of deg
-
+        filepath: String, The filepath for the CorTom data. Accepts either the CorTom pickle files or the IDL save .dat
+                 files. File must end in either .pkl or .dat.
     Returns:
-        vr_in: Solar wind speed as a function of Carrington longitude at solar equator.
-               Interpolated to the default HUXt longitudinal grid. np.array (NDIM = 1) in units of km/s
+        vr_map: np.array, Solar wind speed as a Carrington longitude-latitude map. In km/s
+        vr_lats: np.array, The latitudes for the Vr map, in radians from trhe equator
+        vr_longs: np.array, The Carrington longitudes for the Vr map, in radians
+        phi: meshgrid og longitudes
+        theta: mesh grid of latitudes
+
     """
-    assert (lat >= -90.0 * u.deg)
-    assert (lat <= 90.0 * u.deg)
-    assert (os.path.isfile(filepath))
 
-    vr_map, lon_map, lat_map = get_CorTom_vr_map(filepath)
+    cortom_ext = os.path.splitext(filepath)[1]
+    if cortom_ext == '.dat':
+        # IDL save file from Aber repository
+        cortom_data = readsav(filepath)
+        vr_map = copy.copy(cortom_data['velocity'])
+        vr_colat = copy.copy(cortom_data['colat_rad'])
+        vr_longs = copy.copy(cortom_data['lon_rad'])
 
-    # Extract the value at the given latitude
-    vr = np.zeros(lon_map.shape)
-    for i in range(lon_map.size):
-        vr[i] = np.interp(lat.to(u.rad).value, lat_map.value, vr_map[:, i].value)
+    elif cortom_ext == '.pkl':
+        # Pickled Cortom output from local or UKMO API
+        with open(filepath, "rb") as file:
+            data = pickle.load(file)
 
-    return vr * u.km / u.s
+        vr_map = data['velocity']
+        vr_colat = data['colat']
+        vr_longs = data['lon']
+        vr_map = np.swapaxes(vr_map, 0, 1)
+    else:
+        raise ValueError(f"Filename must have extension of either dat or pkl: {filepath}")
+
+    vr_lats = (np.pi / 2 - vr_colat)
+
+    # now rotate onto a 0 to 360 grid
+    Nlon = len(vr_longs)
+    vr_longs_out = np.linspace(np.pi / Nlon, 2 * np.pi - np.pi / Nlon, num=Nlon)
+    vr_map_out = vr_map * np.nan
+    for nlat in range(0, len(vr_lats)):
+        vr_map_out[nlat, :] = np.interp(vr_longs_out, vr_longs, vr_map[nlat, :], period=2 * np.pi)
+
+    return vr_map_out * u.km / u.s, vr_longs_out * u.rad, vr_lats * u.rad
 
 
 def getMetOfficeWSAandCone(startdate, enddate, datadir=''):
