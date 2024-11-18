@@ -58,13 +58,13 @@ def get_MAS_boundary_conditions(cr=np.NaN, observatory='', runtype='', runnumber
         overwrite = True  # If the user wants a specific observatory, overwrite what's already downloaded
 
     if not observatory:
-        observatories_order = ['hmi', 'mdi', 'solis', 'gong', 'mwo', 'wso', 'kpo']
+        observatories_order = ['hmi', 'mdi', 'solis', 'gong', 'kpo', 'mwo', 'wso']
     else:
         observatories_order = [str(observatory)]
         overwrite = True  # If the user wants a specific observatory, overwrite what's already downloaded
 
     if not runtype:
-        runtype_order = ['masp', 'mas', 'mast']
+        runtype_order = ['mast', 'masp', 'mas' ]
     else:
         runtype_order = [str(runtype)]
         overwrite = True
@@ -347,7 +347,7 @@ def get_MAS_br_map(cr):
 def map_v_inwards(v_orig, r_orig, lon_orig, r_new):
     """
     Function to map v from r_orig (in rs) to r_inner (in rs) accounting for residual acceleration, but neglecting
-    stream interactions.
+    stream interactions. Simply recomputes speed, doesn't longitudinally shift data
 
     Args:
         v_orig: Solar wind speed at original radial distance. Units of km/s.
@@ -393,7 +393,7 @@ def map_v_inwards(v_orig, r_orig, lon_orig, r_new):
 def map_v_boundary_inwards(v_orig, r_orig, r_new, b_orig=np.nan):
     """
     Function to map a longitudinal V series from r_outer (in rs) to r_inner (in rs) accounting for residual
-    acceleration, but neglecting stream interactions.
+    acceleration, but neglecting stream interactions. Produces the required longitude shift and remaps the data
     Series returned on input grid
 
     Args:
@@ -434,7 +434,7 @@ def map_v_boundary_inwards(v_orig, r_orig, r_new, b_orig=np.nan):
 def map_vmap_inwards(v_map, v_map_lat, v_map_long, r_orig, r_new, b_map=np.nan):
     """
     Function to map a V Carrington map from r_orig (in rs) to r_new (in rs), accounting for acceleration, but ignoring
-    stream interaction.
+    stream interaction. Produces the required longitude shift and remaps the data
     Map returned on input coord system, not HUXT resolution.
 
     Args:
