@@ -517,36 +517,6 @@ def get_PFSS_maps(filepath):
     return vr_map, vr_longs, vr_lats, br_map, br_longs, br_lats
 
 
-def get_CorTom_vr_map(filepath):
-    """
-    A function to load, read and process CorTom density output to provide HUXt V boundary conditions as lat-long maps.
-    Maps returned in native resolution, not HUXt resolution.
-    Maps are not transformed - make sure the CorTom maps are Carrington maps
-
-    Args:
-        filepath: String, The filepath for the CorTom.txt file
-    Returns:
-        vr_map: np.array, Solar wind speed as a Carrington longitude-latitude map. In km/s
-        vr_lats: np.array, The latitudes for the Vr map, in radians from trhe equator
-        vr_longs: np.array, The Carrington longitudes for the Vr map, in radians
-        phi: meshgrid og longitudes
-        theta: mesh grid of latitudes
-
-    """
-
-    cortom_data = readsav(filepath)
-    vr_map = copy.copy(cortom_data['velocity'])
-    vr_colat = copy.copy(cortom_data['colat_rad'])
-    vr_longs = copy.copy(cortom_data['lon_rad'])
-
-    vr_lats = (np.pi / 2 - vr_colat) * u.rad
-    # Flip so south pole at bottom
-    vr_lats = np.flipud(vr_lats)
-    vr_map = np.flipud(vr_map)
-
-    return vr_map * u.km / u.s, vr_longs * u.rad, vr_lats * u.rad
-
-
 def get_WSA_maps(filepath):
     """
     A function to load, read and process WSA FITS maps from the UK Met Office to provide HUXt boundary conditions as
@@ -761,7 +731,34 @@ def get_CorTom_vr_map(filepath):
         vr_map_out[nlat, :] = np.interp(vr_longs_out, vr_longs, vr_map[nlat, :], period=2 * np.pi)
 
     return vr_map_out * u.km / u.s, vr_longs_out * u.rad, vr_lats * u.rad
+    
 
+def get_CorTom_long_profile(filepath, lat=0.0 * u.deg):
+    """
+    Function to read and process CorTom (Coronal Tomography) output to provide a longitude profile at a specified
+    latitude of the solar wind speed for use as boundary conditions in HUXt.
+
+    Args:
+        filepath: A complete path to the CorTom data file
+        lat: Latitude at which to extract the longitudinal profile, measure up from equator. Float with units of deg
+
+    Returns:
+        vr_in: Solar wind speed as a function of Carrington longitude at solar equator.
+               Interpolated to the default HUXt longitudinal grid. np.array (NDIM = 1) in units of km/s
+    """
+    assert (lat >= -90.0 * u.deg)
+    assert (lat <= 90.0 * u.deg)
+    assert (os.path.isfile(filepath))
+
+    vr_map, lon_map, lat_map = get_CorTom_vr_map(filepath)
+
+    # Extract the value at the given latitude
+    vr = np.zeros(lon_map.shape)
+    for i in range(lon_map.size):
+        vr[i] = np.interp(lat.to(u.rad).value, lat_map.value, vr_map[:, i].value)
+
+    return vr * u.km / u.s
+    
 
 def getMetOfficeWSAandCone(startdate, enddate, datadir=''):
     """Downloads the most recent WSA output and coneCME files for a given time window from the Met Office system.
