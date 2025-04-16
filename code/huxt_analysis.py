@@ -9,6 +9,7 @@ import numpy as np
 import pandas as pd
 from numba import jit
 from scipy.optimize import minimize
+from scipy.interpolate import interp1d
 
 import huxt as H
 from huxt_inputs import get_omni
@@ -21,7 +22,7 @@ mpl.rc("legend", fontsize=16)
 
 @u.quantity_input(time=u.day)
 def plot(model, time, save=False, tag='', fighandle=np.nan, axhandle=np.nan, minimalplot=False, plotHCS=True,
-         annotateplot = True, trace_earth_connection =False):
+         annotateplot = True, trace_earth_connection =False, plot_rmax = None):
     """
     Make a contour plot on polar axis of the solar wind solution at a specific time.
     Args:
@@ -33,6 +34,9 @@ def plot(model, time, save=False, tag='', fighandle=np.nan, axhandle=np.nan, min
         axhandle: Axes handle for placing plot in existing axes.
         minimalplot: Boolean, if True removes colorbar, planets, spacecraft, and labels.
         plotHCS: Boolean, if True plots heliospheric current sheet coordinates
+        annotateplot: Boolean, whether to include text and legends
+        trace_earth_connection: boolean, whether to plot Earth-connected field. Slow.
+        plot_rmax: float (no units, but in rS). Limit outer boundary to help with field lines during CMEs
     Returns:
         fig: Figure handle.
         ax: Axes handle.
@@ -226,6 +230,9 @@ def plot(model, time, save=False, tag='', fighandle=np.nan, axhandle=np.nan, min
     if trace_earth_connection:
         plotlon, plotr, optimal_lon, optimal_t = find_Earth_connected_field_line(model, time)
         ax.plot(plotlon, plotr, 'w')
+        
+    if plot_rmax:
+        ax.set_rmax(plot_rmax)
 
     if save:
         cr_num = np.int32(model.cr_num.value)
@@ -236,7 +243,9 @@ def plot(model, time, save=False, tag='', fighandle=np.nan, axhandle=np.nan, min
     return fig, ax
 
 
-def animate(model, tag, duration=10, fps=20, plotHCS=True, trace_earth_connection=False, outputfilepath=''):
+def animate(model, tag, duration=10, fps=20, plotHCS=True, 
+            trace_earth_connection=False, outputfilepath='',
+            plot_rmax = None):
     """
     Animate the model solution, and save as an MP4.
     Args:
@@ -246,6 +255,7 @@ def animate(model, tag, duration=10, fps=20, plotHCS=True, trace_earth_connectio
         fps: frames per second
         plotHCS: Boolean flag on whether to plot the heliospheric current sheet location.
         outputfilepath: full path, including filename if output is to be saved anywhere other than huxt/figures
+        plot_rmax: float (no units, but in rS). Limit outer boundary to help with field lines during CMEs
     Returns:
         None
     """
@@ -270,7 +280,8 @@ def animate(model, tag, duration=10, fps=20, plotHCS=True, trace_earth_connectio
         # Get the time index closest to this fraction of movie duration
         i = np.int32((model.nt_out - 1) * frame / nframes)
         plot(model, model.time_out[i], fighandle=fig, axhandle=ax, 
-             plotHCS=plotHCS, trace_earth_connection=trace_earth_connection)
+             plotHCS=plotHCS, trace_earth_connection=trace_earth_connection,
+             plot_rmax = plot_rmax)
         return frame
     
     # Create a new figure
@@ -471,7 +482,7 @@ def get_observer_timeseries(model, observer='Earth', suppress_warning=False):
     elif model.frame == 'synodic':
         model_lon_earth = earth_pos.lon.value
 
-        # find the model coords of the given osberver as a function of time
+    # find the model coords of the given osberver as a function of time
     deltalon = obs_pos.lon_hae - earth_pos.lon_hae
     model_lon_obs = H._zerototwopi_(model_lon_earth + deltalon.value)
 
@@ -529,6 +540,97 @@ def get_observer_timeseries(model, observer='Earth', suppress_warning=False):
                                      'vsw': speed, 'bpol': bpol, 'mjd': mjd})
     return time_series
 
+
+def get_HUXt_at_position_HEEQ(model, target_mjd, target_r, target_lon_heeq):
+    
+    """
+    Extract and return HUXt fields at a generic set of locations. Assumes the 
+    object is in the lat plane of the model
+    
+    Args:
+        model: The HUXt model class for the solved run.
+        target_mjd: Time at which values should be extracted, as MJD
+        target_r: radial distance at which values should be extracted, in rS
+        target_lon_heeq: HEEQ lon at which values should be extracted, in radians
+        
+    Returns:
+       time_series: A pandas dataframe giving time series of solar wind speed, and if it exists in the HUXt
+                           solution, the magnetic field polarity, at the observer.
+    """
+    
+    tim_mjd = model.time_init.mjd + model.time_out.value/(24*60*60)
+    earth_pos = model.get_observer('Earth')
+    
+    # find the model coords of Earth as a function of time
+    if model.frame == 'sidereal':
+        e_deltalon = earth_pos.lon_hae - earth_pos.lon_hae[0]
+        model_lon_earth = H._zerototwopi_(earth_pos.lon.value + e_deltalon.value)
+    elif model.frame == 'synodic':
+        model_lon_earth = earth_pos.lon.value
+    
+    # find the model coords of the given osberver as a function of time
+    nearest_interpolator = interp1d(target_mjd, target_lon_heeq,  kind='nearest', fill_value=np.nan, bounds_error=False)
+    deltalon = nearest_interpolator(tim_mjd)
+    model_lon_obs = H._zerototwopi_(model_lon_earth + deltalon)   
+    
+    nearest_interpolator = interp1d(target_mjd, target_r, kind='nearest', fill_value=np.nan, bounds_error=False)
+    model_r_obs = nearest_interpolator(tim_mjd)
+    
+    
+    if model.nlon == 1:
+        print('Single longitude simulated. Extracting time series at Observer r')
+    
+    time = np.ones(model.nt_out) * np.nan
+    mjd = np.ones(model.nt_out) * np.nan
+    lon = np.ones(model.nt_out) * np.nan
+    rad = np.ones(model.nt_out) * np.nan
+    speed = np.ones(model.nt_out) * np.nan
+    bpol = np.ones(model.nt_out) * np.nan
+    
+    for t in range(model.nt_out):
+        time[t] = (model.time_init + model.time_out[t]).jd
+        mjd[t] = (model.time_init + model.time_out[t]).mjd
+    
+        # find the nearest longitude cell
+        model_lons = model.lon.value
+        if model.nlon == 1:
+            model_lons = np.array([model_lons])
+        id_lon = np.argmin(np.abs(model_lons - model_lon_obs[t]))
+    
+        # check whether the observer is within the model domain
+        if ((model_r_obs[t] < model.r[0].value) or
+                (model_r_obs[t] > model.r[-1].value) or
+                (
+                        (abs(model_lons[id_lon] - model_lon_obs[t]) > model.dlon.value) and
+                        (abs(model_lons[id_lon] + 2 * np.pi - model_lon_obs[t]) > model.dlon.value)
+                )
+        ):
+    
+            bpol[t] = np.nan
+            speed[t] = np.nan
+            print('Outside model domain')
+        else:
+            # find the nearest R coord
+            id_r = np.argmin(np.abs(model.r.value - model_r_obs[t]))
+            rad[t] = model.r[id_r].value
+            lon[t] = model_lon_obs[t]
+            # then interpolate the values in longitude
+            if model.nlon == 1:
+                speed[t] = model.v_grid[t, id_r, 0].value
+                if hasattr(model, 'b_grid'):
+                    bpol[t] = model.b_grid[t, id_r, 0]
+            else:
+                speed[t] = np.interp(model_lon_obs[t], model.lon.value, model.v_grid[t, id_r, :].value,
+                                     period=2 * np.pi)
+                if hasattr(model, 'b_grid'):
+                    bpol[t] = np.interp(model_lon_obs[t], model.lon.value, model.b_grid[t, id_r, :], period=2 * np.pi)
+    
+    time = pd.to_datetime(time, unit='D', origin='julian')
+    
+    time_series = pd.DataFrame(data={'time': time, 'r': rad, 'lon': lon, 
+                                     'vsw': speed, 'bpol': bpol, 'mjd': mjd})
+    
+    return time_series
 
 def plot_earth_timeseries(model, plot_omni=True):
     """
@@ -1307,3 +1409,88 @@ def find_Earth_connected_field_line(model, time):
     plotlon = np.append(plotlon, H._zerototwopi_(plotlon[-1] + dlon))
 
     return plotlon, (plotr*u.km).to(u.solRad).value, optimal_lon, optimal_t
+
+
+
+def get_HUXt_at_position_HEEQ(model, target_mjd, target_r, target_lon_heeq):
+
+    tim_mjd = model.time_init.mjd + model.time_out.value / (24 * 60 * 60)
+
+    earth_pos = model.get_observer('Earth')
+
+    # find the model coords of Earth as a function of time
+    if model.frame == 'sidereal':
+        e_deltalon = earth_pos.lon_hae - earth_pos.lon_hae[0]
+        model_lon_earth = H._zerototwopi_(earth_pos.lon.value + e_deltalon.value)
+
+    elif model.frame == 'synodic':
+        model_lon_earth = earth_pos.lon.value
+
+    # find the model coords of the given osberver as a function of time
+    nearest_interpolator = interp1d(target_mjd, target_lon_heeq, kind='nearest', fill_value=np.nan, bounds_error=False)
+    deltalon = nearest_interpolator(tim_mjd)
+    model_lon_obs = H._zerototwopi_(model_lon_earth + deltalon)
+    nearest_interpolator = interp1d(target_mjd, target_r, kind='nearest', fill_value=np.nan, bounds_error=False)
+    model_r_obs = nearest_interpolator(tim_mjd)
+
+    if model.nlon == 1:
+        print('Single longitude simulated. Extracting time series at Observer r')
+
+    time = np.ones(model.nt_out) * np.nan
+    mjd = np.ones(model.nt_out) * np.nan
+    lon = np.ones(model.nt_out) * np.nan
+    rad = np.ones(model.nt_out) * np.nan
+    speed = np.ones(model.nt_out) * np.nan
+    bpol = np.ones(model.nt_out) * np.nan
+
+    for t in range(model.nt_out):
+
+        time[t] = (model.time_init + model.time_out[t]).jd
+        mjd[t] = (model.time_init + model.time_out[t]).mjd
+
+        # find the nearest longitude cell
+        model_lons = model.lon.value
+
+        if model.nlon == 1:
+            model_lons = np.array([model_lons])
+
+        id_lon = np.argmin(np.abs(model_lons - model_lon_obs[t]))
+
+        # check whether the observer is within the model domain
+
+        if ((model_r_obs[t] < model.r[0].value) or (model_r_obs[t] > model.r[-1].value) or
+                ((abs(model_lons[id_lon] - model_lon_obs[t]) > model.dlon.value) and
+                 (abs(model_lons[id_lon] + 2 * np.pi - model_lon_obs[t]) > model.dlon.value))):
+
+            bpol[t] = np.nan
+            speed[t] = np.nan
+            print('Outside model domain')
+
+        else:
+
+            # find the nearest R coord
+            id_r = np.argmin(np.abs(model.r.value - model_r_obs[t]))
+            rad[t] = model.r[id_r].value
+            lon[t] = model_lon_obs[t]
+
+            # then interpolate the values in longitude
+            if model.nlon == 1:
+                speed[t] = model.v_grid[t, id_r, 0].value
+
+                if hasattr(model, 'b_grid'):
+                    bpol[t] = model.b_grid[t, id_r, 0]
+
+            else:
+                speed[t] = np.interp(model_lon_obs[t], model.lon.value, model.v_grid[t, id_r, :].value, period=2*np.pi)
+
+                if hasattr(model, 'b_grid'):
+                    bpol[t] = np.interp(model_lon_obs[t], model.lon.value, model.b_grid[t, id_r, :], period=2*np.pi)
+
+    time = pd.to_datetime(time, unit='D', origin='julian')
+
+    time_series = pd.DataFrame(data={'time': time, 'r': rad, 'lon': lon, 'vsw': speed, 'bpol': bpol, 'mjd': mjd})
+
+    return time_series
+
+
+

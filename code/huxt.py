@@ -716,7 +716,7 @@ class HUXt:
         else:
             self.cr_num = cr_num * u.dimensionless_unscaled
 
-            # Check cr_lon_init, make sure in 0-2pi range.
+        # Check cr_lon_init, make sure in 0-2pi range.
         self.cr_lon_init = cr_lon_init.to('rad')
         if (self.cr_lon_init < 0.0 * u.rad) | (self.cr_lon_init > self.twopi * u.rad):
             print("Warning: cr_lon_init={}, outside expected range. Rectifying to 0-2pi.".format(self.cr_lon_init))
