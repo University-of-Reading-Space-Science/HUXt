@@ -10,6 +10,9 @@ from numba import jit
 from packaging import version
 from sunpy.coordinates import sun
 
+from pathlib import Path
+import importlib.resources as pkg_resources
+
 # check the numpy version, as this can cause all manner of difficult-to-diagnose problems
 assert (version.parse(np.version.version) >= version.parse("1.18"))
 
@@ -1498,53 +1501,25 @@ def time_grid(simtime, dt_scale):
                       'dt_out': dt_out, 'nt_out': nt_out, 'time_out': time_out}
     return time_grid_dict
 
-
 def _setup_dirs_():
     """
     Function to pull out the directories of boundary conditions, ephemeris, and to save figures and output data.
     Returns:
         dirs: A dictionary of full paths to HUXt directories of code, data, figures, and relevant files.
     """
+    dirs = {}
 
-    # Get path of huxt.py, and work out root dir of HUXt repository
-    cwd = os.path.abspath(os.path.dirname(__file__))
-    root = os.path.dirname(cwd)
+    # Root package directory (e.g., site-packages/huxt/)
+    root = pkg_resources.files("huxt")
 
-    # Config file must be saved in HUXt/code
-    config_file = os.path.join(root, 'configs/config.dat')
+    # Access data subdirectories
+    dirs["boundary_conditions"] = root.joinpath("data/boundary_conditions")
+    dirs["ephemeris"] = root.joinpath("data/ephemeris")
+    dirs["figures"] = root.joinpath("figures")
+    dirs["output"] = Path.cwd() / "huxt_output"  # runtime output location
 
-    if os.path.isfile(config_file):
-
-        with open(config_file, 'r') as file:
-            lines = file.read().splitlines()
-            dirs = {}
-            for line in lines:
-                line_key = line.split(',')[0]
-                line_val = line.split(',')[1]
-                
-                #convert the path contained in the line_val to the current OS version
-                components = line_val.split('/')
-
-                # Join the components using os.path.join
-                new_path = os.path.join(*components)
-                
-                dirs[line_key] = os.path.join(root, new_path)
-
-        dirs['root'] = root
-
-        # Just check the directories exist.
-        for key, val in dirs.items():
-            if key == 'ephemeris':
-                if not os.path.isfile(val):
-                    raise FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT), val)
-            else:
-                if not os.path.isdir(val):
-                    raise NotADirectoryError(errno.ENOENT, os.strerror(errno.ENOENT), val)
-    else:
-        raise FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT), config_file)
-
-    return dirs
-
+    # Make sure output dir exists
+    dirs["output"].mkdir(parents=True, exist_ok=True)
 
 @jit(nopython=True)
 def _zerototwopi_(angles):
