@@ -1,0 +1,6 @@
+boundary_conditions,data/boundary_conditions
+ephemeris,data/ephemeris/ephemeris.hdf5
+HUXt_data,data/HUXt
+HUXt_figures,figures
+test_data,data/test_data
+example_inputs,data/example_inputs
