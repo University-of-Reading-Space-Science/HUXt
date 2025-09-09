@@ -16,13 +16,16 @@ from pyhdf.SD import SD, SDC
 import h5py
 from scipy.io import netcdf, readsav
 from scipy import interpolate
+import sunpy
 from sunpy.coordinates import sun
 from sunpy.net import Fido
 from sunpy.net import attrs
 from sunpy.timeseries import TimeSeries
+from sunpy.coordinates import get_horizons_coord
 import requests
 import pandas as pd
 from dtaidistance import dtw
+
 
 import huxt as H
 
@@ -779,7 +782,7 @@ def getMetOfficeWSAandCone(startdate, enddate, datadir=''):
     
     """
     version = 'v1'
-    api_key = os.getenv("API_KEY")
+    api_key = os.getenv("UKMO_API")
     url_base = "https://gateway.api-management.metoffice.cloud/swx_swimmr_s4/1.0"
 
     startdatestr = startdate.strftime("%Y-%m-%dT%H:%M:%S")
@@ -1951,3 +1954,190 @@ def remove_ICMEs(data_df, icmes, interpolate=True, icme_buffer=0.1 * u.day, inte
 
                     data.loc[mask_icme, param] = vseries
     return data
+
+
+def get_earth_lat(dt):
+    """
+    A function to return Earth latitude for a given date, in radians
+
+    Parameters
+    ----------
+    dt : datetime
+
+    Returns
+    -------
+    E_lat: Earth latitude, with astropy units of radians
+
+    """
+
+    cr, cr_lon_init = datetime2huxtinputs(dt)
+    # Use the HUXt ephemeris data to get Earth lat over the CR
+    # ========================================================
+    dummymodel = H.HUXt(v_boundary=np.ones(128)*400*(u.km/u.s), simtime=0.1*u.day, 
+                         cr_num=cr,cr_lon_init=cr_lon_init, lon_out=0.0*u.deg)
+    # retrieve a bodies position at each model timestep:
+    earth = dummymodel.get_observer('earth')
+    # get average Earth lat
+    E_lat = np.nanmean(earth.lat_c)
+    
+    return E_lat
+
+
+def huxt_td_input_from_WSA_runs(datadir, start_dt, stop_dt, latitude, deacc=True,
+                                input_res_days = 0.1, nlon = 128,
+                                format_template = 'models%2Fenlil%2FYYYY%2FMM%2FDD%2FHH%2Fwsa.gong.fits'):
+    
+    
+    """
+    produces intput data for a time-dependent HUXt run from a collections of 
+    pre-downloaded WSA solutions.
+
+    Parameters
+    ----------
+        datadir: string, path of WSA data files
+        start_dt: datetime, start of the window to query
+        stop_dt: datetime, end of the window to query
+        latitude: float*u.rad, latitude at which to extract WSA V and Br
+        deacc: bool, deaccelerate WSA speeds from 1 AU to 0.1 AU
+        input_res_days: float, resolution (in days) at which HUXt input is generated
+        nlon: int, number of longitude grid cells (should match HUXt model)
+        format_template: str, file format with YYYY, MM, DD, HH, mm and ss used to identify the timestamp
+    
+    Returns:
+        vlongs: 2d array, solar wind speed as fucntion of lon and time
+        brlongs, 2d array, Br as a function of lon and time
+        lon, 1d array, units of rad, longitudes
+        mjds, 1d array, MJD
+        times, 1 array, datetimes
+
+    """
+    
+    def parse_format(filename, format_template):
+        """
+        Attempt to extract a datetime from filename using the given format_template.
+        Returns a datetime object or None.
+        """
+        
+        PLACEHOLDERS = {
+            "YYYY": 4,
+            "MM": 2,
+            "DD": 2,
+            "HH": 2,
+            "mm": 2,
+            "SS": 2
+        }
+        
+        
+        idx = 0
+        date_parts = {}
+        i = 0
+  
+        while i < len(format_template):
+            matched = False
+            for key, length in PLACEHOLDERS.items():
+                if format_template[i:i+len(key)] == key:
+                    # Extract the part from filename
+                    date_str = filename[idx:idx+length]
+                    if not date_str.isdigit():
+                        return None  # Invalid number, fail early
+                    date_parts[key] = int(date_str)
+                    i += len(key)
+                    idx += length
+                    matched = True
+                    break
+            if not matched:
+                # Literal character — must match exactly
+                if i >= len(format_template) or idx >= len(filename):
+                    return None
+                if format_template[i] != filename[idx]:
+                    return None
+                i += 1
+                idx += 1
+  
+        try:
+            return datetime.datetime(
+                date_parts.get("YYYY", 1900),
+                date_parts.get("MM", 1),
+                date_parts.get("DD", 1),
+                date_parts.get("HH", 0),
+                date_parts.get("mm", 0),
+                date_parts.get("SS", 0)
+            )
+        except ValueError:
+            return None
+
+    def get_files_in_date_range(datadir, start_dt, end_dt, format_template):
+        files_with_dates = []
+  
+        for filename in os.listdir(datadir):  
+            file_date = parse_format(filename, format_template)
+            if file_date and start_dt <= file_date <= end_dt:
+                files_with_dates.append((file_date, os.path.join(datadir, filename)))
+  
+        files_with_dates.sort(key=lambda x: x[0])
+        return files_with_dates
+
+
+    #get all the files in a given directory that are within the data range
+    files_with_dates = get_files_in_date_range(datadir, start_dt, stop_dt, format_template)
+
+    for file_date, filepath in files_with_dates:
+         print(f"{file_date}: {filepath}")
+    
+    
+    #read in each file and extract the speeds and Br at a given lat
+    vlong_list = []
+    brlong_list = []
+    mjd_list = []
+    
+    #get the required longitude grid
+    dlon = 2*np.pi / nlon
+    lon_min_full = dlon / 2.0
+    lon_max_full = 2*np.pi - (dlon / 2.0)
+    lon, dlon = np.linspace(lon_min_full, lon_max_full, nlon, retstep=True)
+    lon = lon*u.rad
+    
+    
+    for filenum in range(0, len(files_with_dates)):
+    
+        filepath = files_with_dates[filenum][1]
+        dt = files_with_dates[filenum][0]
+        
+        #get the longitude grid of the map
+        if os.path.exists(filepath):
+            vr_map, vr_longs, vr_lats, br_map, br_longs, br_lats, cr_fits \
+                = get_WSA_maps(filepath)
+                
+        #get the Earth lat slice
+        v_in = get_WSA_long_profile(filepath, lat=latitude)
+        if deacc:
+            # deaccelerate them?
+            v_in, lon_temp = map_v_inwards(v_in, 215 * u.solRad, vr_longs,  21.5 * u.solRad)
+        br_in = get_WSA_br_long_profile(filepath, lat=latitude)
+         
+        #store the data, on the required longitude grid
+        vlong_list.append(np.interp(lon, vr_longs, v_in))
+        brlong_list.append(np.interp(lon, br_longs, br_in))
+        mjd_list.append(Time(dt).mjd)
+        
+        
+    #convert to arrays    
+    vlongs_1d = np.array(vlong_list).T
+    brlongs_1d = np.array(brlong_list).T
+    mjds_1d = np.array(mjd_list)
+    
+    n_longs = len(vlongs_1d[:,0])
+    
+    
+    #increase the time resolution of the vlongs for the time-dependent runs
+    mjds = np.arange(mjds_1d[0], mjds_1d[-1], input_res_days)
+    times = Time(mjds + 2400000.5, format = 'jd').datetime
+    vlongs = np.ones((n_longs, len(mjds)))
+    brlongs = np.ones((n_longs, len(mjds)))
+    for n in range(0, n_longs):
+        vlongs[n,:] = np.interp(mjds, mjds_1d, vlongs_1d[n,:])
+        brlongs[n,:] = np.interp(mjds, mjds_1d, brlongs_1d[n,:])
+    
+    return vlongs, brlongs, lon, mjds, times
+
+

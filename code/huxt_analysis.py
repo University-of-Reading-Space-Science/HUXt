@@ -1,6 +1,7 @@
 import os
 
 import astropy.units as u
+from astropy.time import Time
 import matplotlib.pyplot as plt
 import matplotlib as mpl
 import datetime
@@ -9,9 +10,16 @@ import numpy as np
 import pandas as pd
 from numba import jit
 from scipy.optimize import minimize
+from scipy.interpolate import interp1d
+import sunpy
+from sunpy.coordinates import sun
+from sunpy.net import Fido
+from sunpy.net import attrs
+from sunpy.timeseries import TimeSeries
+from sunpy.coordinates import get_horizons_coord
 
 import huxt as H
-from huxt_inputs import get_omni
+import huxt_inputs as Hin
 
 mpl.rc("axes", labelsize=16)
 mpl.rc("ytick", labelsize=16)
@@ -21,7 +29,7 @@ mpl.rc("legend", fontsize=16)
 
 @u.quantity_input(time=u.day)
 def plot(model, time, save=False, tag='', fighandle=np.nan, axhandle=np.nan, minimalplot=False, plotHCS=True,
-         annotateplot = True, trace_earth_connection =False):
+         annotateplot = True, trace_earth_connection =False, plot_rmax = None):
     """
     Make a contour plot on polar axis of the solar wind solution at a specific time.
     Args:
@@ -33,6 +41,9 @@ def plot(model, time, save=False, tag='', fighandle=np.nan, axhandle=np.nan, min
         axhandle: Axes handle for placing plot in existing axes.
         minimalplot: Boolean, if True removes colorbar, planets, spacecraft, and labels.
         plotHCS: Boolean, if True plots heliospheric current sheet coordinates
+        annotateplot: Boolean, whether to include text and legends
+        trace_earth_connection: boolean, whether to plot Earth-connected field. Slow.
+        plot_rmax: float (no units, but in rS). Limit outer boundary to help with field lines during CMEs
     Returns:
         fig: Figure handle.
         ax: Axes handle.
@@ -226,6 +237,9 @@ def plot(model, time, save=False, tag='', fighandle=np.nan, axhandle=np.nan, min
     if trace_earth_connection:
         plotlon, plotr, optimal_lon, optimal_t = find_Earth_connected_field_line(model, time)
         ax.plot(plotlon, plotr, 'w')
+        
+    if plot_rmax:
+        ax.set_rmax(plot_rmax)
 
     if save:
         cr_num = np.int32(model.cr_num.value)
@@ -236,7 +250,9 @@ def plot(model, time, save=False, tag='', fighandle=np.nan, axhandle=np.nan, min
     return fig, ax
 
 
-def animate(model, tag, duration=10, fps=20, plotHCS=True, trace_earth_connection=False, outputfilepath=''):
+def animate(model, tag, duration=10, fps=20, plotHCS=True, 
+            trace_earth_connection=False, outputfilepath='',
+            plot_rmax = None):
     """
     Animate the model solution, and save as an MP4.
     Args:
@@ -246,6 +262,7 @@ def animate(model, tag, duration=10, fps=20, plotHCS=True, trace_earth_connectio
         fps: frames per second
         plotHCS: Boolean flag on whether to plot the heliospheric current sheet location.
         outputfilepath: full path, including filename if output is to be saved anywhere other than huxt/figures
+        plot_rmax: float (no units, but in rS). Limit outer boundary to help with field lines during CMEs
     Returns:
         None
     """
@@ -270,7 +287,8 @@ def animate(model, tag, duration=10, fps=20, plotHCS=True, trace_earth_connectio
         # Get the time index closest to this fraction of movie duration
         i = np.int32((model.nt_out - 1) * frame / nframes)
         plot(model, model.time_out[i], fighandle=fig, axhandle=ax, 
-             plotHCS=plotHCS, trace_earth_connection=trace_earth_connection)
+             plotHCS=plotHCS, trace_earth_connection=trace_earth_connection,
+             plot_rmax = plot_rmax)
         return frame
     
     # Create a new figure
@@ -471,7 +489,7 @@ def get_observer_timeseries(model, observer='Earth', suppress_warning=False):
     elif model.frame == 'synodic':
         model_lon_earth = earth_pos.lon.value
 
-        # find the model coords of the given osberver as a function of time
+    # find the model coords of the given osberver as a function of time
     deltalon = obs_pos.lon_hae - earth_pos.lon_hae
     model_lon_obs = H._zerototwopi_(model_lon_earth + deltalon.value)
 
@@ -530,6 +548,115 @@ def get_observer_timeseries(model, observer='Earth', suppress_warning=False):
     return time_series
 
 
+def get_HUXt_at_position_HEEQ(model, target_mjd, target_r, target_lon_heeq):
+    
+    """
+    Extract and return HUXt fields at a generic set of locations. Assumes the 
+    object is in the lat plane of the model
+    
+    Args:
+        model: The HUXt model class for the solved run.
+        target_mjd: Time at which values should be extracted, as MJD
+        target_r: radial distance at which values should be extracted, in rS
+        target_lon_heeq: HEEQ lon at which values should be extracted, in radians
+        
+    Returns:
+       time_series: A pandas dataframe giving time series of solar wind speed, and if it exists in the HUXt
+                           solution, the magnetic field polarity, at the observer.
+    """
+    
+    tim_mjd = model.time_init.mjd + model.time_out.value/(24*60*60)
+    earth_pos = model.get_observer('Earth')
+    
+    # find the model coords of Earth as a function of time
+    if model.frame == 'sidereal':
+        e_deltalon = earth_pos.lon_hae - earth_pos.lon_hae[0]
+        model_lon_earth = H._zerototwopi_(earth_pos.lon.value + e_deltalon.value)
+    elif model.frame == 'synodic':
+        model_lon_earth = earth_pos.lon.value
+    
+    # # find the model coords of the given osberver as a function of time
+    # nearest_interpolator = interp1d(target_mjd, target_lon_heeq,  kind='nearest', fill_value=np.nan, bounds_error=False)
+    # deltalon = nearest_interpolator(tim_mjd)
+    # model_lon_obs = H._zerototwopi_(model_lon_earth + deltalon)   
+    
+    # nearest_interpolator = interp1d(target_mjd, target_r, kind='nearest', fill_value=np.nan, bounds_error=False)
+    # model_r_obs = nearest_interpolator(tim_mjd)
+    
+    
+    if model.nlon == 1:
+        print('Single longitude simulated. Extracting time series at Observer r')
+        
+    
+    
+    #find only the time stamps that are within the model run
+    nt = len(target_mjd)
+
+    time = np.ones(nt) * np.nan
+    lon = np.ones(nt) * np.nan
+    rad = np.ones(nt) * np.nan
+    speed = np.ones(nt) * np.nan
+    bpol = np.ones(nt) * np.nan
+    
+    for t in range(0,nt):
+
+        
+        #check the required time is within the model run
+        if(( target_mjd[t]>=tim_mjd[0]) & (target_mjd[t]<=tim_mjd[-1])):
+            
+            #find the nearest time index in the HUXt run
+            id_t = np.argmin(np.abs(tim_mjd - target_mjd[t]))
+            
+            #compute the HUXT long associated with the given HEEQ lon
+            model_lon_obs = H._zerototwopi_(model_lon_earth[id_t] + target_lon_heeq[t]) 
+    
+            # find the nearest longitude cell
+            model_lons = model.lon.value
+            if model.nlon == 1:
+                model_lons = np.array([model_lons])
+                
+            id_lon = np.argmin(np.abs(model_lons - model_lon_obs))
+            
+        
+            # check whether the observer radius is within the model domain
+            if ((target_r[t] < model.r[0].value) or
+                    (target_r[t] > model.r[-1].value) or
+                    (
+                            (abs(model_lons[id_lon] - model_lon_obs) > model.dlon.value) and
+                            (abs(model_lons[id_lon] + 2 * np.pi - model_lon_obs) > model.dlon.value)
+                    )
+            ):
+        
+                bpol[t] = np.nan
+                speed[t] = np.nan
+                print('r or lon outside model domain')
+            else:
+                # find the nearest R coord
+                id_r = np.argmin(np.abs(model.r.value - target_r[t]))
+                rad[t] = model.r[id_r].value
+                lon[t] = model_lons[id_lon]
+                # then interpolate the values in longitude
+                if model.nlon == 1:
+                    speed[t] = model.v_grid[id_t, id_r, 0].value
+                    if hasattr(model, 'b_grid'):
+                        bpol[t] = model.b_grid[id_t, id_r, 0]
+                else:
+                    speed[t] = np.interp(model_lon_obs, model.lon.value, 
+                                         model.v_grid[id_t, id_r, :].value,
+                                         period=2 * np.pi)
+                    if hasattr(model, 'b_grid'):
+                        bpol[t] = np.interp(model_lon_obs, model.lon.value, 
+                                            model.b_grid[id_t, id_r, :], period=2 * np.pi)
+        else:
+            print('time outside model domain')
+    base = pd.Timestamp("1858-11-17 00:00:00")
+    datetimes = base + pd.to_timedelta(target_mjd, unit='D')
+
+    time_series = pd.DataFrame(data={'time': datetimes, 'r': rad, 'lon': lon, 
+                                     'vsw': speed, 'bpol': bpol, 'mjd': target_mjd})
+    
+    return time_series
+
 def plot_earth_timeseries(model, plot_omni=True):
     """
     A function to plot the HUXt Earth time series. With option to download and plot OMNI data.
@@ -562,7 +689,7 @@ def plot_earth_timeseries(model, plot_omni=True):
 
     if plot_omni:
         # grab the omni data
-        data = get_omni(starttime, endtime)
+        data = Hin.get_omni(starttime, endtime)
         # plot the period of interest
         mask = (data['datetime'] >= starttime) & (data['datetime'] <= endtime)
         plotdata = data[mask]
@@ -1307,3 +1434,128 @@ def find_Earth_connected_field_line(model, time):
     plotlon = np.append(plotlon, H._zerototwopi_(plotlon[-1] + dlon))
 
     return plotlon, (plotr*u.km).to(u.solRad).value, optimal_lon, optimal_t
+
+def run_WSA_HUXt_td_wedge_about_observer(start_dt, stop_dt, vel_path, 
+                                     vel_format_template, 
+                                     obj = 'Earth', 
+                                     deacc=True, dlat = 2*u.deg):
+    """
+    
+
+    Parameters
+    ----------
+    start_dt : datetime
+        Run start date
+    stop_dt : datetime
+        Run end date
+    vel_path : string
+        path to file directory of WSA solutions
+    vel_format_template : string
+        file format with YYYY, MM, DD, HH, mm and ss used to identify the timestamp
+    obj : string, optional
+        Name of object for JPL horizons. The default is 'Earth'.
+    deacc : BOOL, optional
+        Whether to deacccelerate the WSA speeds from 215 to 21.5 rS. The default is True.
+    dlat : float, with units of deg, optional
+        latitudinal spacing of HUXt runs. The default is 2*u.deg.
+
+    Returns
+    -------
+    huxt_ts : pandas dataframe
+        Time series of HUXt speeds and magnetic field polarities
+
+    """
+    
+    r_min = 21.5*u.solRad
+    simtime = ((stop_dt - start_dt).days)*u.day
+
+    
+    if obj == 'Earth':
+        obj = 'geocenter'
+    
+    coord = get_horizons_coord(obj, {'start': Time(start_dt + datetime.timedelta(days=2/24)), 
+                                     'stop': Time(stop_dt - datetime.timedelta(days=2/24)),
+                                     'step': '1H'})
+    smjd = Time(start_dt).mjd
+    fmjd = Time(stop_dt).mjd
+    
+    # make a dataframe from this
+    coords = pd.DataFrame()
+    coords['r_AU'] = coord.radius.value
+    coords['lon_heeq'] = H._zerototwopi_(coord.lon.value * np.pi/180)
+    coords['lat_heeq'] = coord.lat.value * np.pi/180
+    coords['mjd'] = np.linspace(smjd, fmjd, len(coords))
+    coords['datetime'] = Time(coords['mjd'] + 2400000.5, format='jd').to_datetime()
+    
+    # convert to Carrington longitude for plotting purposes
+    Carrington_coord = coord.transform_to(sunpy.coordinates.HeliographicCarrington(observer="self"))
+    coords['lon_carr'] = Carrington_coord.lon.value * np.pi/180
+    
+    
+    # get the required lat range for the HUXt runs
+    obj_max_lat = np.nanmax(coords['lat_heeq'])*180/np.pi
+    obj_min_lat = np.nanmin(coords['lat_heeq'])*180/np.pi
+    
+    obj_min_lon = 0
+    obj_max_lon = 2*np.pi * simtime.value /365.25
+    
+    obj_min_r = np.min(coords['r_AU']) * 215
+    obj_max_r = np.max(coords['r_AU']) * 215  
+    
+    assert(obj_min_r >= r_min.to(u.solRad).value)
+        
+        
+    minlat = np.floor(obj_min_lat)
+    maxlat = np.ceil(obj_max_lat)
+    lat_list = np.arange(minlat, maxlat + 0.0001, dlat.to(u.deg).value)
+    
+    #run HUXt at each latitude and extract the values at the object's long and r
+    huxt_cuts = []
+    for lat in lat_list:
+        print('Runnig HUXt at lat = ' + str(lat) + ' degrees')
+        thislat = (lat*np.pi/180)*u.rad
+        #create the HUXt input from the WSA files
+        vlongs, brlongs, lon, mjds, times = Hin.huxt_td_input_from_WSA_runs(vel_path, start_dt, stop_dt,
+                                                                        latitude= thislat, deacc=deacc,
+                                                                        input_res_days = 0.1, 
+                                                                        format_template = vel_format_template)
+        
+        #is the inner boundary inside 21.5?
+        #if r_min < 21.5*u.solRad:
+            #add backmap info
+         
+     
+    
+        #set up the model, with (optional) time-dependent bpol boundary conditions
+        model =  Hin.set_time_dependent_boundary(vlongs, mjds, start_dt, simtime, 
+                                                lon_start=obj_min_lon*u.rad, 
+                                                lon_stop=obj_max_lon*u.rad,
+                                                r_min=r_min, r_max=obj_max_r*u.solRad,
+                                                bgrid_Carr = brlongs, 
+                                                dt_scale=4, latitude=thislat,
+                                                frame = 'sidereal')
+        model.solve([])
+        
+        #get values at Earth long 
+        cut = get_HUXt_at_position_HEEQ(model, coords['mjd'], 
+                                           coords['r_AU']*215, 
+                                           coords['lon_heeq'])
+        #cut = HA.get_observer_timeseries(model)
+        huxt_cuts.append(cut)
+        
+    
+    #now interpolate the extracted series to the object's latitude
+    #copy the basic info across
+    huxtvals = huxt_cuts[0]
+    huxt_ts = huxtvals[['time', 'mjd', 'r']].copy()
+    
+    # loop through each time step and interpolate in lat
+    for t in range(len(huxtvals)):
+        #get this lat
+        lat_t = np.interp(huxtvals.loc[t,'mjd'], coords['mjd'], coords['lat_heeq'])
+        b_lat_t = [df.loc[t, 'bpol'] if t in df.index else None for df in huxt_cuts]
+        huxt_ts.loc[t, 'bpol'] = np.interp(lat_t, np.deg2rad(lat_list), b_lat_t)
+        v_lat_t = [df.loc[t, 'vsw'] if t in df.index else None for df in huxt_cuts]
+        huxt_ts.loc[t, 'vsw'] = np.interp(lat_t, np.deg2rad(lat_list), v_lat_t)
+        
+    return huxt_ts
