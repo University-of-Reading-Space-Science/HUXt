@@ -77,7 +77,7 @@ def plot(model, time, save=False, tag='', fighandle=np.nan, axhandle=np.nan, min
 
     # Insert into full array
     if lon_arr.size != model.lon.size:
-        v = np.zeros((model.nr, nlon)) * np.NaN
+        v = np.zeros((model.nr, nlon)) * np.nan
         if model.lon.size != 1:
             for i, lo in enumerate(model.lon):
                 id_match = np.argwhere(lon_arr == lo)[0][0]
@@ -717,7 +717,7 @@ def plot_earth_timeseries(model, plot_omni=True):
 
 
 @u.quantity_input(time=u.day)
-def plot3d_radial_lat_slice(model3d, time, lon=np.NaN * u.deg, save=False, tag='', fighandle=np.nan, axhandle=np.nan):
+def plot3d_radial_lat_slice(model3d, time, lon=np.nan * u.deg, save=False, tag='', fighandle=np.nan, axhandle=np.nan):
     """
     Make a contour plot on polar axis of a radial-latitudinal plane of the solar wind solution at a fixed time and
     longitude.
@@ -974,7 +974,7 @@ def plot_bpol(model, time, save=False, tag='', fighandle=np.nan, axhandle=np.nan
 
     # Insert into full array
     if lon_arr.size != model.lon.size:
-        v = np.zeros((model.nr, nlon)) * np.NaN
+        v = np.zeros((model.nr, nlon)) * np.nan
         if model.lon.size != 1:
             for i, lo in enumerate(model.lon):
                 id_match = np.argwhere(lon_arr == lo)[0][0]

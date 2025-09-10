@@ -366,8 +366,8 @@ class ConeCME:
                 # Handle case for HUXt run on multiple longitudes first
                 if len(lon_cme) > 1:
                     # Lookup cme front radial coord along body longitude
-                    r_interp = np.interp(arrive_lon[i], lon_cme, r_cme, left=np.NaN, right=np.NaN)
-                    v_interp = np.interp(arrive_lon[i], lon_cme, v_cme, left=np.NaN, right=np.NaN)
+                    r_interp = np.interp(arrive_lon[i], lon_cme, r_cme, left=np.nan, right=np.nan)
+                    v_interp = np.interp(arrive_lon[i], lon_cme, v_cme, left=np.nan, right=np.nan)
                     if np.isfinite(r_interp):
                         t_front.append(coord['time'].jd)
                         r_front.append(r_interp)
@@ -408,10 +408,10 @@ class ConeCME:
         if not hit:
             hit_id = False
             t_arrive = Time("0000-01-01T00:00:00")
-            t_transit = np.NaN * u.d
-            hit_lon = np.NaN * u.deg
-            hit_rad = np.NaN * u.solRad
-            hit_v = np.NaN * u.km / u.s
+            t_transit = np.nan * u.d
+            hit_lon = np.nan * u.deg
+            hit_rad = np.nan * u.solRad
+            hit_v = np.nan * u.km / u.s
 
         arrival_stats = {'hit': hit, 'hit_id': hit_id, 't_arrive': t_arrive, 't_transit': t_transit,
                          'lon': hit_lon, 'r': hit_rad, 'v': hit_v}
@@ -478,8 +478,8 @@ class ConeCME:
                 # Handle case for HUXt run on multiple longitudes first
                 if len(lon_cme) > 1:
                     # Lookup cme front radial coord along body longitude
-                    r_interp = np.interp(arrive_lon[i], lon_cme, r_cme, left=np.NaN, right=np.NaN)
-                    v_interp = np.interp(arrive_lon[i], lon_cme, v_cme, left=np.NaN, right=np.NaN)
+                    r_interp = np.interp(arrive_lon[i], lon_cme, r_cme, left=np.nan, right=np.nan)
+                    v_interp = np.interp(arrive_lon[i], lon_cme, v_cme, left=np.nan, right=np.nan)
                     if np.isfinite(r_interp):
                         t_front.append(coord['time'].jd)
                         r_front.append(r_interp)
@@ -520,10 +520,10 @@ class ConeCME:
         if not hit:
             hit_id = False
             t_arrive = Time("0000-01-01T00:00:00")
-            t_transit = np.NaN * u.d
-            hit_lon = np.NaN * u.deg
-            hit_rad = np.NaN * u.solRad
-            hit_v = np.NaN * u.km / u.s
+            t_transit = np.nan * u.d
+            hit_lon = np.nan * u.deg
+            hit_rad = np.nan * u.solRad
+            hit_v = np.nan * u.km / u.s
 
         arrival_stats = {'hit': hit, 'hit_id': hit_id, 't_arrive': t_arrive, 't_transit': t_transit,
                          'lon': hit_lon, 'r': hit_rad, 'v': hit_v}
@@ -580,15 +580,15 @@ class HUXt:
     @u.quantity_input(simtime=u.day)
     @u.quantity_input(cr_lon_init=u.deg)
     def __init__(self,
-                 v_boundary=np.NaN * (u.km / u.s),
+                 v_boundary=np.nan * (u.km / u.s),
                  b_boundary=np.nan,
-                 cr_num=np.NaN, cr_lon_init=360.0 * u.deg, latitude=0 * u.deg,
+                 cr_num=np.nan, cr_lon_init=360.0 * u.deg, latitude=0 * u.deg,
                  r_min=30 * u.solRad, r_max=240 * u.solRad,
-                 lon_out=np.NaN * u.rad, lon_start=np.NaN * u.rad, lon_stop=np.NaN * u.rad,
+                 lon_out=np.nan * u.rad, lon_start=np.nan * u.rad, lon_stop=np.nan * u.rad,
                  simtime=5.0 * u.day, dt_scale=1.0, frame='synodic',
                  input_v_ts=np.nan * (u.km / u.s),
                  input_b_ts=np.nan,
-                 input_iscme_ts=np.NaN,
+                 input_iscme_ts=np.nan,
                  input_t_ts=np.nan * u.s,
                  track_cmes=True):
         """
@@ -763,11 +763,11 @@ class HUXt:
                                      self.rotation_period.to(u.s).value)
 
         # Process inputs for time dependent boundary conditions, e.g., from in-situ data
-        self.input_b_ts = np.NaN
+        self.input_b_ts = np.nan
         self.input_b_ts_flag = False
-        self.input_iscme_ts = np.NaN
+        self.input_iscme_ts = np.nan
         self.input_iscme_ts_flag = False
-        self.input_v_ts = np.NaN * (u.km / u.s)
+        self.input_v_ts = np.nan * (u.km / u.s)
         self.input_v_ts_flag = False
         if not np.all(np.isnan(input_v_ts)):
 
@@ -916,7 +916,7 @@ class HUXt:
         else:
             # create dummy cme
             dummy_cme = ConeCME()
-            cme_params = np.NaN * np.zeros((1, len(dummy_cme.parameter_array())))
+            cme_params = np.nan * np.zeros((1, len(dummy_cme.parameter_array())))
 
         # sanity check the CME initial height is the same as the model inner boundary
         if len(self.cmes) > 0:
@@ -1228,11 +1228,11 @@ class HUXt3d:
     @u.quantity_input(latitude_min=u.deg)
     @u.quantity_input(simtime=u.day)
     @u.quantity_input(cr_lon_init=u.deg)
-    def __init__(self, v_map=np.NaN * (u.km / u.s), v_map_lat=np.NaN * u.rad, v_map_long=np.NaN * u.rad,
-                 cr_num=np.NaN, cr_lon_init=360.0 * u.deg,
+    def __init__(self, v_map=np.nan * (u.km / u.s), v_map_lat=np.nan * u.rad, v_map_long=np.nan * u.rad,
+                 cr_num=np.nan, cr_lon_init=360.0 * u.deg,
                  latitude_max=30 * u.deg, latitude_min=-30 * u.deg,
                  r_min=30 * u.solRad, r_max=240 * u.solRad,
-                 lon_out=np.NaN * u.rad, lon_start=np.NaN * u.rad, lon_stop=np.NaN * u.rad,
+                 lon_out=np.nan * u.rad, lon_start=np.nan * u.rad, lon_stop=np.nan * u.rad,
                  simtime=5.0 * u.day, dt_scale=1.0):
         """
         Initialise the HUXt3D instance.
@@ -1371,7 +1371,7 @@ def radial_grid(r_min=30.0 * u.solRad, r_max=240. * u.solRad):
 @u.quantity_input(lon_out=u.rad)
 @u.quantity_input(lon_start=u.rad)
 @u.quantity_input(lon_stop=u.rad)
-def longitude_grid(lon_out=np.NaN * u.rad, lon_start=np.NaN * u.rad, lon_stop=np.NaN * u.rad):
+def longitude_grid(lon_out=np.nan * u.rad, lon_start=np.nan * u.rad, lon_stop=np.nan * u.rad):
     """
     Define the longitude grid of the HUXt model.
     Args:

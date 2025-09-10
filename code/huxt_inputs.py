@@ -30,7 +30,7 @@ from dtaidistance import dtw
 import huxt as H
 
 
-def get_MAS_boundary_conditions(cr=np.NaN, observatory='', runtype='', runnumber='', masres=''):
+def get_MAS_boundary_conditions(cr=np.nan, observatory='', runtype='', runnumber='', masres=''):
     """
     A function to grab the  solar wind speed (Vr) and radial magnetic field (Br) boundary conditions from MHDweb.
     An order of preference for observatories is given in the function.
@@ -860,7 +860,7 @@ def get_omni(starttime, endtime):
 
     # Set invalid data points to NaN
     id_bad = omni['V'] == 9999.0
-    omni.loc[id_bad, 'V'] = np.NaN
+    omni.loc[id_bad, 'V'] = np.nan
 
     # create a BX_GSE field that is expected by some HUXt fucntions
     omni['BX_GSE'] = -omni['BR']
