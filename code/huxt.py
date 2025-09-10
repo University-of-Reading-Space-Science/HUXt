@@ -148,11 +148,9 @@ class ConeCME:
     @u.quantity_input(width=u.deg)
     @u.quantity_input(thickness=u.solRad)
     @u.quantity_input(fixed_duration=u.s)
-    def __init__(self, t_launch=0.0 * u.s, longitude=0.0 * u.deg, 
-                 latitude=0.0 * u.deg, v=1000.0 * (u.km / u.s),
-                 width=30.0 * u.deg, thickness=5.0 * u.solRad,
-                 initial_height=30 * u.solRad, cme_expansion=False,
-                 cme_fixed_duration=False, fixed_duration=6*60*60*u.s):
+    def __init__(self, t_launch=0.0 * u.s, longitude=0.0 * u.deg, latitude=0.0 * u.deg, v=1000.0 * (u.km / u.s),
+                 width=30.0 * u.deg, thickness=5.0 * u.solRad, initial_height=30 * u.solRad, cme_expansion=False,
+                 cme_fixed_duration=False, fixed_duration=6 * 60 * 60 * u.s):
 
         """
         Set up a Cone CME with specified parameters.
@@ -420,8 +418,8 @@ class ConeCME:
 
     def compute_arrival_at_location(self, longitude, radius):
         """
-        Compute the arrival of the CME at a location specified with a longitude and radius. Takes account of differences between synodic
-        and sidereal frames.
+        Compute the arrival of the CME at a location specified with a longitude and radius. Takes account of differences
+        between synodic and sidereal frames.
         Args:
             longitude: location longitude at t=0 of the model run. Should be in rads
             radius: location radius at t=0 of the model run. Should be in units of solRad
@@ -542,9 +540,9 @@ class HUXt:
     
     Attributes:
         cmes: A list of ConeCME instances used in the model solution.
-        cme_expansion: Whether CMEs are inserted with a declining velocity profile
         cr_num: If provided, this gives the Carrington rotation number of the selected period, else 9999.
-        cr_lon_init: The initial Carrington longitude of Earth at the models initial timestep (2 pi at the start of the CR, 0 at the end).
+        cr_lon_init: The initial Carrington longitude of Earth at the models initial timestep (2 pi at the start of the
+                     CR, 0 at the end).
         daysec: seconds in a day.
         dlon: Longitudinal grid spacing (in radians)
         dr: Radial grid spacing (in km).
@@ -579,26 +577,19 @@ class HUXt:
     @u.quantity_input(v_boundary=(u.km / u.s))
     @u.quantity_input(simtime=u.day)
     @u.quantity_input(cr_lon_init=u.deg)
-    def __init__(self,
-                 v_boundary=np.nan * (u.km / u.s),
-                 b_boundary=np.nan,
-                 cr_num=np.nan, cr_lon_init=360.0 * u.deg, latitude=0 * u.deg,
-                 r_min=30 * u.solRad, r_max=240 * u.solRad,
-                 lon_out=np.nan * u.rad, lon_start=np.nan * u.rad, lon_stop=np.nan * u.rad,
-                 simtime=5.0 * u.day, dt_scale=1.0, frame='synodic',
-                 input_v_ts=np.nan * (u.km / u.s),
-                 input_b_ts=np.nan,
-                 input_iscme_ts=np.nan,
-                 input_t_ts=np.nan * u.s,
+    def __init__(self, v_boundary=np.nan * (u.km / u.s), b_boundary=np.nan, cr_num=np.nan, cr_lon_init=360.0 * u.deg,
+                 latitude=0 * u.deg, r_min=30 * u.solRad, r_max=240 * u.solRad, lon_out=np.nan * u.rad,
+                 lon_start=np.nan * u.rad, lon_stop=np.nan * u.rad, simtime=5.0 * u.day, dt_scale=1.0, frame='synodic',
+                 input_v_ts=np.nan * (u.km / u.s), input_b_ts=np.nan, input_iscme_ts=np.nan, input_t_ts=np.nan * u.s,
                  track_cmes=True):
         """
         Initialise the HUXt model instance.
 
-            v_boundary: Inner solar wind speed boundary condition. Must be an array of size nlon (default 128) with units of km/s.
-            b_boundary: Inner B polarity boundary condition. Must be an array of size nlon (default 128) with units of km/s.
+            v_boundary: Inner solar wind speed boundary condition. An array of size nlon (default 128). Units of km/s.
+            b_boundary: Inner B polarity boundary condition. An array of size nlon (default 128). Units of km/s.
             cr_num: Integer Carrington rotation number. Used to determine the planetary and spacecraft positions
             cr_lon_init: Carrington longitude of Earth at model initialisation, in degrees.
-            latitude: Helio latitude (from equator) of HUXt plane, in degrees
+            latitude: Helio latitude (from the equator) of HUXt plane, in degrees
             lon_out: A specific single longitude (relative to Earth) to compute HUXt solution along, in degrees
             lon_start: The first longitude (in a clockwise sense) of the longitude range to solve HUXt over.
             lon_stop: The last longitude (in a clockwise sense) of the longitude range to solve HUXt over.
@@ -1136,7 +1127,7 @@ class HUXt:
                     cmegrp.create_dataset(k, data=v)
 
                 if k not in ["coords", "frame"]:
-                    #check if the CME property has a value (new BOOLs do not)
+                    # check if the CME property has a value (new BOOLs do not)
                     if hasattr(v, 'value'):
                         dset = cmegrp.create_dataset(k, data=v.value)
                         dset.attrs['unit'] = v.unit.to_string()
@@ -1160,7 +1151,7 @@ class HUXt:
 
                             out_file.flush()
 
-                            # Loop over the attributes of model instance and save select keys/attributes.
+        # Loop over the attributes of model instance and save select keys/attributes.
         keys = ['cr_num', 'cr_lon_init', 'simtime', 'dt', 'v_max', 'r_accel', 'alpha',
                 'dt_scale', 'time_out', 'dt_out', 'r', 'dr', 'lon', 'dlon', 'r_grid', 'lon_grid',
                 'v_grid', 'latitude', 'v_boundary', '_v_boundary_init_', 'cme_particles_r', 'cme_particles_v',
@@ -1229,11 +1220,9 @@ class HUXt3d:
     @u.quantity_input(simtime=u.day)
     @u.quantity_input(cr_lon_init=u.deg)
     def __init__(self, v_map=np.nan * (u.km / u.s), v_map_lat=np.nan * u.rad, v_map_long=np.nan * u.rad,
-                 cr_num=np.nan, cr_lon_init=360.0 * u.deg,
-                 latitude_max=30 * u.deg, latitude_min=-30 * u.deg,
-                 r_min=30 * u.solRad, r_max=240 * u.solRad,
-                 lon_out=np.nan * u.rad, lon_start=np.nan * u.rad, lon_stop=np.nan * u.rad,
-                 simtime=5.0 * u.day, dt_scale=1.0):
+                 cr_num=np.nan, cr_lon_init=360.0 * u.deg, latitude_max=30 * u.deg, latitude_min=-30 * u.deg,
+                 r_min=30 * u.solRad, r_max=240 * u.solRad, lon_out=np.nan * u.rad, lon_start=np.nan * u.rad,
+                 lon_stop=np.nan * u.rad, simtime=5.0 * u.day, dt_scale=1.0):
         """
         Initialise the HUXt3D instance.
 

@@ -16,16 +16,15 @@ from pyhdf.SD import SD, SDC
 import h5py
 from scipy.io import netcdf, readsav
 from scipy import interpolate
-import sunpy
+
 from sunpy.coordinates import sun
 from sunpy.net import Fido
 from sunpy.net import attrs
 from sunpy.timeseries import TimeSeries
-from sunpy.coordinates import get_horizons_coord
+
 import requests
 import pandas as pd
 from dtaidistance import dtw
-
 
 import huxt as H
 
@@ -612,7 +611,7 @@ def get_WSA_long_profile(filepath, lat=0.0 * u.deg):
 
     Args:
         filepath: A complete path to the WSA data file
-        lat: Latitude at which to extract the longitudinal profile, measure up from equator. Float with units of deg
+        lat: Latitude to extract the longitudinal profile at, measure up from the equator. Float with units of deg
 
     Returns:
         vr_in: Solar wind speed as a function of Carrington longitude at solar equator.
@@ -639,7 +638,7 @@ def get_WSA_br_long_profile(filepath, lat=0.0 * u.deg):
 
     Args:
         filepath: A complete path to the WSA data file
-        lat: Latitude at which to extract the longitudinal profile, measure up from equator. Float with units of deg
+        lat: Latitude to extract the longitudinal profile at, measure up from the equator. Float with units of deg
 
     Returns:
         vr_in: Solar wind speed as a function of Carrington longitude at solar equator.
@@ -666,7 +665,7 @@ def get_PFSS_long_profile(filepath, lat=0.0 * u.deg):
 
     Args:
         filepath: A complete path to the PFSS data file
-        lat: Latitude at which to extract the longitudinal profile, measure up from equator. Float with units of deg
+        lat: Latitude to extract the longitudinal profile at, measure up from the equator. Float with units of deg
 
     Returns:
         vr_in: Solar wind speed as a function of Carrington longitude at solar equator.
@@ -743,7 +742,7 @@ def get_CorTom_long_profile(filepath, lat=0.0 * u.deg):
 
     Args:
         filepath: A complete path to the CorTom data file
-        lat: Latitude at which to extract the longitudinal profile, measure up from equator. Float with units of deg
+        lat: Latitude to extract the longitudinal profile at, measure up from the equator. Float with units of deg
 
     Returns:
         vr_in: Solar wind speed as a function of Carrington longitude at solar equator.
@@ -987,13 +986,7 @@ def cone_dict_to_cme_list(model, cme_params):
         # Set the initial height to be 21.5 rS, the default for WSA
         iheight = 21.5 * u.solRad
 
-        # Thickness must be computed from CME cone initial radius and the xcld parameter,
-        # which specifies the relative elongation of the cloud, 1=spherical,
-        # 2=middle twice as long as cone radius e.g.
-        # compute initial radius of the cone
-        radius = np.abs(model.r[0] * np.tan(wid / 2.0))  # eqn on line 162 in ConeCME class
-        # Thickness determined from xcld and radius
-        thick = 5 * u.solRad  # (1.0 - cme_val['xcld']) * radius
+        thick = 0 * u.solRad  # (1.0 - cme_val['xcld']) * radius
 
         cme = H.ConeCME(t_launch=dt_cme, longitude=lon, latitude=lat,
                         width=wid, v=speed, thickness=thick, initial_height=iheight)
@@ -1037,8 +1030,7 @@ def ConeFile_to_ConeCME_list_time(filepath, time):
     """
     cr, cr_lon_init = datetime2huxtinputs(time)
     dummymodel = H.HUXt(v_boundary=np.ones(128) * 400 * (u.km / u.s), simtime=1 * u.day, cr_num=cr,
-                        cr_lon_init=cr_lon_init,
-                        lon_out=0.0 * u.deg, r_min=21.5 * u.solRad)
+                        cr_lon_init=cr_lon_init, lon_out=0.0 * u.deg, r_min=21.5 * u.solRad)
 
     cme_list = ConeFile_to_ConeCME_list(dummymodel, filepath)
     return cme_list
@@ -1973,8 +1965,8 @@ def get_earth_lat(dt):
     cr, cr_lon_init = datetime2huxtinputs(dt)
     # Use the HUXt ephemeris data to get Earth lat over the CR
     # ========================================================
-    dummymodel = H.HUXt(v_boundary=np.ones(128)*400*(u.km/u.s), simtime=0.1*u.day, 
-                         cr_num=cr,cr_lon_init=cr_lon_init, lon_out=0.0*u.deg)
+    dummymodel = H.HUXt(v_boundary=np.ones(128)*400*(u.km/u.s), simtime=0.1*u.day, cr_num=cr, cr_lon_init=cr_lon_init,
+                        lon_out=0.0*u.deg)
     # retrieve a bodies position at each model timestep:
     earth = dummymodel.get_observer('earth')
     # get average Earth lat
@@ -1983,11 +1975,8 @@ def get_earth_lat(dt):
     return E_lat
 
 
-def huxt_td_input_from_WSA_runs(datadir, start_dt, stop_dt, latitude, deacc=True,
-                                input_res_days = 0.1, nlon = 128,
-                                format_template = 'models%2Fenlil%2FYYYY%2FMM%2FDD%2FHH%2Fwsa.gong.fits'):
-    
-    
+def huxt_td_input_from_WSA_runs(datadir, start_dt, stop_dt, latitude, deacc=True, input_res_days=0.1, nlon=128,
+                                format_template='models%2Fenlil%2FYYYY%2FMM%2FDD%2FHH%2Fwsa.gong.fits'):
     """
     produces intput data for a time-dependent HUXt run from a collections of 
     pre-downloaded WSA solutions.
@@ -2018,16 +2007,7 @@ def huxt_td_input_from_WSA_runs(datadir, start_dt, stop_dt, latitude, deacc=True
         Returns a datetime object or None.
         """
         
-        PLACEHOLDERS = {
-            "YYYY": 4,
-            "MM": 2,
-            "DD": 2,
-            "HH": 2,
-            "mm": 2,
-            "SS": 2
-        }
-        
-        
+        PLACEHOLDERS = {"YYYY": 4, "MM": 2, "DD": 2, "HH": 2, "mm": 2, "SS": 2}
         idx = 0
         date_parts = {}
         i = 0
@@ -2077,67 +2057,60 @@ def huxt_td_input_from_WSA_runs(datadir, start_dt, stop_dt, latitude, deacc=True
         files_with_dates.sort(key=lambda x: x[0])
         return files_with_dates
 
-
-    #get all the files in a given directory that are within the data range
+    # get all the files in a given directory that are within the data range
     files_with_dates = get_files_in_date_range(datadir, start_dt, stop_dt, format_template)
 
     for file_date, filepath in files_with_dates:
-         print(f"{file_date}: {filepath}")
-    
-    
-    #read in each file and extract the speeds and Br at a given lat
+        print(f"{file_date}: {filepath}")
+
+    # read in each file and extract the speeds and Br at a given lat
     vlong_list = []
     brlong_list = []
     mjd_list = []
     
-    #get the required longitude grid
+    # get the required longitude grid
     dlon = 2*np.pi / nlon
     lon_min_full = dlon / 2.0
     lon_max_full = 2*np.pi - (dlon / 2.0)
     lon, dlon = np.linspace(lon_min_full, lon_max_full, nlon, retstep=True)
     lon = lon*u.rad
-    
-    
+
     for filenum in range(0, len(files_with_dates)):
     
         filepath = files_with_dates[filenum][1]
         dt = files_with_dates[filenum][0]
         
-        #get the longitude grid of the map
+        # get the longitude grid of the map
         if os.path.exists(filepath):
-            vr_map, vr_longs, vr_lats, br_map, br_longs, br_lats, cr_fits \
-                = get_WSA_maps(filepath)
+            vr_map, vr_longs, vr_lats, br_map, br_longs, br_lats, cr_fits = get_WSA_maps(filepath)
                 
-        #get the Earth lat slice
+        # get the Earth lat slice
         v_in = get_WSA_long_profile(filepath, lat=latitude)
         if deacc:
             # deaccelerate them?
             v_in, lon_temp = map_v_inwards(v_in, 215 * u.solRad, vr_longs,  21.5 * u.solRad)
+
         br_in = get_WSA_br_long_profile(filepath, lat=latitude)
          
-        #store the data, on the required longitude grid
+        # store the data, on the required longitude grid
         vlong_list.append(np.interp(lon, vr_longs, v_in))
         brlong_list.append(np.interp(lon, br_longs, br_in))
         mjd_list.append(Time(dt).mjd)
-        
-        
-    #convert to arrays    
+
+    # convert to arrays
     vlongs_1d = np.array(vlong_list).T
     brlongs_1d = np.array(brlong_list).T
     mjds_1d = np.array(mjd_list)
     
-    n_longs = len(vlongs_1d[:,0])
-    
-    
-    #increase the time resolution of the vlongs for the time-dependent runs
+    n_longs = len(vlongs_1d[:, 0])
+
+    # increase the time resolution of the vlongs for the time-dependent runs
     mjds = np.arange(mjds_1d[0], mjds_1d[-1], input_res_days)
-    times = Time(mjds + 2400000.5, format = 'jd').datetime
+    times = Time(mjds + 2400000.5, format='jd').datetime
     vlongs = np.ones((n_longs, len(mjds)))
     brlongs = np.ones((n_longs, len(mjds)))
     for n in range(0, n_longs):
-        vlongs[n,:] = np.interp(mjds, mjds_1d, vlongs_1d[n,:])
-        brlongs[n,:] = np.interp(mjds, mjds_1d, brlongs_1d[n,:])
+        vlongs[n, :] = np.interp(mjds, mjds_1d, vlongs_1d[n, :])
+        brlongs[n, :] = np.interp(mjds, mjds_1d, brlongs_1d[n, :])
     
     return vlongs, brlongs, lon, mjds, times
-
-
