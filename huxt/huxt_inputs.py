@@ -28,7 +28,7 @@ import requests
 import pandas as pd
 from dtaidistance import dtw
 
-import huxt.huxt as H
+from . import huxt as H
 
 
 def get_data_dir():

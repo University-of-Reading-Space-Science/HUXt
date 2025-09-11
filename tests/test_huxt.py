@@ -93,6 +93,9 @@ def test_time_dependent():
 
     # Get arrival stats of test CME
     arrival_stats_test = cme_test.compute_arrival_at_body('Earth')
+    # Make lon in -pi:pi domain, as otherwise the 0-2pi boundary can confuse comparison.
+    if arrival_stats_test['lon'].to(u.rad).value > np.pi:
+        arrival_stats_test['lon'] = arrival_stats_test['lon'].to(u.rad) - 2 * np.pi * u.rad
 
     # Load in reference CME arrival stats
     dirs = H._setup_dirs_()

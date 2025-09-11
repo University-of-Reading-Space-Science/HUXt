@@ -14,8 +14,8 @@ import sunpy
 from sunpy.coordinates import sun
 from sunpy.coordinates import get_horizons_coord
 
-import huxt.huxt as H
-import huxt.huxt_inputs as Hin
+from . import huxt as H
+from . import huxt_inputs as Hin
 
 mpl.rc("axes", labelsize=16)
 mpl.rc("ytick", labelsize=16)
