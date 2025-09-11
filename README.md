@@ -18,7 +18,7 @@ Then the examples can be accessed through
 ```
 
 ## Testing
-A small test suite is included in ['test_huxt.py'](code/test_huxt.py), which compares tests a HUXt installation against a simple analytical solution and some reference simulation data included in this repository. You should run the test suite after installation as a (limited) check that everything is working as intended. The test suite uses `pytest`, which is included in the `huxt` environment. Using the anaconda prompt from the root directory of `HUXt`, these tests can be performed by running:
+A small test suite is included in ['test_huxt.py'](tests/test_huxt.py), which compares tests a HUXt installation against a simple analytical solution and some reference simulation data included in this repository. You should run the test suite after installation as a (limited) check that everything is working as intended. The test suite uses `pytest`, which is included in the `huxt` environment. Using the anaconda prompt from the root directory of `HUXt`, these tests can be performed by running:
 ```
 pytest code/test_huxt.py
 ```
