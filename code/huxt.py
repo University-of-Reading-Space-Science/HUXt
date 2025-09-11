@@ -2,12 +2,14 @@ import copy
 import errno
 import os
 
+from appdirs import user_data_dir
 import astropy.units as u
 from astropy.time import Time, TimeDelta
 import h5py
 import numpy as np
 from numba import jit
 from packaging import version
+from pathlib import Path
 from sunpy.coordinates import sun
 
 # check the numpy version, as this can cause all manner of difficult-to-diagnose problems
@@ -86,7 +88,7 @@ class Observer:
             lon = np.deg2rad(ephem[self.body]['HEEQ']['longitude'][id_epoch])
             lon = np.unwrap(lon)
             self.lon = np.interp(times.jd, epoch_time.jd, lon)
-            self.lon = _zerototwopi_(self.lon)
+            self.lon = zerototwopi(self.lon)
             self.lon = self.lon * u.rad
 
             lat = np.deg2rad(ephem[self.body]['HEEQ']['latitude'][id_epoch])
@@ -100,7 +102,7 @@ class Observer:
             lon = np.deg2rad(ephem[self.body]['HAE']['longitude'][id_epoch])
             lon = np.unwrap(lon)
             self.lon_hae = np.interp(times.jd, epoch_time.jd, lon)
-            self.lon_hae = _zerototwopi_(self.lon_hae)
+            self.lon_hae = zerototwopi(self.lon_hae)
             self.lon_hae = self.lon_hae * u.rad
 
             lat = np.deg2rad(ephem[self.body]['HAE']['latitude'][id_epoch])
@@ -114,7 +116,7 @@ class Observer:
             lon = np.deg2rad(ephem[self.body]['CARR']['longitude'][id_epoch])
             lon = np.unwrap(lon)
             self.lon_c = np.interp(times.jd, epoch_time.jd, lon)
-            self.lon_c = _zerototwopi_(self.lon_c)
+            self.lon_c = zerototwopi(self.lon_c)
             self.lon_c = self.lon_c * u.rad
 
             lat = np.deg2rad(ephem[self.body]['CARR']['latitude'][id_epoch])
@@ -170,7 +172,7 @@ class ConeCME:
         """
  
         self.t_launch = t_launch  # Time of CME launch, after the start of the simulation
-        lon = _zerototwopi_(longitude.to(u.rad).value) * u.rad
+        lon = zerototwopi(longitude.to(u.rad).value) * u.rad
         self.longitude = lon  # User-supplied Longitudinal launch direction of the CME
         self.latitude = latitude.to(u.rad)  # Latitude launch direction of the CME
         self.v = v  # CME nose speed
@@ -327,7 +329,7 @@ class ConeCME:
         elif self.frame == 'sidereal':
             earth = Observer('EARTH', times)
             delta_lon = earth.lon_hae - earth.lon_hae[0]
-            arrive_lon = _zerototwopi_(body.lon + delta_lon)
+            arrive_lon = zerototwopi(body.lon + delta_lon)
             arrive_lon = arrive_lon * body.lon.unit
 
         # Center longitudes on CME nose, between -180:180
@@ -390,7 +392,7 @@ class ConeCME:
                     hit = True
                     hit_id = i
                     hit_lon = arrive_lon[i] + self.longitude
-                    hit_lon = _zerototwopi_(hit_lon) * u.rad
+                    hit_lon = zerototwopi(hit_lon) * u.rad
                     hit_rad = arrive_rad[i]
 
                     # Interpolate the arrival time and transit time
@@ -439,7 +441,7 @@ class ConeCME:
         elif self.frame == 'sidereal':
             earth = Observer('EARTH', times)
             delta_lon = earth.lon_hae - earth.lon_hae[0]
-            arrive_lon = _zerototwopi_(longitude + delta_lon)
+            arrive_lon = zerototwopi(longitude + delta_lon)
             arrive_lon = arrive_lon * earth.lon.unit
 
         # Center longitudes on CME nose, between -180:180
@@ -502,7 +504,7 @@ class ConeCME:
                     hit = True
                     hit_id = i
                     hit_lon = arrive_lon[i] + self.longitude
-                    hit_lon = _zerototwopi_(hit_lon) * u.rad
+                    hit_lon = zerototwopi(hit_lon) * u.rad
                     hit_rad = arrive_rad[i]
 
                     # Interpolate the arrival time and transit time
@@ -711,20 +713,20 @@ class HUXt:
         self.cr_lon_init = cr_lon_init.to('rad')
         if (self.cr_lon_init < 0.0 * u.rad) | (self.cr_lon_init > self.twopi * u.rad):
             print("Warning: cr_lon_init={}, outside expected range. Rectifying to 0-2pi.".format(self.cr_lon_init))
-            self.cr_lon_init = _zerototwopi_(self.cr_lon_init.value) * u.rad
+            self.cr_lon_init = zerototwopi(self.cr_lon_init.value) * u.rad
 
             # Compute model UTC initalisation time
         cr_frac = self.cr_num.value + ((self.twopi - self.cr_lon_init.value) / self.twopi)
         self.time_init = sun.carrington_rotation_time(cr_frac)
 
         # Rotate the boundary condition as required by cr_lon_init.
-        lon_shifted = _zerototwopi_((self.v_boundary_lons - self.cr_lon_init).value)
+        lon_shifted = zerototwopi((self.v_boundary_lons - self.cr_lon_init).value)
         id_sort = np.argsort(lon_shifted)
         lon_shifted = lon_shifted[id_sort]
         v_b_shifted = self.v_boundary[id_sort]
         self.v_boundary = np.interp(self.v_boundary_lons.value, lon_shifted, v_b_shifted, period=self.twopi)
 
-        lon_shifted = _zerototwopi_((self.b_boundary_lons - self.cr_lon_init).value)
+        lon_shifted = zerototwopi((self.b_boundary_lons - self.cr_lon_init).value)
         id_sort = np.argsort(lon_shifted)
         lon_shifted = lon_shifted[id_sort]
         b_b_shifted = self.b_boundary[id_sort]
@@ -822,7 +824,7 @@ class HUXt:
             lon_stop = (lon_out + bufferlon)
             lonint = np.arange(lon_start, lon_stop, dlondt)
             # Rectify so that it is between 0 - 2pi
-            loninit = _zerototwopi_(lonint)
+            loninit = zerototwopi(lonint)
             # Interpolate the inner boundary speed to this higher resolution
             vinit = np.interp(loninit, self.v_boundary_lons.value, self.v_boundary.value, period=2 * np.pi)
             # convert from cr longitude to timesolve
@@ -884,7 +886,7 @@ class HUXt:
                     cme_hae = np.interp(cme.t_launch.to(u.s).value,
                                         dt_t0.value, dlon_t0)
                     # adjust the CME HEEQ longitude accordingly
-                    cme.longitude_huxt = _zerototwopi_(cme.longitude + cme_hae) * u.rad
+                    cme.longitude_huxt = zerototwopi(cme.longitude + cme_hae) * u.rad
                 else:
                     cme.longitude_huxt = cme.longitude
 
@@ -1001,10 +1003,10 @@ class HUXt:
             for istreak, carr in enumerate(streak_carr):
 
                 # convert from Carrington longitude to model lon at t=0
-                lon_src = _zerototwopi_((carr - self.cr_lon_init)) * u.rad
+                lon_src = zerototwopi((carr - self.cr_lon_init)) * u.rad
 
                 # adjust the source longitude for the spin-up time
-                lon_0 = _zerototwopi_(lon_src.to(u.rad).value
+                lon_0 = zerototwopi(lon_src.to(u.rad).value
                                       - 2 * np.pi * self.buffertime.to(u.s) / self.rotation_period)
 
                 # compute the model longitude of the streak line footpoint with time
@@ -1379,18 +1381,18 @@ def longitude_grid(lon_out=np.nan * u.rad, lon_start=np.nan * u.rad, lon_stop=np
     if np.isfinite(lon_out):
         # Select single longitude only. Check in range
         if (lon_out < 0 * u.rad) | (lon_out > twopi * u.rad):
-            lon_out = _zerototwopi_(lon_out.to('rad').value)
+            lon_out = zerototwopi(lon_out.to('rad').value)
             lon_out = lon_out * u.rad
 
         single_longitude = True
     elif np.isfinite(lon_start) & np.isfinite(lon_stop):
         # Select a range of longitudes. Check limits in range.
         if (lon_start < 0 * u.rad) | (lon_start > twopi * u.rad):
-            lon_start = _zerototwopi_(lon_start.to('rad').value)
+            lon_start = zerototwopi(lon_start.to('rad').value)
             lon_start = lon_start * u.rad
 
         if (lon_stop < 0 * u.rad) | (lon_stop > twopi * u.rad):
-            lon_stop = _zerototwopi_(lon_stop.to('rad').value)
+            lon_stop = zerototwopi(lon_stop.to('rad').value)
             lon_stop = lon_stop * u.rad
 
         longitude_range = True
@@ -1499,55 +1501,50 @@ def _setup_dirs_():
     cwd = os.path.abspath(os.path.dirname(__file__))
     root = os.path.dirname(cwd)
 
-    # Config file must be saved in HUXt/code
-    config_file = os.path.join(cwd, 'config.dat')
+    dirs = {'root': root,
+            'ephemeris': os.path.join(root, 'data', 'ephemeris', 'ephemeris.hdf5'),
+            'example_inputs': os.path.join(root, 'data', 'example_inputs'),
+            'test_data': os.path.join(root, 'data', 'test_data')}
 
-    if os.path.isfile(config_file):
+    bc_dir = Path(user_data_dir(appname='huxt', appauthor=False), "data", 'boundary_conditions')
+    bc_dir.mkdir(parents=True, exist_ok=True)
+    dirs['boundary_conditions'] = str(bc_dir)
 
-        with open(config_file, 'r') as file:
-            lines = file.read().splitlines()
-            dirs = {}
-            for line in lines:
-                line_key = line.split(',')[0]
-                line_val = line.split(',')[1]
-                
-                #convert the path contained in the line_val to the current OS version
-                components = line_val.split('/')
+    sim_dir = Path(user_data_dir(appname='huxt', appauthor=False), "data", 'huxt')
+    sim_dir.mkdir(parents=True, exist_ok=True)
+    dirs['HUXt_data'] = str(sim_dir)
 
-                # Join the components using os.path.join
-                new_path = os.path.join(*components)
-                
-                dirs[line_key] = os.path.join(root, new_path)
+    fig_dir = Path(user_data_dir(appname='huxt', appauthor=False), "figures")
+    fig_dir.mkdir(parents=True, exist_ok=True)
+    dirs['HUXt_figures'] = str(fig_dir)
 
-        dirs['root'] = root
-
-        # Just check the directories exist.
-        for key, val in dirs.items():
-            if key == 'ephemeris':
-                if not os.path.isfile(val):
-                    raise FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT), val)
-            else:
-                if not os.path.isdir(val):
-                    raise NotADirectoryError(errno.ENOENT, os.strerror(errno.ENOENT), val)
-    else:
-        raise FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT), config_file)
+    # Just check the directories exist.
+    for key, val in dirs.items():
+        if key == 'ephemeris':
+            if not os.path.isfile(val):
+                raise FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT), val)
+        else:
+            if not os.path.isdir(val):
+                raise NotADirectoryError(errno.ENOENT, os.strerror(errno.ENOENT), val)
 
     return dirs
 
 
 @jit(nopython=True)
-def _zerototwopi_(angles):
+def zerototwopi(angles):
     """
     Function to constrain angles to the 0 - 2pi domain.
     Args:
-        angles: a numpy array of angles
+        angles: a numpy array of angles.
     Returns:
-        angles_out: a numpy array of angles in the 0 - 2pi domain.
+        angles_out: a numpy array of angles constrained to 0 - 2pi domain.
     """
+
     twopi = 2.0 * np.pi
     angles_out = angles
     a = -np.floor_divide(angles_out, twopi)
     angles_out = angles_out + (a * twopi)
+
     return angles_out
 
 

@@ -7,11 +7,13 @@ import ssl
 import copy
 import pickle
 
+from appdirs import user_data_dir
 import astropy.units as u
 from astropy.io import fits
 from astropy.time import Time
 import httplib2
 import numpy as np
+from pathlib import Path
 from pyhdf.SD import SD, SDC
 import h5py
 from scipy.io import netcdf, readsav
@@ -27,6 +29,13 @@ import pandas as pd
 from dtaidistance import dtw
 
 import huxt as H
+
+
+def get_data_dir():
+    """Get path to output directory for figures and animations"""
+    data_dir = Path(user_data_dir(appname='huxt', appauthor=False), "data", 'boundary_conditions')
+    data_dir.mkdir(parents=True, exist_ok=True)
+    return data_dir
 
 
 def get_MAS_boundary_conditions(cr=np.nan, observatory='', runtype='', runnumber='', masres=''):
@@ -77,9 +86,8 @@ def get_MAS_boundary_conditions(cr=np.nan, observatory='', runtype='', runnumber
         runnumber_order = [str(runnumber)]
         overwrite = True
 
-    # Get the HUXt boundary condition directory
-    dirs = H._setup_dirs_()
-    _boundary_dir_ = dirs['boundary_conditions']
+    # Get the local HUXt boundary condition directory
+    boundary_dir = get_data_dir()
 
     # Example URL: http://www.predsci.com/data/runs/cr2010-medium/mdi_mas_mas_std_0101/helio/br_r0.hdf
     heliomas_url_front = 'http://www.predsci.com/data/runs/cr'
@@ -88,9 +96,10 @@ def get_MAS_boundary_conditions(cr=np.nan, observatory='', runtype='', runnumber
     vrfilename = 'HelioMAS_CR' + str(int(cr)) + '_vr' + heliomas_url_end
     brfilename = 'HelioMAS_CR' + str(int(cr)) + '_br' + heliomas_url_end
 
-    if (os.path.exists(os.path.join(_boundary_dir_, brfilename)) is False or
-            os.path.exists(os.path.join(_boundary_dir_, vrfilename)) is False or
-            overwrite is True):  # Check if the files already exist
+    brfilepath = boundary_dir.joinpath(brfilename)
+    vrfilepath = boundary_dir.joinpath(vrfilename)
+    # Check if the files already exist
+    if brfilepath.exists() is False or vrfilepath.exists() is False or overwrite is True:
 
         # Search MHDweb for a HelioMAS run, in order of preference
         h = httplib2.Http(disable_ssl_certificate_validation=False)
@@ -128,10 +137,8 @@ def get_MAS_boundary_conditions(cr=np.nan, observatory='', runtype='', runnumber
         ssl._create_default_https_context = ssl._create_unverified_context
 
         print('Downloading from: ', urlbase)
-        urllib.request.urlretrieve(urlbase + 'br' + heliomas_url_end,
-                                   os.path.join(_boundary_dir_, brfilename))
-        urllib.request.urlretrieve(urlbase + 'vr' + heliomas_url_end,
-                                   os.path.join(_boundary_dir_, vrfilename))
+        urllib.request.urlretrieve(urlbase + 'br' + heliomas_url_end, brfilepath)
+        urllib.request.urlretrieve(urlbase + 'vr' + heliomas_url_end, vrfilepath)
 
         return 1
     else:
@@ -155,17 +162,16 @@ def read_MAS_vr_br(cr):
         MAS_br_Xm: Latitude of Br as angle down from N pole, np.array in units of rad.
     """
     # Get the boundary condition directory
-    dirs = H._setup_dirs_()
-    _boundary_dir_ = dirs['boundary_conditions']
+    boundary_dir = get_data_dir()
     # Create the filenames
     heliomas_url_end = '_r0.hdf'
     vrfilename = 'HelioMAS_CR' + str(int(cr)) + '_vr' + heliomas_url_end
     brfilename = 'HelioMAS_CR' + str(int(cr)) + '_br' + heliomas_url_end
 
-    filepath = os.path.join(_boundary_dir_, vrfilename)
-    assert os.path.exists(filepath)
+    filepath = boundary_dir.joinpath(vrfilename)
+    assert filepath.exists()
 
-    file = SD(filepath, SDC.READ)
+    file = SD(str(filepath), SDC.READ)
 
     sds_obj = file.select('fakeDim0')  # select sds
     MAS_vr_Xa = sds_obj.get()  # get sds data
@@ -179,9 +185,9 @@ def read_MAS_vr_br(cr):
     MAS_vr_Xa = MAS_vr_Xa * u.rad
     MAS_vr_Xm = MAS_vr_Xm * u.rad
 
-    filepath = os.path.join(_boundary_dir_, brfilename)
-    assert os.path.exists(filepath)
-    file = SD(filepath, SDC.READ)
+    filepath = boundary_dir.joinpath(brfilename)
+    assert filepath.exists()
+    file = SD(str(filepath), SDC.READ)
 
     sds_obj = file.select('fakeDim0')  # select sds
     MAS_br_Xa = sds_obj.get()  # get sds data
@@ -209,7 +215,7 @@ def get_MAS_long_profile(cr, lat=0.0 * u.deg):
         vr_in: Solar wind speed as a function of Carrington longitude at solar equator.
                Interpolated to HUXt longitudinal resolution. np.array (NDIM = 1) in units of km/s
     """
-    assert (np.isnan(cr) == False and cr > 0)
+    assert (cr > 0 and not np.isnan(cr))
     assert (lat >= -90.0 * u.deg)
     assert (lat <= 90.0 * u.deg)
 
@@ -384,7 +390,7 @@ def map_v_inwards(v_orig, r_orig, lon_orig, r_new):
     T_integral = term1 - term2
 
     # Work out the longitudinal shift
-    phi_new = H._zerototwopi_(lon_orig.value + (T_integral / Tsyn) * 2 * np.pi)
+    phi_new = zerototwopi(lon_orig.value + (T_integral / Tsyn).value * 2 * np.pi)
 
     return vnew * u.km / u.s, phi_new * u.rad
 
@@ -499,8 +505,8 @@ def get_PFSS_maps(filepath):
         br_longs: np.array, The Carrington longitudes for the Br map, in radians
 
     """
-
-    assert os.path.exists(filepath)
+    filepath = Path(filepath)
+    assert filepath.exists()
     nc = netcdf.netcdf_file(filepath, 'r', mmap=False)
     br_map = nc.variables['br'][:]
     vr_map = nc.variables['vr'][:] * u.km / u.s
@@ -539,8 +545,8 @@ def get_WSA_maps(filepath):
         cr: Integer, Carrington rotation number
 
     """
-
-    assert os.path.exists(filepath)
+    filepath = Path(filepath)
+    assert filepath.exists()
     hdul = fits.open(filepath)
 
     keys = hdul[0].header
@@ -556,7 +562,7 @@ def get_WSA_maps(filepath):
 
     # The map edge longitude is given by the CARRLONG variable.
     # This is 60 degrees from Central meridian (i.e. Earth Carrington longitude)
-    carrlong = _zerototwopi_((hdul[0].header['CARRLONG']) * np.pi / 180)
+    carrlong = zerototwopi((hdul[0].header['CARRLONG']) * np.pi / 180)
 
     data = hdul[0].data
     br_map_fits = data[0, :, :]
@@ -588,13 +594,13 @@ def get_WSA_maps(filepath):
     br_map = np.empty(br_map_fits.shape)
 
     for nlat in range(0, len(vr_lat_centres)):
-        interp = interpolate.interp1d(_zerototwopi_(vr_long_centres + carrlong),
+        interp = interpolate.interp1d(zerototwopi(vr_long_centres + carrlong),
                                       vr_map_fits[nlat, :], kind="nearest",
                                       fill_value="extrapolate")
         vr_map[nlat, :] = interp(vr_long_centres)
 
     for nlat in range(0, len(br_lat_centres)):
-        interp = interpolate.interp1d(_zerototwopi_(br_long_centres + carrlong),
+        interp = interpolate.interp1d(zerototwopi(br_long_centres + carrlong),
                                       br_map_fits[nlat, :], kind="nearest",
                                       fill_value="extrapolate")
         br_map[nlat, :] = interp(br_long_centres)
@@ -617,9 +623,11 @@ def get_WSA_long_profile(filepath, lat=0.0 * u.deg):
         vr_in: Solar wind speed as a function of Carrington longitude at solar equator.
                Interpolated to the default HUXt longitudinal grid. np.array (NDIM = 1) in units of km/s
     """
+
+    filepath = Path(filepath)
     assert (lat >= -90.0 * u.deg)
     assert (lat <= 90.0 * u.deg)
-    assert (os.path.isfile(filepath))
+    assert (filepath.is_file())
 
     vr_map, lon_map, lat_map, br_map, br_lon, br_lat, cr_num = get_WSA_maps(filepath)
 
@@ -644,9 +652,11 @@ def get_WSA_br_long_profile(filepath, lat=0.0 * u.deg):
         vr_in: Solar wind speed as a function of Carrington longitude at solar equator.
                Interpolated to the default HUXt longitudinal grid. np.array (NDIM = 1) in units of km/s
     """
+
+    filepath = Path(filepath)
     assert (lat >= -90.0 * u.deg)
     assert (lat <= 90.0 * u.deg)
-    assert (os.path.isfile(filepath))
+    assert (filepath.is_file())
 
     vr_map, lon_map, lat_map, br_map, br_lon, br_lat, cr_num = get_WSA_maps(filepath)
 
@@ -671,9 +681,11 @@ def get_PFSS_long_profile(filepath, lat=0.0 * u.deg):
         vr_in: Solar wind speed as a function of Carrington longitude at solar equator.
                Interpolated to the default HUXt longitudinal grid. np.array (NDIM = 1) in units of km/s
     """
+
+    filepath = Path(filepath)
     assert (lat >= -90.0 * u.deg)
     assert (lat <= 90.0 * u.deg)
-    assert (os.path.isfile(filepath))
+    assert (filepath.is_file())
 
     vr_map, lon_map, lat_map, br_map, br_lon, br_lat = get_PFSS_maps(filepath)
 
@@ -703,15 +715,18 @@ def get_CorTom_vr_map(filepath):
 
     """
 
-    cortom_ext = os.path.splitext(filepath)[1]
-    if cortom_ext == '.dat':
+    filepath = Path(filepath)
+
+    assert (filepath.is_file())
+
+    if filepath.suffix == '.dat':
         # IDL save file from Aber repository
         cortom_data = readsav(filepath)
         vr_map = copy.copy(cortom_data['velocity'])
         vr_colat = copy.copy(cortom_data['colat_rad'])
         vr_longs = copy.copy(cortom_data['lon_rad'])
 
-    elif cortom_ext == '.pkl':
+    elif filepath.suffix == '.pkl':
         # Pickled Cortom output from local or UKMO API
         with open(filepath, "rb") as file:
             data = pickle.load(file)
@@ -748,9 +763,10 @@ def get_CorTom_long_profile(filepath, lat=0.0 * u.deg):
         vr_in: Solar wind speed as a function of Carrington longitude at solar equator.
                Interpolated to the default HUXt longitudinal grid. np.array (NDIM = 1) in units of km/s
     """
+    filepath = Path(filepath)
     assert (lat >= -90.0 * u.deg)
     assert (lat <= 90.0 * u.deg)
-    assert (os.path.isfile(filepath))
+    assert (filepath.is_file())
 
     vr_map, lon_map, lat_map = get_CorTom_vr_map(filepath)
 
@@ -762,7 +778,7 @@ def get_CorTom_long_profile(filepath, lat=0.0 * u.deg):
     return vr * u.km / u.s
     
 
-def getMetOfficeWSAandCone(startdate, enddate, datadir=''):
+def getMetOfficeWSAandCone(startdate, enddate, datadir=None):
     """Downloads the most recent WSA output and coneCME files for a given time window from the Met Office system.
     Requires an API key to be set as a system environment variable saves wsa and cone files to datadir, which defaults
     to the current directory. UTC date format is "%Y-%m-%dT%H:%M:%S". Outputs the filepaths to the WSA and cone files.
@@ -780,6 +796,11 @@ def getMetOfficeWSAandCone(startdate, enddate, datadir=''):
        model_time : time-stamp of the associated enlil run
     
     """
+    if datadir is None:
+        boundary_dir = get_data_dir()
+    else:
+        boundary_dir = Path(datadir)
+
     version = 'v1'
     api_key = os.getenv("UKMO_API")
     url_base = "https://gateway.api-management.metoffice.cloud/swx_swimmr_s4/1.0"
@@ -817,13 +838,13 @@ def getMetOfficeWSAandCone(startdate, enddate, datadir=''):
             if not found_wsa:
                 response_wsa = requests.get(wsa_file_url, headers={"apikey": api_key})
                 if response_wsa.status_code == 200:
-                    wsafilepath = os.path.join(datadir, wsa_file_name)
+                    wsafilepath = boundary_dir.joinpath(wsa_file_name)
                     open(wsafilepath, "wb").write(response_wsa.content)
                     found_wsa = True
             if not found_cone:
                 response_cone = requests.get(cone_file_url, headers={"apikey": api_key})
                 if response_cone.status_code == 200:
-                    conefilepath = os.path.join(datadir, cone_file_name)
+                    conefilepath = boundary_dir.joinpath(cone_file_name)
                     open(conefilepath, "wb").write(response_cone.content)
                     found_cone = True
             i = i - 1
@@ -988,8 +1009,8 @@ def cone_dict_to_cme_list(model, cme_params):
 
         thick = 0 * u.solRad  # (1.0 - cme_val['xcld']) * radius
 
-        cme = H.ConeCME(t_launch=dt_cme, longitude=lon, latitude=lat,
-                        width=wid, v=speed, thickness=thick, initial_height=iheight)
+        cme = H.ConeCME(t_launch=dt_cme, longitude=lon, latitude=lat, width=wid, v=speed, thickness=thick,
+                        initial_height=iheight)
         cme_list.append(cme)
 
     # sort the CME list into chronological order
@@ -1012,6 +1033,8 @@ def ConeFile_to_ConeCME_list(model, filepath):
     returns:
         cme_list: A list of ConeCME instances.
     """
+    filepath = Path(filepath)
+    assert filepath.is_file()
 
     cme_params = import_cone2bc_parameters(filepath)
     cme_list = cone_dict_to_cme_list(model, cme_params)
@@ -1028,6 +1051,9 @@ def ConeFile_to_ConeCME_list_time(filepath, time):
     Returns:
         cme_list: A list of ConeCME objects that correspond CMEs in a ConeFile
     """
+    filepath = Path(filepath)
+    assert filepath.is_file()
+
     cr, cr_lon_init = datetime2huxtinputs(time)
     dummymodel = H.HUXt(v_boundary=np.ones(128) * 400 * (u.km / u.s), simtime=1 * u.day, cr_num=cr,
                         cr_lon_init=cr_lon_init, lon_out=0.0 * u.deg, r_min=21.5 * u.solRad)
@@ -1067,7 +1093,7 @@ def consolidate_cme_lists(cmelist_list, t_thresh=0.1 * u.day, lon_thresh=10 * u.
 
                 # require a similar time, lat and long to be the same CME
                 if ((abs(this_time - existing_time) < t_thresh) &
-                        (H._zerototwopi_(this_long - existing_long) < lon_thresh) &
+                        (zerototwopi(this_long - existing_long) < lon_thresh) &
                         (abs(this_lat - existing_lat) < lat_thresh)):
                     same_cme = True
 
@@ -1175,7 +1201,7 @@ def set_time_dependent_boundary(vgrid_Carr, time_grid, starttime, simtime, r_min
         # shift the longitude to match the initial model time
         dlon_from_start = 2 * np.pi * u.rad * model_time[t] / rotation_period
 
-        lon_shifted = H._zerototwopi_((all_lons - cr_lon_init + dlon_from_start).value)
+        lon_shifted = zerototwopi((all_lons - cr_lon_init + dlon_from_start).value)
         # put longitudes in ascending order for np.interp
         id_sort = np.argsort(lon_shifted)
         lon_shifted = lon_shifted[id_sort]
@@ -1258,19 +1284,28 @@ def set_time_dependent_boundary(vgrid_Carr, time_grid, starttime, simtime, r_min
     return model
 
 
-def _zerototwopi_(angles):
+def zerototwopi(angles):
     """
     Function to constrain angles to the 0 - 2pi domain.
-
     Args:
         angles: a numpy array of angles.
     Returns:
         angles_out: a numpy array of angles constrained to 0 - 2pi domain.
     """
+    # Check if angles has astropy unit.
+    if isinstance(angles, u.Quantity):
+        angles_out = angles.to(u.rad).value
+    else:
+        angles_out = angles
+
     twopi = 2.0 * np.pi
-    angles_out = angles
     a = -np.floor_divide(angles_out, twopi)
     angles_out = angles_out + (a * twopi)
+
+    # If it came in with units, restore them
+    if isinstance(angles, u.Quantity):
+        angles_out = angles_out * u.rad
+
     return angles_out
 
 
@@ -1394,8 +1429,8 @@ def generate_vCarr_from_OMNI(runstart, runend, nlon_grid=None, omni_input=None, 
         Elong = omni_int['Carr_lon'][t_id] * u.rad
 
         # get the Carrington longitude difference from current Earth pos
-        dlong_back = _zerototwopi_(lon_grid.value - Elong.value) * u.rad
-        dlong_forward = _zerototwopi_(Elong.value - lon_grid.value) * u.rad
+        dlong_back = zerototwopi(lon_grid.value - Elong.value) * u.rad
+        dlong_forward = zerototwopi(Elong.value - lon_grid.value) * u.rad
 
         dt_back = (dlong_back / omega_synodic).to(u.day)
         dt_forward = (dlong_forward / omega_synodic).to(u.day)
@@ -2000,6 +2035,9 @@ def huxt_td_input_from_WSA_runs(datadir, start_dt, stop_dt, latitude, deacc=True
         times, 1 array, datetimes
 
     """
+
+    datadir = Path(datadir)
+    assert datadir.is_dir()
     
     def parse_format(filename, format_template):
         """
@@ -2049,10 +2087,10 @@ def huxt_td_input_from_WSA_runs(datadir, start_dt, stop_dt, latitude, deacc=True
     def get_files_in_date_range(datadir, start_dt, end_dt, format_template):
         files_with_dates = []
   
-        for filename in os.listdir(datadir):  
-            file_date = parse_format(filename, format_template)
+        for filename in datadir.iterdir():
+            file_date = parse_format(filename.name, format_template)
             if file_date and start_dt <= file_date <= end_dt:
-                files_with_dates.append((file_date, os.path.join(datadir, filename)))
+                files_with_dates.append((file_date, filename))
   
         files_with_dates.sort(key=lambda x: x[0])
         return files_with_dates
@@ -2081,7 +2119,7 @@ def huxt_td_input_from_WSA_runs(datadir, start_dt, stop_dt, latitude, deacc=True
         dt = files_with_dates[filenum][0]
         
         # get the longitude grid of the map
-        if os.path.exists(filepath):
+        if filepath.exists():
             vr_map, vr_longs, vr_lats, br_map, br_longs, br_lats, cr_fits = get_WSA_maps(filepath)
                 
         # get the Earth lat slice

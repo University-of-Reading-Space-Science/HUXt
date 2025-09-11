@@ -1,5 +1,4 @@
-import os
-
+from appdirs import user_data_dir
 import astropy.units as u
 from astropy.time import Time
 import matplotlib.pyplot as plt
@@ -8,6 +7,7 @@ import datetime
 from matplotlib.animation import FuncAnimation
 import numpy as np
 import pandas as pd
+from pathlib import Path
 from numba import jit
 from scipy.optimize import minimize
 import sunpy
@@ -21,6 +21,13 @@ mpl.rc("axes", labelsize=16)
 mpl.rc("ytick", labelsize=16)
 mpl.rc("xtick", labelsize=16)
 mpl.rc("legend", fontsize=16)
+
+
+def get_figure_dir():
+    """Get path to output directory for figures and animations"""
+    figure_dir = Path(user_data_dir(appname='huxt', appauthor=False), "figures")
+    figure_dir.mkdir(parents=True, exist_ok=True)
+    return figure_dir
 
 
 @u.quantity_input(time=u.day)
@@ -124,7 +131,7 @@ def plot(model, time, save=False, tag='', fighandle=np.nan, axhandle=np.nan, min
         # determine which bodies should be plotted
         plot_observers = list(zip(['EARTH'], ['ko']))
         plot_observers.append(('STA', 'c*'))
-        if model.time_init < datetime.datetime(2016,8,21):
+        if model.time_init < datetime.datetime(2016, 8, 21):
             plot_observers.append(('STB', 'y*'))
         if model.r[-1] < 350 * u.solRad:
             plot_observers.append(('VENUS', 'yo'))
@@ -144,7 +151,7 @@ def plot(model, time, save=False, tag='', fighandle=np.nan, axhandle=np.nan, min
                 earth_pos = model.get_observer('EARTH')
                 deltalon = earth_pos.lon_hae[id_t] - earth_pos.lon_hae[0]
 
-            obslon = H._zerototwopi_(obs.lon[id_t] + deltalon)
+            obslon = zerototwopi(obs.lon[id_t] + deltalon)
             ax.plot(obslon, obs.r[id_t], style, markersize=14, label=body)
 
         # Add on a legend.
@@ -202,7 +209,7 @@ def plot(model, time, save=False, tag='', fighandle=np.nan, axhandle=np.nan, min
                     # compute the long of the footpoint assuming a constant solar wind speed
                     dt = (dr * u.solRad / (350 * u.km / u.s)).to(u.s)
                     dlon_streak = (2*np.pi)*(dt/model.rotation_period).value 
-                    inner_lon = H._zerototwopi_(plotlon[-1] + dlon_streak)
+                    inner_lon = zerototwopi(plotlon[-1] + dlon_streak)
                     # check that this new longitude was actually simulated
                     if np.nanmin(abs(model.lon - inner_lon*u.rad)) < dlon:
                         plotr = np.append(plotr, r_min)
@@ -214,7 +221,7 @@ def plot(model, time, save=False, tag='', fighandle=np.nan, axhandle=np.nan, min
                     # compute the long of the outer footpoint assuming a constant solar wind speed
                     dt = (dr * u.solRad / (450 *u.km /u.s)).to(u.s)
                     dlon_streak = (2*np.pi)*(dt/model.rotation_period).value
-                    outer_lon = H._zerototwopi_(plotlon[0] - dlon_streak)
+                    outer_lon = zerototwopi(plotlon[0] - dlon_streak)
                     # check that this new longitude was actually simulated
                     if np.nanmin(abs(model.lon - outer_lon*u.rad)) < dlon:
                         plotr = np.append(r_max, plotr)
@@ -240,7 +247,8 @@ def plot(model, time, save=False, tag='', fighandle=np.nan, axhandle=np.nan, min
     if save:
         cr_num = np.int32(model.cr_num.value)
         filename = "HUXt_CR{:03d}_{}_frame_{:03d}.png".format(cr_num, tag, id_t)
-        filepath = os.path.join(model._figure_dir_, filename)
+        figure_dir = get_figure_dir()
+        filepath = figure_dir.joinpath(filename)
         fig.savefig(filepath)
 
     return fig, ax
@@ -297,11 +305,12 @@ def animate(model, tag, duration=10, fps=20, plotHCS=True, trace_earth_connectio
     else:
         cr_num = np.int32(model.cr_num.value)
         filename = "HUXt_CR{:03d}_{}_movie.mp4".format(cr_num, tag)
-        filepath = os.path.join(model._figure_dir_, filename)
-    
+        figure_dir = get_figure_dir()
+        filepath = figure_dir.joinpath(filename)
+
     # Save the animation as a movie file
     ani.save(filepath, writer='ffmpeg')
-    print('mp4 file written to ' + filepath)
+    print('mp4 file written to ' + str(filepath))
 
     return
 
@@ -388,7 +397,8 @@ def plot_radial(model, time, lon, save=False, tag=''):
         cr_num = np.int32(model.cr_num.value)
         lon_tag = "{}deg".format(lon.to(u.deg).value)
         filename = "HUXt_CR{:03d}_{}_radial_profile_lon_{}_frame_{:03d}.png".format(cr_num, tag, lon_tag, id_t)
-        filepath = os.path.join(model._figure_dir_, filename)
+        figure_dir = get_figure_dir()
+        filepath = figure_dir.joinpath(filename)
         fig.savefig(filepath)
 
     return fig, ax
@@ -454,7 +464,8 @@ def plot_timeseries(model, radius, lon, save=False, tag=''):
         lon_tag = np.int32(lon_out)
         template_string = "HUXt1D_CR{:03d}_{}_time_series_radius_{:03d}_lon_{:03d}.png"
         filename = template_string.format(cr_num, tag, r_tag, lon_tag)
-        filepath = os.path.join(model._figure_dir_, filename)
+        figure_dir = get_figure_dir()
+        filepath = figure_dir.joinpath(filename)
         fig.savefig(filepath)
 
     return fig, ax
@@ -479,13 +490,13 @@ def get_observer_timeseries(model, observer='Earth', suppress_warning=False):
     # find the model coords of Earth as a function of time
     if model.frame == 'sidereal':
         deltalon = earth_pos.lon_hae - earth_pos.lon_hae[0]
-        model_lon_earth = H._zerototwopi_(earth_pos.lon.value + deltalon.value)
+        model_lon_earth = zerototwopi(earth_pos.lon.value + deltalon.value)
     elif model.frame == 'synodic':
         model_lon_earth = earth_pos.lon.value
 
     # find the model coords of the given osberver as a function of time
     deltalon = obs_pos.lon_hae - earth_pos.lon_hae
-    model_lon_obs = H._zerototwopi_(model_lon_earth + deltalon.value)
+    model_lon_obs = zerototwopi(model_lon_earth + deltalon.value)
 
     if model.nlon == 1 and not suppress_warning:
         print('Single longitude simulated. Extracting time series at Observer r')
@@ -564,7 +575,7 @@ def get_HUXt_at_position_HEEQ(model, target_mjd, target_r, target_lon_heeq):
     # find the model coords of Earth as a function of time
     if model.frame == 'sidereal':
         e_deltalon = earth_pos.lon_hae - earth_pos.lon_hae[0]
-        model_lon_earth = H._zerototwopi_(earth_pos.lon.value + e_deltalon.value)
+        model_lon_earth = zerototwopi(earth_pos.lon.value + e_deltalon.value)
     elif model.frame == 'synodic':
         model_lon_earth = earth_pos.lon.value
 
@@ -588,7 +599,7 @@ def get_HUXt_at_position_HEEQ(model, target_mjd, target_r, target_lon_heeq):
             id_t = np.argmin(np.abs(tim_mjd - target_mjd[t]))
             
             # compute the HUXT long associated with the given HEEQ lon
-            model_lon_obs = H._zerototwopi_(model_lon_earth[id_t] + target_lon_heeq[t]) 
+            model_lon_obs = zerototwopi(model_lon_earth[id_t] + target_lon_heeq[t])
     
             # find the nearest longitude cell
             model_lons = model.lon.value
@@ -638,13 +649,14 @@ def get_HUXt_at_position_HEEQ(model, target_mjd, target_r, target_lon_heeq):
     return time_series
 
 
-def plot_earth_timeseries(model, plot_omni=True):
+def plot_earth_timeseries(model, plot_omni=True, save=False, tag=''):
     """
     A function to plot the HUXt Earth time series. With option to download and plot OMNI data.
     Args:
         model : input model class
         plot_omni: Boolean, if True downloads and plots OMNI data
-
+        save: Boolean, if True saves plot
+        tag: String, tag string to append to the plot title
     Returns:
         fig : Figure handle
         axs : Axes handles
@@ -693,6 +705,13 @@ def plot_earth_timeseries(model, plot_omni=True):
         axs[1].set_xlabel('Date')
 
     fig.subplots_adjust(left=0.07, bottom=0.08, right=0.99, top=0.97, hspace=0.05)
+
+    if save:
+        cr_num = np.int32(model.cr_num.value)
+        filename = "HUXt_CR{:03d}_{}_earth_timeseries.png".format(cr_num, tag)
+        figure_dir = get_figure_dir()
+        filepath = figure_dir.joinpath(filename)
+        fig.savefig(filepath)
 
     return fig, axs
 
@@ -757,8 +776,7 @@ def plot3d_radial_lat_slice(model3d, time, lon=np.nan * u.deg, save=False, tag='
     cnt = ax.contourf(model3d.lat.to(u.rad), model.r, mercut, levels=levels, cmap=mymap, extend='both')
 
     # Set edge color of contours the same, for good rendering in PDFs
-    for c in cnt.collections:
-        c.set_edgecolor("face")
+    cnt.set_edgecolor("face")
 
     # Trace the CME boundaries
     cme_colors = ['r', 'c', 'm', 'y', 'deeppink', 'darkorange']
@@ -817,7 +835,7 @@ def plot3d_radial_lat_slice(model3d, time, lon=np.nan * u.deg, save=False, tag='
             earth_pos = model.get_observer('EARTH')
             deltalon = earth_pos.lon_hae[id_t] - earth_pos.lon_hae[0]
 
-        bodylon = H._zerototwopi_(obs.lon[id_t] + deltalon) * u.rad
+        bodylon = zerototwopi(obs.lon[id_t] + deltalon)
         # plot bodies that are close to being in the plane
         if abs(bodylon - lon_out) < model.dlon * 2:
             ax.plot(obs.lat[id_t], obs.r[id_t], style, markersize=16, label=body)
@@ -856,8 +874,9 @@ def plot3d_radial_lat_slice(model3d, time, lon=np.nan * u.deg, save=False, tag='
 
     if save:
         cr_num = np.int32(model.cr_num.value)
-        filename = "HUXt_CR{:03d}_{}_frame_{:03d}.png".format(cr_num, tag, id_t)
-        filepath = os.path.join(model._figure_dir_, filename)
+        filename = "HUXt_CR{:03d}_{}_3D_frame_{:03d}.png".format(cr_num, tag, id_t)
+        figure_dir = get_figure_dir()
+        filepath = figure_dir.joinpath(filename)
         fig.savefig(filepath)
 
     return fig, ax
@@ -910,14 +929,16 @@ def animate_3d(model3d, lon=0.0 * u.deg, tag='', duration=10, fps=20, outputfile
         filepath = outputfilepath
     else:
         cr_num = np.int32(model.cr_num.value)
-        filename = "HUXt_CR{:03d}_{}_movie.mp4".format(cr_num, tag)
-        filepath = os.path.join(model._figure_dir_, filename)
+        filename = "HUXt_CR{:03d}_{}_3D_movie.mp4".format(cr_num, tag)
+        figure_dir = get_figure_dir()
+        filepath = figure_dir.joinpath(filename)
     
     # Save the animation as a movie file
     ani.save(filepath, writer='ffmpeg')
-    print('mp4 file written to ' + filepath)
+    print('mp4 file written to ' + str(filepath))
     
     return
+
 
 @u.quantity_input(time=u.day)
 def plot_bpol(model, time, save=False, tag='', fighandle=np.nan, axhandle=np.nan, minimalplot=False, plotHCS=True):
@@ -986,8 +1007,7 @@ def plot_bpol(model, time, save=False, tag='', fighandle=np.nan, axhandle=np.nan
     cnt = ax.contourf(lon, rad, v, levels=levels, cmap=mymap, extend='both')
 
     # Set edge color of contours the same, for good rendering in PDFs
-    for c in cnt.collections:
-        c.set_edgecolor("face")
+    cnt.set_edgecolor("face")
 
     # Add on CME boundaries
     cme_colors = ['r', 'c', 'm', 'y', 'deeppink', 'darkorange']
@@ -1019,7 +1039,7 @@ def plot_bpol(model, time, save=False, tag='', fighandle=np.nan, axhandle=np.nan
                 earth_pos = model.get_observer('EARTH')
                 deltalon = earth_pos.lon_hae[id_t] - earth_pos.lon_hae[0]
 
-            obslon = H._zerototwopi_(obs.lon[id_t] + deltalon)
+            obslon = zerototwopi(obs.lon[id_t] + deltalon)
             ax.plot(obslon, obs.r[id_t], style, markersize=16, label=body)
 
         # Add on a legend.
@@ -1066,7 +1086,7 @@ def plot_bpol(model, time, save=False, tag='', fighandle=np.nan, axhandle=np.nan
                 plotlon = np.array(streak_lon)[mask]
                 plotr = np.array(streak_r)[mask]
                 # only add the inner boundary if it's in the HUXt longitude grid
-                foot_lon = H._zerototwopi_(model.streak_lon_r0[id_t, istreak])
+                foot_lon = zerototwopi(model.streak_lon_r0[id_t, istreak])
                 dlon_foot = abs(model.lon.value - foot_lon)
                 if dlon_foot.min() <= model.dlon.value:
                     plotlon = np.append(plotlon, foot_lon + model.dlon.value / 2)
@@ -1083,8 +1103,9 @@ def plot_bpol(model, time, save=False, tag='', fighandle=np.nan, axhandle=np.nan
 
     if save:
         cr_num = np.int32(model.cr_num.value)
-        filename = "HUXt_CR{:03d}_{}_frame_{:03d}.png".format(cr_num, tag, id_t)
-        filepath = os.path.join(model._figure_dir_, filename)
+        filename = "HUXt_CR{:03d}_{}_bpol_frame_{:03d}.png".format(cr_num, tag, id_t)
+        figure_dir = get_figure_dir()
+        filepath = figure_dir.joinpath(filename)
         fig.savefig(filepath)
 
     return fig, ax
@@ -1213,7 +1234,6 @@ def min_distance_streakline_point(streak_lon_rad, streak_r_km, point_lon_rad, po
     
     # convert the closest point back to r, lon
     r = np.sqrt(intx[i]**2 + inty[i]**2)
-    # theta = H._zerototwopi_(
     theta = np.arctan2(inty[i], intx[i])
     
     return distances[i], r, theta
@@ -1331,7 +1351,7 @@ def find_Earth_connected_field_line(model, time):
 
     assert (model.dt_scale == 1)
 
-    buffertime = 6*u.day  # the tracing this time before the ballistic start time estimate
+    buffertime = 6 * u.day  # the tracing this time before the ballistic start time estimate
     buffer_time_s = buffertime.to(u.s).value
     time_s = time.to(u.s).value
     
@@ -1348,9 +1368,9 @@ def find_Earth_connected_field_line(model, time):
     if model.frame == 'synodic':
         lon_Earth_rad = earth_pos.lon[id_t].to(u.rad).value
     elif model.frame == 'sidereal':
-        lon_Earth_t = earth_pos.lon_hae[id_t]
-        lon_Earth_0 = earth_pos.lon_hae[0]
-        lon_Earth_rad = H._zerototwopi_(lon_Earth_t - lon_Earth_0)
+        lon_Earth_t = earth_pos.lon_hae[id_t].value
+        lon_Earth_0 = earth_pos.lon_hae[0].value
+        lon_Earth_rad = zerototwopi(lon_Earth_t - lon_Earth_0)
     
     # check if fieldline tracing will need to start before the model run start
     if time < buffertime:
@@ -1366,7 +1386,7 @@ def find_Earth_connected_field_line(model, time):
             model.time_spunup = tgrid_s
 
     time_start_s = (time - buffertime).to(u.s).value
-    start_lon = H._zerototwopi_(lon_Earth_rad - 1)
+    start_lon = zerototwopi(lon_Earth_rad - 1)
     
     # first minimise the longitude for a fixed time
     result = minimize(_return_distance_for_given_lon_, x0=start_lon,
@@ -1393,7 +1413,7 @@ def find_Earth_connected_field_line(model, time):
     # ====================================
     
     # order  points in increasing angle from the initial value
-    rel_lon = H._zerototwopi_(longrid_rad - start_lon)
+    rel_lon = zerototwopi(longrid_rad - start_lon)
     sort_indices = np.argsort(rel_lon)
     plotlon = longrid_rad[sort_indices]
     plotr = rstreak[sort_indices]
@@ -1409,8 +1429,8 @@ def find_Earth_connected_field_line(model, time):
     plotr = np.append(plotr, r_min)
     # compute the long of the footpoint assuming a constant solar wind speed
     dt = (dr * u.km / (350 * u.km / u.s)).to(u.s)
-    dlon = (2*np.pi)*(dt/model.rotation_period).value 
-    plotlon = np.append(plotlon, H._zerototwopi_(plotlon[-1] + dlon))
+    dlon = (2*np.pi)*(dt/model.rotation_period).value
+    plotlon = np.append(plotlon, zerototwopi(plotlon[-1] + dlon))
 
     return plotlon, (plotr*u.km).to(u.solRad).value, optimal_lon, optimal_t
 
@@ -1457,7 +1477,7 @@ def run_WSA_HUXt_td_wedge_about_observer(start_dt, stop_dt, vel_path, vel_format
     # make a dataframe from this
     coords = pd.DataFrame()
     coords['r_AU'] = coord.radius.value
-    coords['lon_heeq'] = H._zerototwopi_(coord.lon.value * np.pi/180)
+    coords['lon_heeq'] = zerototwopi(coord.lon.value * np.pi/180)
     coords['lat_heeq'] = coord.lat.value * np.pi/180
     coords['mjd'] = np.linspace(smjd, fmjd, len(coords))
     coords['datetime'] = Time(coords['mjd'] + 2400000.5, format='jd').to_datetime()
@@ -1489,9 +1509,9 @@ def run_WSA_HUXt_td_wedge_about_observer(start_dt, stop_dt, vel_path, vel_format
         thislat = (lat*np.pi/180)*u.rad
         # create the HUXt input from the WSA files
         vlongs, brlongs, lon, mjds, times = Hin.huxt_td_input_from_WSA_runs(vel_path, start_dt, stop_dt,
-                                                                        latitude=thislat, deacc=deacc,
-                                                                        input_res_days=0.1,
-                                                                        format_template=vel_format_template)
+                                                                            latitude=thislat, deacc=deacc,
+                                                                            input_res_days=0.1,
+                                                                            format_template=vel_format_template)
 
         # set up the model, with (optional) time-dependent bpol boundary conditions
         model = Hin.set_time_dependent_boundary(vlongs, mjds, start_dt, simtime, lon_start=obj_min_lon*u.rad,
@@ -1511,10 +1531,35 @@ def run_WSA_HUXt_td_wedge_about_observer(start_dt, stop_dt, vel_path, vel_format
     # loop through each time step and interpolate in lat
     for t in range(len(huxtvals)):
         # get this lat
-        lat_t = np.interp(huxtvals.loc[t,'mjd'], coords['mjd'], coords['lat_heeq'])
+        lat_t = np.interp(huxtvals.loc[t, 'mjd'], coords['mjd'], coords['lat_heeq'])
         b_lat_t = [df.loc[t, 'bpol'] if t in df.index else None for df in huxt_cuts]
         huxt_ts.loc[t, 'bpol'] = np.interp(lat_t, np.deg2rad(lat_list), b_lat_t)
         v_lat_t = [df.loc[t, 'vsw'] if t in df.index else None for df in huxt_cuts]
         huxt_ts.loc[t, 'vsw'] = np.interp(lat_t, np.deg2rad(lat_list), v_lat_t)
         
     return huxt_ts
+
+
+def zerototwopi(angles):
+    """
+    Function to constrain angles to the 0 - 2pi domain.
+    Args:
+        angles: a numpy array of angles.
+    Returns:
+        angles_out: a numpy array of angles constrained to 0 - 2pi domain.
+    """
+    # Check if angles has astropy unit.
+    if isinstance(angles, u.Quantity):
+        angles_out = angles.to(u.rad).value
+    else:
+        angles_out = angles
+
+    twopi = 2.0 * np.pi
+    a = -np.floor_divide(angles_out, twopi)
+    angles_out = angles_out + (a * twopi)
+
+    # If it came in with units, restore them
+    if isinstance(angles, u.Quantity):
+        angles_out = angles_out * u.rad
+
+    return angles_out
