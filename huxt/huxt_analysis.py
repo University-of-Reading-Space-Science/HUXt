@@ -108,7 +108,7 @@ def plot(model, time, save=False, tag='', fighandle=np.nan, axhandle=np.nan, min
 
     # Add on CME boundaries
     if model.track_cmes:
-        cme_colors = ['r', 'c', 'm', 'y', 'deeppink', 'darkorange']
+        cme_colors = get_cme_colors()
         for j, cme in enumerate(model.cmes):
             cid = np.mod(j, len(cme_colors))
             cme_lons = cme.coords[id_t]['lon']
@@ -129,22 +129,13 @@ def plot(model, time, save=False, tag='', fighandle=np.nan, axhandle=np.nan, min
     if not minimalplot:
         
         # determine which bodies should be plotted
-        plot_observers = list(zip(['EARTH'], ['ko']))
-        plot_observers.append(('STA', 'c*'))
-        if model.time_init < datetime.datetime(2016, 8, 21):
-            plot_observers.append(('STB', 'y*'))
-        if model.r[-1] < 350 * u.solRad:
-            plot_observers.append(('VENUS', 'yo'))
-            plot_observers.append(('MERCURY', 'mo'))
-        if model.r[-1] > 350 * u.solRad:
-            plot_observers.append(('MARS', 'ro'))
-        if model.r[-1] > 1100 * u.solRad:
-            plot_observers.append(('JUPITER', 'mo'))   
-        if model.r[-1] > 2000 * u.solRad:
-            plot_observers.append(('SATURN', 'yo'))      
+        planet_list = get_planets_to_plot(model)
+        spacecraft_list = get_spacecraft_to_plot(model)
+        observers_list = planet_list + spacecraft_list
 
-        # Add on observers 
-        for body, style in plot_observers:
+        # Add on observers
+        styles = observer_styles()
+        for body in observers_list:
             obs = model.get_observer(body)
             deltalon = 0.0 * u.rad
             if model.frame == 'sidereal':
@@ -152,12 +143,13 @@ def plot(model, time, save=False, tag='', fighandle=np.nan, axhandle=np.nan, min
                 deltalon = earth_pos.lon_hae[id_t] - earth_pos.lon_hae[0]
 
             obslon = zerototwopi(obs.lon[id_t] + deltalon)
-            ax.plot(obslon, obs.r[id_t], style, markersize=14, label=body)
+            ax.plot(obslon, obs.r[id_t], markersize=14, color=styles[body]['color'], marker=styles[body]['marker'],
+                    linestyle='', label=body)
 
         # Add on a legend.
         if annotateplot:
-            ax.legend(ncol=5, loc='lower center', frameon=False, fontsize=14, 
-                      handletextpad=0.2, columnspacing=1.0,  bbox_to_anchor=(0.5, -0.22))
+            ax.legend(ncol=len(observers_list), loc='lower center', frameon=False, fontsize=14,
+                      handletextpad=0.1, columnspacing=0.5,  bbox_to_anchor=(0.5, -0.18))
             
         ax.patch.set_facecolor('slategrey')
         pos = ax.get_position()
@@ -357,7 +349,7 @@ def plot_radial(model, time, lon, save=False, tag=''):
     ymax = 1000
 
     # Plot the CME points on if needed
-    cme_colors = ['r', 'c', 'm', 'y', 'deeppink', 'darkorange']
+    cme_colors = get_cme_colors()
     for c, cme in enumerate(model.cmes):
         cc = np.mod(c, len(cme_colors))
 
@@ -779,7 +771,7 @@ def plot3d_radial_lat_slice(model3d, time, lon=np.nan * u.deg, save=False, tag='
     cnt.set_edgecolor("face")
 
     # Trace the CME boundaries
-    cme_colors = ['r', 'c', 'm', 'y', 'deeppink', 'darkorange']
+    cme_colors = get_cme_colors()
     for n in range(0, len(model.cmes)):
 
         # Get latitudes 
@@ -821,12 +813,16 @@ def plot3d_radial_lat_slice(model3d, time, lon=np.nan * u.deg, save=False, tag='
             ax.plot(lats.to(u.rad), (cme_r * u.km).to(u.solRad), color=cme_colors[n], linewidth=3)
 
     # determine which bodies should be plotted
-    plot_observers = zip(['EARTH', 'VENUS', 'MERCURY', 'STA', 'STB'], ['ko', 'mo', 'co', 'rs', 'y^'])
-    if model.r[0] > 200 * u.solRad:
-        plot_observers = zip(['EARTH', 'MARS', 'JUPITER', 'SATURN'], ['ko', 'mo', 'ro', 'cs'])
+    planet_list = get_planets_to_plot(model)
+    spacecraft_list = get_spacecraft_to_plot(model)
+    observer_list = planet_list + spacecraft_list
 
+    if model.r[0] > 200 * u.solRad:
+        observer_list = ['EARTH', 'MARS', 'JUPITER', 'SATURN']
+
+    styles = observer_styles()
     # Add on observers 
-    for body, style in plot_observers:
+    for body in observer_list:
         obs = model.get_observer(body)
         deltalon = 0.0 * u.rad
 
@@ -838,10 +834,11 @@ def plot3d_radial_lat_slice(model3d, time, lon=np.nan * u.deg, save=False, tag='
         bodylon = zerototwopi(obs.lon[id_t] + deltalon)
         # plot bodies that are close to being in the plane
         if abs(bodylon - lon_out) < model.dlon * 2:
-            ax.plot(obs.lat[id_t], obs.r[id_t], style, markersize=16, label=body)
+            ax.plot(obs.lat[id_t], obs.r[id_t], markersize=16, label=body, linestyle='',
+                    marker=styles[body]['marker'], color=styles[body]['color'])
 
     # Add on a legend.
-    fig.legend(ncol=5, loc='lower center', frameon=False, handletextpad=0.2, columnspacing=1.0)
+    fig.legend(ncol=len(observer_list), loc='lower center', frameon=False, handletextpad=0.1, columnspacing=0.5)
 
     ax.patch.set_facecolor('slategrey')
     fig.subplots_adjust(left=0.05, bottom=0.16, right=0.95, top=0.99)
@@ -1010,7 +1007,7 @@ def plot_bpol(model, time, save=False, tag='', fighandle=np.nan, axhandle=np.nan
     cnt.set_edgecolor("face")
 
     # Add on CME boundaries
-    cme_colors = ['r', 'c', 'm', 'y', 'deeppink', 'darkorange']
+    cme_colors = get_cme_colors()
     for j, cme in enumerate(model.cmes):
         cid = np.mod(j, len(cme_colors))
         cme_lons = cme.coords[id_t]['lon']
@@ -1028,11 +1025,16 @@ def plot_bpol(model, time, save=False, tag='', fighandle=np.nan, axhandle=np.nan
     if not minimalplot:
 
         # determine which bodies should be plotted
-        plot_observers = zip(['EARTH', 'VENUS', 'MERCURY', 'STA', 'STB'], ['ko', 'mo', 'co', 'rs', 'y^'])
+        planet_list = get_planets_to_plot(model)
+        spacecraft_list = get_spacecraft_to_plot(model)
+        observer_list = planet_list + spacecraft_list
+
         if model.r[0] > 200 * u.solRad:
-            plot_observers = zip(['EARTH', 'MARS', 'JUPITER', 'SATURN'], ['ko', 'mo', 'ro', 'cs'])
+            observer_list = ['EARTH', 'MARS', 'JUPITER', 'SATURN']
+
+        styles = observer_styles()
         # Add on observers 
-        for body, style in plot_observers:
+        for body in observer_list:
             obs = model.get_observer(body)
             deltalon = 0.0 * u.rad
             if model.frame == 'sidereal':
@@ -1040,10 +1042,11 @@ def plot_bpol(model, time, save=False, tag='', fighandle=np.nan, axhandle=np.nan
                 deltalon = earth_pos.lon_hae[id_t] - earth_pos.lon_hae[0]
 
             obslon = zerototwopi(obs.lon[id_t] + deltalon)
-            ax.plot(obslon, obs.r[id_t], style, markersize=16, label=body)
+            ax.plot(obslon, obs.r[id_t],  markersize=16, label=body, linestyle='',
+                    marker=styles[body]['marker'], color=styles[body]['color'])
 
         # Add on a legend.
-        fig.legend(ncol=5, loc='lower center', frameon=False, handletextpad=0.2, columnspacing=1.0)
+        fig.legend(ncol=len(observer_list), loc='lower center', frameon=False, handletextpad=0.1, columnspacing=0.5)
 
         ax.patch.set_facecolor('slategrey')
         fig.subplots_adjust(left=0.05, bottom=0.16, right=0.95, top=0.99)
@@ -1563,3 +1566,78 @@ def zerototwopi(angles):
         angles_out = angles_out * u.rad
 
     return angles_out
+
+
+def observer_styles():
+    """Returns a dictionary giving the colors and marker styles to use for each planet and spacecraft."""
+
+    styles = {'MERCURY':{'marker':'o', 'color':'darkviolet'},
+              'VENUS':{'marker':'o', 'color':'hotpink'},
+              'EARTH':{'marker':'o', 'color':'black'},
+              'MARS':{'marker':'o', 'color':'lightcoral'},
+              'JUPITER':{'marker':'o', 'color':'darkorange'},
+              'SATURN':{'marker':'o', 'color':'moccasin'},
+              'ACE':{'marker':'^', 'color':'tab:gray'},
+              'STA':{'marker':'^', 'color':'tab:red'},
+              'STB':{'marker':'^', 'color':'tab:cyan'},
+              'PSP':{'marker':'^', 'color':'tab:orange'},
+              'SOLO':{'marker':'^', 'color':'tab:pink'}}
+
+    return styles
+
+
+def get_planets_to_plot(model):
+    """
+    Helper function for plotting - produces a list of planet names to be plotted.
+    Args:
+        model: A solved HUXt instance
+    Returns:
+        planet_list: A list of planets to plot.
+    """
+    planet_list = ['EARTH']
+    if model.r[-1] < 350 * u.solRad:
+        planet_list.append('VENUS')
+        planet_list.append('MERCURY')
+    if model.r[-1] > 350 * u.solRad:
+        planet_list.append('MARS')
+    if model.r[-1] > 1100 * u.solRad:
+        planet_list.append('JUPITER')
+    if model.r[-1] > 2000 * u.solRad:
+        planet_list.append('SATURN')
+
+    return planet_list
+
+
+def get_spacecraft_to_plot(model):
+    """
+        Helper function for plotting - produces a list of spacecarft names to be plotted.
+        Args:
+            model: A solved HUXt instance
+        Returns:
+            spacecraft_list: A list of spacecraft to plot.
+        """
+    spacecraft_list = []
+    if model.r[0] < 200 * u.solRad:
+        if model.time_init > datetime.datetime(2007, 1, 1):
+            spacecraft_list.append('STA')
+            if model.time_init < datetime.datetime(2016, 8, 21):
+                spacecraft_list.append('STB')
+
+        if model.time_init > datetime.datetime(2018, 8, 13):
+            spacecraft_list.append('PSP')
+
+        if model.time_init > datetime.datetime(2020, 2, 11):
+            spacecraft_list.append('SOLO')
+
+        if model.time_init > datetime.datetime(2006, 7, 3):
+            spacecraft_list.append('ACE')
+
+    return spacecraft_list
+
+
+def get_cme_colors():
+    """
+    Return a list of colors for plotting CME boundaries
+    """
+    cme_colors = ['r', 'c', 'm', 'y', 'deeppink', 'darkorange']
+    return cme_colors
