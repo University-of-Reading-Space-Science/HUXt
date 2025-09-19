@@ -39,7 +39,8 @@ dependencies = [
 "huxt.notebooks" = ["*.ipynb"]
 
 [project.scripts]
-huxt-make-ephemeris = "huxt.scripts.make_ephemeris:main"	
+huxt-make-ephemeris = "huxt.scripts.make_ephemeris:main"
+huxt-open-examples = "huxt.scripts.open_examples_notebook:main"
 
 [project.urls]
 Homepage = "https://github.com/University-of-Reading-Space-Science/HUXt"

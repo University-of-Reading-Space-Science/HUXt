@@ -13,6 +13,7 @@ build:
   script: {{PYTHON}} -m pip install . --no-deps --ignore-installed --no-cache-dir -vvv
   entry_points:
     - huxt-make-ephemeris = huxt.scripts.make_ephemeris:main
+    - huxt-open-examples = huxt.scripts.open_examples_notebook:main
 
 requirements:
   host:
