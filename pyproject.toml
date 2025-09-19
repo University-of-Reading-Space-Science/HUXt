@@ -38,6 +38,9 @@ dependencies = [
 "huxt.data.example_inputs.WSA_GONGZ" = ["*.fits"]
 "huxt.notebooks" = ["*.ipynb"]
 
+[project.scripts]
+huxt-make-ephemeris = "huxt.scripts.make_ephemeris:main"	
+
 [project.urls]
 Homepage = "https://github.com/University-of-Reading-Space-Science/HUXt"
 Repository = "https://github.com/University-of-Reading-Space-Science/HUXt.git"
