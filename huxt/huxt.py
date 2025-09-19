@@ -8,12 +8,8 @@ from astropy.time import Time, TimeDelta
 import h5py
 import numpy as np
 from numba import jit
-from packaging import version
 from pathlib import Path
 from sunpy.coordinates import sun
-
-# check the numpy version, as this can cause all manner of difficult-to-diagnose problems
-assert (version.parse(np.version.version) >= version.parse("1.18"))
 
 
 class Observer:
@@ -1498,14 +1494,11 @@ def _setup_dirs_():
         dirs: A dictionary of full paths to HUXt directories of code, data, figures, and relevant files.
     """
 
-    # Get path of huxt.py, and work out root dir of HUXt repository
+    # Get path of huxt.py
     cwd = os.path.abspath(os.path.dirname(__file__))
-    root = os.path.dirname(cwd)
 
-    dirs = {'root': root,
-            'ephemeris': os.path.join(root, 'data', 'ephemeris', 'ephemeris.hdf5'),
-            'example_inputs': os.path.join(root, 'data', 'example_inputs'),
-            'test_data': os.path.join(root, 'data', 'test_data')}
+    dirs = {'ephemeris': os.path.join(cwd, 'data', 'ephemeris', 'ephemeris.hdf5'),
+            'example_inputs': os.path.join(cwd, 'data', 'example_inputs')}
 
     bc_dir = Path(user_data_dir(appname='huxt', appauthor=False), "data", 'boundary_conditions')
     bc_dir.mkdir(parents=True, exist_ok=True)

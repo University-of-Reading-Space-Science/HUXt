@@ -67,8 +67,8 @@ def test_time_dependent():
     cme_test = model_test.cmes[0]
 
     # Load the reference model output
-    dirs = H._setup_dirs_()
-    test_case_path = os.path.join(dirs['test_data'], 'HUXt_CR2080_time_dependent_test_case.hdf5')
+    test_dir = os.path.abspath(os.path.dirname(__file__))
+    test_case_path = os.path.join(test_dir, 'reference_data', 'HUXt_CR2080_time_dependent_test_case.hdf5')
     model_ref, cme_list_ref = H.load_HUXt_run(test_case_path)
     cme_ref = model_ref.cmes[0]
 
@@ -98,8 +98,8 @@ def test_time_dependent():
         arrival_stats_test['lon'] = arrival_stats_test['lon'].to(u.rad) - 2 * np.pi * u.rad
 
     # Load in reference CME arrival stats
-    dirs = H._setup_dirs_()
-    test_cme_path = os.path.join(dirs['test_data'], 'cme_arrival_calc_test.hdf5')
+    test_dir = os.path.abspath(os.path.dirname(__file__))
+    test_cme_path = os.path.join(test_dir, 'reference_data', 'cme_arrival_calc_test.hdf5')
     cme_ref = h5py.File(test_cme_path, 'r')
 
     hit_ref = cme_ref['hit'][()]
@@ -150,8 +150,8 @@ def test_streaklines():
     model_test.solve(cme_list, streak_carr=lon_grid)
 
     # load in the test data
-    dirs = H._setup_dirs_()
-    test_case_path = os.path.join(dirs['test_data'], 'HUXt_CR2080_streaklines_test_case.hdf5')
+    test_dir = os.path.abspath(os.path.dirname(__file__))
+    test_case_path = os.path.join(test_dir, 'reference_data', 'HUXt_CR2080_streaklines_test_case.hdf5')
     h5f = h5py.File(test_case_path, 'r')
     vgrid = np.array(h5f['v_grid'])
     streakline_particles_r = np.array(h5f['streak_particles_r'])
@@ -218,9 +218,8 @@ def test_input_mapping():
     # check the map mapping
     # ======================
 
-    demo_dir = H._setup_dirs_()['example_inputs']
-    wsafilepath = os.path.join(demo_dir, '2022-02-24T22Z.wsa.gong.fits')
-
+    test_dir = os.path.abspath(os.path.dirname(__file__))
+    wsafilepath = os.path.join(test_dir, 'reference_data', '2022-02-24T22Z.wsa.gong.fits')
     wsa_vr_map, vr_longs, vr_lats, br_map, br_longs, br_lats, cr_fits \
         = Hin.get_WSA_maps(wsafilepath)
 
