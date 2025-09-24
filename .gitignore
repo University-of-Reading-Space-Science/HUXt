@@ -15,3 +15,5 @@
 #ipnyb checkpoints
 /code/.ipynb*
 .DS_Store
+
+/huxt.egg-info
