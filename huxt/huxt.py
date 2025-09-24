@@ -148,8 +148,8 @@ class ConeCME:
     @u.quantity_input(thickness=u.solRad)
     @u.quantity_input(fixed_duration=u.s)
     def __init__(self, t_launch=0.0 * u.s, longitude=0.0 * u.deg, latitude=0.0 * u.deg, v=1000.0 * (u.km / u.s),
-                 width=30.0 * u.deg, thickness=5.0 * u.solRad, initial_height=30 * u.solRad, cme_expansion=False,
-                 cme_fixed_duration=False, fixed_duration=6 * 60 * 60 * u.s):
+                 width=30.0 * u.deg, thickness=0.0 * u.solRad, initial_height=30 * u.solRad, cme_expansion=False,
+                 cme_fixed_duration=True, fixed_duration=12 * 60 * 60 * u.s):
 
         """
         Set up a Cone CME with specified parameters.
@@ -317,101 +317,7 @@ class ConeCME:
         # Get body ephemeris
         times = Time([coord['time'] for i, coord in self.coords.items()])
         body = Observer(body_name, times)
-
-        arrive_rad = body.r
-
-        # Correct longitudes if in sidereal frame
-        if self.frame == 'synodic':
-            arrive_lon = body.lon
-        elif self.frame == 'sidereal':
-            earth = Observer('EARTH', times)
-            delta_lon = earth.lon_hae - earth.lon_hae[0]
-            arrive_lon = zerototwopi(body.lon + delta_lon)
-            arrive_lon = arrive_lon * body.lon.unit
-
-        # Center longitudes on CME nose, between -180:180
-        arrive_lon = arrive_lon - self.longitude
-        id_low = arrive_lon < -180 * u.deg
-        id_high = arrive_lon > 180 * u.deg
-        if np.any(id_low):
-            arrive_lon[id_low] += 360 * u.deg
-        elif np.any(id_high):
-            arrive_lon[id_high] -= 360 * u.deg
-
-        hit = False
-        t_front = []
-        r_front = []
-        v_front = []
-        # Loop through coords at each timestep
-        for i, coord in self.coords.items():
-
-            if len(coord['r']) == 0:
-                continue
-
-            # Get lon and radial coords of the CME front only.
-            r_cme = coord['r']
-            v_cme = coord['v']
-            lon_cme = coord['lon']
-            front_id = coord['front_id'] == 1.0
-            r_cme = r_cme[front_id]
-            v_cme = v_cme[front_id]
-            lon_cme = lon_cme[front_id] - self.longitude
-
-            # If there are any CME front coords, then work out pos.
-            if np.any(front_id):
-
-                # Handle case for HUXt run on multiple longitudes first
-                if len(lon_cme) > 1:
-                    # Lookup cme front radial coord along body longitude
-                    r_interp = np.interp(arrive_lon[i], lon_cme, r_cme, left=np.nan, right=np.nan)
-                    v_interp = np.interp(arrive_lon[i], lon_cme, v_cme, left=np.nan, right=np.nan)
-                    if np.isfinite(r_interp):
-                        t_front.append(coord['time'].jd)
-                        r_front.append(r_interp)
-                        v_front.append(v_interp.value)
-                    else:
-                        continue
-
-                elif len(lon_cme) == 1:
-                    # HUXt run on a single longitude, so don't interpolate front to body lon
-                    # Instead, check when cme lon within tolerance lon of body
-
-                    # If body and cme within 1.5 deg of each other, assume close enough for hit.
-                    if np.isclose(arrive_lon[i], lon_cme, atol=1.5 * u.deg):
-                        t_front.append(coord['time'].jd)
-                        r_front.append(r_cme[0])
-                        v_front.append(v_cme[0].value)
-                    else:
-                        continue
-
-                # Has CME front crossed body radius
-                if r_front[-1] > arrive_rad[i]:
-                    hit = True
-                    hit_id = i
-                    hit_lon = arrive_lon[i] + self.longitude
-                    hit_lon = zerototwopi(hit_lon) * u.rad
-                    hit_rad = arrive_rad[i]
-
-                    # Interpolate the arrival time and transit time
-                    # from radial coords before and after body radius
-                    t_arrive = np.interp(arrive_rad[i], r_front, t_front)
-                    t_transit = (t_arrive - t_front[0]) * u.d
-                    t_arrive = Time(t_arrive, format='jd')
-
-                    v_arrive = np.interp(arrive_rad[i], r_front, v_front)
-                    hit_v = v_arrive * u.km / u.s
-                    break
-
-        if not hit:
-            hit_id = False
-            t_arrive = Time("0000-01-01T00:00:00")
-            t_transit = np.nan * u.d
-            hit_lon = np.nan * u.deg
-            hit_rad = np.nan * u.solRad
-            hit_v = np.nan * u.km / u.s
-
-        arrival_stats = {'hit': hit, 'hit_id': hit_id, 't_arrive': t_arrive, 't_transit': t_transit,
-                         'lon': hit_lon, 'r': hit_rad, 'v': hit_v}
+        arrival_stats = self.compute_arrival_at_location(body.lon, body.r)
 
         return arrival_stats
 
@@ -420,22 +326,37 @@ class ConeCME:
         Compute the arrival of the CME at a location specified with a longitude and radius. Takes account of differences
         between synodic and sidereal frames.
         Args:
-            longitude: location longitude at t=0 of the model run. Should be in rads
-            radius: location radius at t=0 of the model run. Should be in units of solRad
+            longitude: location longitude at t=0 of the model run. Should be in rads and be single value or have same
+                       size as time.
+            radius: location radius at t=0 of the model run. Should be in units of solRad and be single value or have
+                    same size as time.
         Returns:
              arrival_stats: A dictionary of the arrival stats of the CME, with keys hit, hit_id, t_arrive, t_transit,
                             lon, r and v.
         """
+        if not isinstance(longitude, u.Quantity):
+            raise TypeError('longitude must be Quantity')
+
+        if not isinstance(radius, u.Quantity):
+            raise TypeError('radius must be Quantity')
 
         # Get body ephemeris
         times = Time([coord['time'] for i, coord in self.coords.items()])
 
-        arrive_rad = np.ones(times.size) * radius
+        is_scalar = np.ndim(longitude) & np.ndim(radius)  # np.iscalar doesnt work on quantities
+        if not is_scalar:
+            # If not scalar, must have coords for each time step.
+            match_len = (longitude.size == radius.size) & (longitude.size == times.size)
+            if not match_len:
+                raise ValueError('longitude and radius must be single values or be arrays of length equal to the number'
+                                 ' of time steps')
+
+        if is_scalar == 1:
+            arrive_rad = np.ones(times.size) * radius
+            arrive_lon = np.ones(times.size) * longitude
 
         # Correct longitudes if in sidereal frame
-        if self.frame == 'synodic':
-            arrive_lon = np.ones(times.size) * longitude
-        elif self.frame == 'sidereal':
+        if self.frame == 'sidereal':
             earth = Observer('EARTH', times)
             delta_lon = earth.lon_hae - earth.lon_hae[0]
             arrive_lon = zerototwopi(longitude + delta_lon)

@@ -56,8 +56,7 @@ def test_time_dependent():
     v_boundary[95:125] = 700 * (u.km / u.s)
 
     #  Add a CME
-    cme = H.ConeCME(t_launch=0.5 * u.day, longitude=0.0 * u.deg, width=30 * u.deg, v=1000 * (u.km / u.s),
-                    thickness=5 * u.solRad)
+    cme = H.ConeCME(t_launch=0.5 * u.day, longitude=0.0 * u.deg, width=30 * u.deg, v=1000 * (u.km / u.s))
     cme_list = [cme]
 
     #  Setup HUXt to do a 5-day simulation, with model output every 4 timesteps (roughly half and hour time step)
@@ -117,6 +116,8 @@ def test_time_dependent():
     assert arrival_stats_test['hit_id'] == hit_id_ref
     assert np.allclose(arrival_stats_test['t_arrive'].jd, t_arrive_ref.jd)
     assert np.allclose(arrival_stats_test['t_transit'], t_transit_ref)
+    print(lon_ref)
+    print(arrival_stats_test['lon'])
     assert np.allclose(arrival_stats_test['lon'], lon_ref)
     assert np.allclose(arrival_stats_test['r'], r_ref)
     assert np.allclose(arrival_stats_test['v'], v_ref)
@@ -135,8 +136,7 @@ def test_streaklines():
     v_boundary[95:125] = 700 * (u.km / u.s)
 
     #  Add a CME
-    cme = H.ConeCME(t_launch=0.5 * u.day, longitude=0.0 * u.deg, width=30 * u.deg, v=1000 * (u.km / u.s),
-                    thickness=5 * u.solRad)
+    cme = H.ConeCME(t_launch=0.5 * u.day, longitude=0.0 * u.deg, width=30 * u.deg, v=1000 * (u.km / u.s))
     cme_list = [cme]
 
     #  Setup HUXt to do a 5-day simulation, with model output every 4 timesteps (roughly half and hour time step)
