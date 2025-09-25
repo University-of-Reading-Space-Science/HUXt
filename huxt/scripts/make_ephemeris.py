@@ -1,9 +1,11 @@
 from astropy.time import Time, TimeDelta
 import astropy.units as u
 import astropy.coordinates as acoords
+import datetime
 import h5py
-import sunpy.coordinates as coords
 import numpy as np
+import requests
+import sunpy.coordinates as coords
 
 from huxt import huxt as H
 
@@ -66,20 +68,19 @@ def main():
         # Get start and stop times for the ephemeris, based on the body
         t_start = Time('1963-01-01T00:00:00').to_datetime()
         t_stop = Time('2029-01-01T00:00:00').to_datetime()
-        if body in ['STA', 'STB']:
+        if body == 'STA':
             t_start = Time('2007-01-01T00:00:00')
-            if body == 'STA':
-                t_stop = Time.now() + TimeDelta(90, format='jd', scale=None)  # Horizons has STA for 100 days ahead.
-                t_stop = t_stop.to_datetime()
-            elif body == 'STB':
-                t_stop = Time('2024-10-25T00:00:00').to_datetime()
+            t_stop = get_STA_latest_horizons_date()
+        elif body == 'STB':
+            t_start = Time('2007-01-01T00:00:00')
+            t_stop = Time('2024-10-25T00:00:00').to_datetime()
         elif body == 'PSP':
             t_start = Time('2018-08-13T00:00:00')
         elif body == 'SOLO':
             t_start = Time('2020-02-11T00:00:00')
         elif body == 'ACE':
             t_start = Time('2006-07-03T00:00:00')
-            t_stop = Time.now() + TimeDelta(60, format='jd', scale=None)  # Horizons has ACE for 71 days ahead.
+            t_stop = get_ACE_latest_horizons_date()
 
         if body in ['STA', 'STB', 'PSP', 'SOLO', 'ACE']:
             time_lookup = {'start': t_start, 'stop': t_stop, 'step': '3H'}
@@ -114,6 +115,46 @@ def main():
 
     ephem.close()
     return
+
+
+def get_STA_latest_horizons_date():
+    """
+    This function queries JPL Horizons to find the current latest available date of ephemeris data for STEREO-A.
+    Typically, JPL Horizons only has 3-4 months of planned predicted ephemeris data for STEREO-A
+    """
+    # In the query, -234 is the NAIF code of STEREO-A. This query URL was given in an email exchange with JPL Horizons
+    # by Jon Giorgini.
+    query = "https://ssd.jpl.nasa.gov/api/horizons.api?format=text&OBJ_DATA='YES'&MAKE_EPHEM='NO'&COMMAND='-234'"
+    response = requests.get(query)
+    # This response is some paragraphs and a table. We want the date in the bottom right corner of the table.
+    lines = response.text.split("\n")
+    final_line = lines[-3].split()
+    final_date = final_line[-1]
+    print(f"STEREO-A ephemeris data available out to {final_date}")
+    ephemeris_date_limit = datetime.datetime.strptime(final_date, "%Y-%b-%d")
+    # Take a day off so that we don't bump into the limit
+    ephemeris_date_limit = ephemeris_date_limit - datetime.timedelta(days=1)
+    return ephemeris_date_limit
+
+
+def get_ACE_latest_horizons_date():
+    """
+    This function queries JPL Horizons to find the current latest available date of ephemeris data for ACE.
+    Typically, JPL Horizons only has 2-3 months of planned predicted ephemeris data for ACE
+    """
+    # In the query, -92 is the NAIF code of ACE. This query URL was given in an email exchange with JPL Horizons
+    # by Jon Giorgini.
+    query = "https://ssd.jpl.nasa.gov/api/horizons.api?format=text&OBJ_DATA='YES'&MAKE_EPHEM='NO'&COMMAND='-92'"
+    response = requests.get(query)
+    # This response is some paragraphs and a table. We want the date in the bottom right corner of the table.
+    lines = response.text.split("\n")
+    final_line = lines[-3].split()
+    final_date = final_line[-1]
+    print(f"ACE ephemeris data available out to {final_date}")
+    ephemeris_date_limit = datetime.datetime.strptime(final_date, "%Y-%b-%d")
+    # Take a day off so that we don't bump into the limit
+    ephemeris_date_limit = ephemeris_date_limit - datetime.timedelta(days=1)
+    return ephemeris_date_limit
 
 
 if __name__ == "__main__":

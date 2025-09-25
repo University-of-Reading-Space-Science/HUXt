@@ -43,7 +43,9 @@ class Observer:
             body: String indicating which body to look up the positions of .
             times: A list/array of Astropy Times to interpolate the coordinate of the selected body.
         """
-        bodies = ["MERCURY", "VENUS", "EARTH", "MARS", "JUPITER", "SATURN", "ACE", "STA", "STB", "PSP", "SOLO"]
+        craft = ["ACE", "STA", "STB", "PSP", "SOLO"]
+        planets = ["MERCURY", "VENUS", "EARTH", "MARS", "JUPITER", "SATURN"]
+        bodies = planets + craft
         if body.upper() in bodies:
             self.body = body.upper()
         else:
@@ -58,8 +60,18 @@ class Observer:
 
         # Now get observers coordinates
         all_time = Time(ephem[self.body]['HEEQ']['time'], format='jd')
-        # Pad out the window to account for single values being passed. 
-        dt = TimeDelta(2 * 60 * 60, format='sec')
+
+        # STEREO-A and ACE have shorter lengths of ephemeris data. Check requested times not outside those available.
+        if np.any(times > all_time[-1]):
+            raise ValueError(f"{body} ephemeris extends to {all_time[-1].isot}. Requested times are outside this limit."
+                             f" Updating the HUXt ephemeris file may resolve this issue.")
+
+        # Pad out the window to account for single values being passed.
+        if body in craft:
+            dt = TimeDelta(2 * 60 * 60, format='sec') # craft ephem is 4 hourly, so dt=2
+        elif body in planets:
+            dt = TimeDelta(6 * 60 * 60, format='sec') # planet ephem is 12 hourly, so dt=6
+
         id_epoch = (all_time >= (times.min() - dt)) & (all_time <= (times.max() + dt))
         epoch_time = all_time[id_epoch]
 
