@@ -11,11 +11,10 @@ from pathlib import Path
 from numba import jit
 from scipy.optimize import minimize
 import sunpy
-from sunpy.coordinates import sun
 from sunpy.coordinates import get_horizons_coord
 
-from . import huxt as H
-from . import huxt_inputs as Hin
+from . import huxt as h
+from . import huxt_inputs as hin
 
 mpl.rc("axes", labelsize=16)
 mpl.rc("ytick", labelsize=16)
@@ -65,7 +64,7 @@ def plot(model, time, save=False, tag='', fighandle=np.nan, axhandle=np.nan, min
     id_t = np.argmin(np.abs(model.time_out - time))
 
     # Get plotting data
-    lon_arr, dlon, nlon = H.longitude_grid()
+    lon_arr, dlon, nlon = h.longitude_grid()
     lon, rad = np.meshgrid(lon_arr.value, model.r.value)
 
     orig_cmap = mpl.cm.viridis
@@ -211,7 +210,7 @@ def plot(model, time, save=False, tag='', fighandle=np.nan, axhandle=np.nan, min
                     r_max = model.r[-1].to(u.solRad).value
                     dr = r_max - plotr[0]
                     # compute the long of the outer footpoint assuming a constant solar wind speed
-                    dt = (dr * u.solRad / (450 *u.km /u.s)).to(u.s)
+                    dt = (dr * u.solRad / (450 * u.km / u.s)).to(u.s)
                     dlon_streak = (2*np.pi)*(dt/model.rotation_period).value
                     outer_lon = zerototwopi(plotlon[0] - dlon_streak)
                     # check that this new longitude was actually simulated
@@ -256,6 +255,7 @@ def animate(model, tag, duration=10, fps=20, plotHCS=True, trace_earth_connectio
         duration: the movie duration, in seconds
         fps: frames per second
         plotHCS: Boolean flag on whether to plot the heliospheric current sheet location.
+        trace_earth_connection: Boolean flag on whether to plot the earth connected streak line.
         outputfilepath: full path, including filename if output is to be saved anywhere other than huxt/figures
         plot_rmax: float (no units, but in rS). Limit outer boundary to help with field lines during CMEs
     Returns:
@@ -305,6 +305,7 @@ def animate(model, tag, duration=10, fps=20, plotHCS=True, trace_earth_connectio
     print('mp4 file written to ' + str(filepath))
 
     return
+
 
 def plot_radial(model, time, lon, save=False, tag=''):
     """
@@ -511,13 +512,9 @@ def get_observer_timeseries(model, observer='Earth', suppress_warning=False):
         id_lon = np.argmin(np.abs(model_lons - model_lon_obs[t]))
 
         # check whether the observer is within the model domain
-        if ((obs_pos.r[t].value < model.r[0].value) or
-                (obs_pos.r[t].value > model.r[-1].value) or
-                (
-                        (abs(model_lons[id_lon] - model_lon_obs[t]) > model.dlon.value) and
-                        (abs(model_lons[id_lon] + 2 * np.pi - model_lon_obs[t]) > model.dlon.value)
-                )
-        ):
+        if ((obs_pos.r[t].value < model.r[0].value) or (obs_pos.r[t].value > model.r[-1].value) or
+           ((abs(model_lons[id_lon] - model_lon_obs[t]) > model.dlon.value) and
+           (abs(model_lons[id_lon] + 2 * np.pi - model_lon_obs[t]) > model.dlon.value))):
 
             bpol[t] = np.nan
             speed[t] = np.nan
@@ -576,7 +573,6 @@ def get_HUXt_at_position_HEEQ(model, target_mjd, target_r, target_lon_heeq):
 
     # find only the time stamps that are within the model run
     nt = len(target_mjd)
-    time = np.ones(nt) * np.nan
     lon = np.ones(nt) * np.nan
     rad = np.ones(nt) * np.nan
     speed = np.ones(nt) * np.nan
@@ -585,7 +581,7 @@ def get_HUXt_at_position_HEEQ(model, target_mjd, target_r, target_lon_heeq):
     for t in range(0, nt):
 
         # check the required time is within the model run
-        if(( target_mjd[t]>=tim_mjd[0]) & (target_mjd[t]<=tim_mjd[-1])):
+        if (target_mjd[t] >= tim_mjd[0]) & (target_mjd[t] <= tim_mjd[-1]):
             
             # find the nearest time index in the HUXt run
             id_t = np.argmin(np.abs(tim_mjd - target_mjd[t]))
@@ -601,13 +597,9 @@ def get_HUXt_at_position_HEEQ(model, target_mjd, target_r, target_lon_heeq):
             id_lon = np.argmin(np.abs(model_lons - model_lon_obs))
 
             # check whether the observer radius is within the model domain
-            if ((target_r[t] < model.r[0].value) or
-                    (target_r[t] > model.r[-1].value) or
-                    (
-                            (abs(model_lons[id_lon] - model_lon_obs) > model.dlon.value) and
-                            (abs(model_lons[id_lon] + 2 * np.pi - model_lon_obs) > model.dlon.value)
-                    )
-            ):
+            if ((target_r[t] < model.r[0].value) or (target_r[t] > model.r[-1].value) or
+               ((abs(model_lons[id_lon] - model_lon_obs) > model.dlon.value) and
+               (abs(model_lons[id_lon] + 2 * np.pi - model_lon_obs) > model.dlon.value))):
         
                 bpol[t] = np.nan
                 speed[t] = np.nan
@@ -623,12 +615,11 @@ def get_HUXt_at_position_HEEQ(model, target_mjd, target_r, target_lon_heeq):
                     if hasattr(model, 'b_grid'):
                         bpol[t] = model.b_grid[id_t, id_r, 0]
                 else:
-                    speed[t] = np.interp(model_lon_obs, model.lon.value, 
-                                         model.v_grid[id_t, id_r, :].value,
+                    speed[t] = np.interp(model_lon_obs, model.lon.value, model.v_grid[id_t, id_r, :].value,
                                          period=2 * np.pi)
                     if hasattr(model, 'b_grid'):
-                        bpol[t] = np.interp(model_lon_obs, model.lon.value, 
-                                            model.b_grid[id_t, id_r, :], period=2 * np.pi)
+                        bpol[t] = np.interp(model_lon_obs, model.lon.value, model.b_grid[id_t, id_r, :],
+                                            period=2 * np.pi)
         else:
             print('time outside model domain')
 
@@ -674,7 +665,7 @@ def plot_earth_timeseries(model, plot_omni=True, save=False, tag=''):
 
     if plot_omni:
         # grab the omni data
-        data = Hin.get_omni(starttime, endtime)
+        data = hin.get_omni(starttime, endtime)
         # plot the period of interest
         mask = (data['datetime'] >= starttime) & (data['datetime'] <= endtime)
         plotdata = data[mask]
@@ -719,6 +710,8 @@ def plot3d_radial_lat_slice(model3d, time, lon=np.nan * u.deg, save=False, tag='
         lon: The longitude along which to render the radial-latitude plane.
         save: Boolean to determine if the figure is saved.
         tag: String to append to the filename if saving the figure.
+        fighandle: Pass a figure handle to render the plot in that figure.
+        axhandle: Pass an axes handle to renfer the plot in that axes.
     Returns:
         fig: Figure handle.
         ax: Axes handle.
@@ -961,7 +954,7 @@ def plot_bpol(model, time, save=False, tag='', fighandle=np.nan, axhandle=np.nan
     id_t = np.argmin(np.abs(model.time_out - time))
 
     # Get plotting data
-    lon_arr, dlon, nlon = H.longitude_grid()
+    lon_arr, dlon, nlon = h.longitude_grid()
     lon, rad = np.meshgrid(lon_arr.value, model.r.value)
     mymap = mpl.cm.PuOr
     v_sub = model.b_grid[id_t, :, :].copy()
@@ -1175,10 +1168,10 @@ def trace_field_line_out(v_trl_kms, longrid_rad, rgrid_km, tgrid_s, start_lon, t
                 v_test_kms = np.interp(r_streak_km[it, ilon], rgrid_km, v_trl_kms[it, :, ilon])
                 r_streak_km[it+1, ilon] = r_streak_km[it, ilon] + v_test_kms * dt_s
                 
-                if  r_streak_km[it+1, ilon] > rgrid_km[-1]:
+                if r_streak_km[it+1, ilon] > rgrid_km[-1]:
                     r_streak_km[it+1, ilon] = np.nan
      
-    return r_streak_km[id_t_stop,:]
+    return r_streak_km[id_t_stop, :]
         
 
 @jit(nopython=True)
@@ -1222,12 +1215,9 @@ def min_distance_streakline_point(streak_lon_rad, streak_r_km, point_lon_rad, po
     num_interpolated_points = int(total_length / d)
     
     # Interpolate points along the line
-    intx = np.interp(np.linspace(0, total_length, num_interpolated_points + 1),
-                               padded_cumulative_distances, x)
-    inty = np.interp(np.linspace(0, total_length, num_interpolated_points + 1),
-                               padded_cumulative_distances, y)
+    intx = np.interp(np.linspace(0, total_length, num_interpolated_points + 1), padded_cumulative_distances, x)
+    inty = np.interp(np.linspace(0, total_length, num_interpolated_points + 1), padded_cumulative_distances, y)
 
-    
     # find closest point to Earth
     distances = np.sqrt((intx - Ex)**2 + (inty - Ey)**2)
     
@@ -1268,18 +1258,18 @@ def respinup_model(v_trl_kms, tgrid_s, rgrid_km, longrid_rad, rot_period_s, buff
 
     # get the exact starting time
     nsteps = int(np.ceil(buffer_time_s/dt_s))
-    spinup_tgrid_s = np.arange(-nsteps*dt_s,0, dt_s)
+    spinup_tgrid_s = np.arange(-nsteps * dt_s, 0, dt_s)
     new_tgrid_s = np.append(spinup_tgrid_s, tgrid_s)
 
     new_v_trl_kms = np.ones((len(new_tgrid_s), nr, nlon))
     # put the existing data in
     new_v_trl_kms[nsteps:, :, :] = v_trl_kms[:, :, :]
 
-    for t in range(0,len(spinup_tgrid_s)):
+    for t in range(0, len(spinup_tgrid_s)):
         dt = -spinup_tgrid_s[t]
         dlon = np.mod(2*np.pi * dt / rot_period_s, 2*np.pi)
         this_lons = np.mod(longrid_rad + dlon, 2*np.pi)
-        for r in range(0,nr):
+        for r in range(0, nr):
             new_v_trl_kms[t, r, :] = np.interp(this_lons, longrid_rad, v_trl_kms[0, r, :])
 
     return new_v_trl_kms, new_tgrid_s
@@ -1301,10 +1291,10 @@ def _return_distance_for_given_t_(t, start_lon, v_trl_kms=np.nan, longrid_rad=np
     r_streak = trace_field_line_out(v_trl_kms, longrid_rad, rgrid_km, tgrid_s, start_lon, t, time_stop_s, rot_period_s)
 
     #  the longitude points starting at the initial lon
-    rel_lons = np.mod( longrid_rad - start_lon, 2*np.pi)
+    rel_lons = np.mod(longrid_rad - start_lon, 2*np.pi)
     sort_indices = np.argsort(rel_lons)
     plotlon = longrid_rad[sort_indices]
-    plotr= r_streak[sort_indices]
+    plotr = r_streak[sort_indices]
 
     # then compute the distance to Earth
     dist, r, theta = min_distance_streakline_point(plotlon, plotr, Earth_lon_rad, Earth_r_km)
@@ -1511,13 +1501,13 @@ def run_WSA_HUXt_td_wedge_about_observer(start_dt, stop_dt, vel_path, vel_format
         print('Runnig HUXt at lat = ' + str(lat) + ' degrees')
         thislat = (lat*np.pi/180)*u.rad
         # create the HUXt input from the WSA files
-        vlongs, brlongs, lon, mjds, times = Hin.huxt_td_input_from_WSA_runs(vel_path, start_dt, stop_dt,
+        vlongs, brlongs, lon, mjds, times = hin.huxt_td_input_from_WSA_runs(vel_path, start_dt, stop_dt,
                                                                             latitude=thislat, deacc=deacc,
                                                                             input_res_days=0.1,
                                                                             format_template=vel_format_template)
 
         # set up the model, with (optional) time-dependent bpol boundary conditions
-        model = Hin.set_time_dependent_boundary(vlongs, mjds, start_dt, simtime, lon_start=obj_min_lon*u.rad,
+        model = hin.set_time_dependent_boundary(vlongs, mjds, start_dt, simtime, lon_start=obj_min_lon*u.rad,
                                                 lon_stop=obj_max_lon*u.rad, r_min=r_min, r_max=obj_max_r*u.solRad,
                                                 bgrid_Carr=brlongs, dt_scale=4, latitude=thislat, frame='sidereal')
         model.solve([])
@@ -1571,17 +1561,17 @@ def zerototwopi(angles):
 def observer_styles():
     """Returns a dictionary giving the colors and marker styles to use for each planet and spacecraft."""
 
-    styles = {'MERCURY':{'marker':'o', 'color':'darkviolet'},
-              'VENUS':{'marker':'o', 'color':'hotpink'},
-              'EARTH':{'marker':'o', 'color':'black'},
-              'MARS':{'marker':'o', 'color':'lightcoral'},
-              'JUPITER':{'marker':'o', 'color':'darkorange'},
-              'SATURN':{'marker':'o', 'color':'moccasin'},
-              'ACE':{'marker':'^', 'color':'tab:gray'},
-              'STA':{'marker':'^', 'color':'tab:red'},
-              'STB':{'marker':'^', 'color':'tab:cyan'},
-              'PSP':{'marker':'^', 'color':'tab:orange'},
-              'SOLO':{'marker':'^', 'color':'tab:pink'}}
+    styles = {'MERCURY': {'marker': 'o', 'color': 'darkviolet'},
+              'VENUS': {'marker': 'o', 'color': 'hotpink'},
+              'EARTH': {'marker': 'o', 'color': 'black'},
+              'MARS': {'marker': 'o', 'color': 'lightcoral'},
+              'JUPITER': {'marker': 'o', 'color': 'darkorange'},
+              'SATURN': {'marker': 'o', 'color': 'moccasin'},
+              'ACE': {'marker': '^', 'color': 'tab:gray'},
+              'STA': {'marker': '^', 'color': 'tab:red'},
+              'STB': {'marker': '^', 'color': 'tab:cyan'},
+              'PSP': {'marker': '^', 'color': 'tab:orange'},
+              'SOLO': {'marker': '^', 'color': 'tab:pink'}}
 
     return styles
 

@@ -25,7 +25,7 @@ def test_analytic_solution():
     cme_list = []
     model.solve(cme_list)
 
-    # Compute analytical solution from equation 5 in Owens et al 2020
+    # Compute analytical solution from equation 5 in Owens et al. 2020
     const = H.huxt_constants()
     alpha = const['alpha']
     rh = const['r_accel']

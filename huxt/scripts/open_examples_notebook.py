@@ -1,11 +1,9 @@
-import os
 import shutil
 import subprocess
 import sys
 from pathlib import Path
 from appdirs import user_data_dir
 
-import huxt.huxt as h
 
 def main():
     """Copy the master version of the examples notebook and then open in browser"""
@@ -25,6 +23,7 @@ def main():
     subprocess.run([sys.executable, "-m", "jupyter", "lab", nbk_out_path])
 
     return
+
 
 if __name__ == '__main__':
     main()

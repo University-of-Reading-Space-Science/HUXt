@@ -1,4 +1,4 @@
-from astropy.time import Time, TimeDelta
+from astropy.time import Time
 import astropy.units as u
 import astropy.coordinates as acoords
 import datetime
@@ -7,7 +7,7 @@ import numpy as np
 import requests
 import sunpy.coordinates as coords
 
-from huxt import huxt as H
+from huxt import huxt as h
 
 
 def get_naif_body_codes_dict():
@@ -55,7 +55,7 @@ def main():
 
     """
 
-    dirs = H._setup_dirs_()
+    dirs = h._setup_dirs_()
     ephemeris_path = dirs['ephemeris']
     print(f"Updating ephemeris file: {ephemeris_path}")
     ephem = h5py.File(ephemeris_path, 'w')

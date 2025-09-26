@@ -5,7 +5,7 @@ import shutil
 import numpy as np
 import astropy.units as u
 
-import huxt.huxt as H
+import huxt.huxt as h
 
 
 def make_time_dependent_test_data():
@@ -19,11 +19,11 @@ def make_time_dependent_test_data():
     v_boundary[95:125] = 700 * (u.km / u.s)
 
     #  Add a CME
-    cme = H.ConeCME(t_launch=0.5 * u.day, longitude=0.0 * u.deg, width=30 * u.deg, v=1000 * (u.km / u.s))
+    cme = h.ConeCME(t_launch=0.5 * u.day, longitude=0.0 * u.deg, width=30 * u.deg, v=1000 * (u.km / u.s))
     cme_list = [cme]
 
     #  Setup HUXt to do a 5-day simulation, with model output every 4 timesteps (roughly half and hour time step)
-    model_test = H.HUXt(v_boundary=v_boundary, cr_num=2080, cr_lon_init=180 * u.deg, simtime=5 * u.day, dt_scale=4)
+    model_test = h.HUXt(v_boundary=v_boundary, cr_num=2080, cr_lon_init=180 * u.deg, simtime=5 * u.day, dt_scale=4)
 
     model_test.solve(cme_list)
     cme_test = model_test.cmes[0]
@@ -72,11 +72,11 @@ def make_streakline_test_data():
     v_boundary[95:125] = 700 * (u.km / u.s)
 
     #  Add a CME
-    cme = H.ConeCME(t_launch=0.5 * u.day, longitude=0.0 * u.deg, width=30 * u.deg, v=1000 * (u.km / u.s))
+    cme = h.ConeCME(t_launch=0.5 * u.day, longitude=0.0 * u.deg, width=30 * u.deg, v=1000 * (u.km / u.s))
     cme_list = [cme]
 
     #  Setup HUXt to do a 5-day simulation, with model output every 4 timesteps (roughly half and hour time step)
-    model_test = H.HUXt(v_boundary=v_boundary, cr_num=2080, cr_lon_init=180 * u.deg, simtime=5 * u.day, dt_scale=4)
+    model_test = h.HUXt(v_boundary=v_boundary, cr_num=2080, cr_lon_init=180 * u.deg, simtime=5 * u.day, dt_scale=4)
 
     # trace a bunch of field lines from a range of evenly spaced Carrington longitudes
     dlon = (20 * u.deg).to(u.rad).value

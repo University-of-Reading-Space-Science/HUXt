@@ -67,10 +67,10 @@ class Observer:
                              f" Updating the HUXt ephemeris file may resolve this issue.")
 
         # Pad out the window to account for single values being passed.
-        if body in craft:
-            dt = TimeDelta(2 * 60 * 60, format='sec') # craft ephem is 4 hourly, so dt=2
-        elif body in planets:
-            dt = TimeDelta(6 * 60 * 60, format='sec') # planet ephem is 12 hourly, so dt=6
+        if self.body in craft:
+            dt = TimeDelta(2 * 60 * 60, format='sec')  # craft ephem is 4 hourly, so dt=2
+        elif self.body in planets:
+            dt = TimeDelta(6 * 60 * 60, format='sec')  # planet ephem is 12 hourly, so dt=6
 
         id_epoch = (all_time >= (times.min() - dt)) & (all_time <= (times.max() + dt))
         epoch_time = all_time[id_epoch]
@@ -483,7 +483,7 @@ class HUXt:
         dt_scale: Integer scaling number to set the model output time step relative to the models CFL time step.
         dtdr: Ratio of the model time step and radial grid step (in seconds/km).
         frame : either synodic or sidereal
-        kms: astropy.unit instance of km/s.       
+        kms: An astropy unit instance of km/s.
         lon: Array of model longtidues (in radians).
         model_time: time in seconds from the model start time. Includes spin up
         nlon: Number of longitudinal grid points.
@@ -679,7 +679,7 @@ class HUXt:
         self.cmes = []
 
         self.track_cmes = track_cmes  # If true, cmes are tracked, which costs a little extra computation time
-        self.accel_limit = accel_limit # If true, no acceleration is applied to speeds >650km/s
+        self.accel_limit = accel_limit  # If true, no acceleration is applied to speeds >650km/s
 
         # Numpy array of model parameters for parsing to external functions that use numba
         self.model_params = np.array([self.dtdr.value, self.alpha.value, self.r_accel.value,
@@ -938,8 +938,8 @@ class HUXt:
                 lon_src = zerototwopi((carr - self.cr_lon_init)) * u.rad
 
                 # adjust the source longitude for the spin-up time
-                lon_0 = zerototwopi(lon_src.to(u.rad).value
-                                      - 2 * np.pi * self.buffertime.to(u.s) / self.rotation_period)
+                dl_spinup = 2 * np.pi * self.buffertime.to(u.s) / self.rotation_period
+                lon_0 = zerototwopi(lon_src.to(u.rad).value - dl_spinup)
 
                 # compute the model longitude of the streak line footpoint with time
                 streak_lon_t = (lon_0 + time_from_start * 2 * np.pi / self.rotation_period) * u.rad
@@ -982,15 +982,14 @@ class HUXt:
                 bslice = self.input_v_ts[:, i] * np.nan
 
             # actually run the HUXt solver
-            v, cme_r_bounds, cme_v_bounds, \
-            hcs_r, streak_r = solve_radial(self.input_v_ts[:, i],
-                                           bslice,
-                                           self.input_iscme_ts[:, i],
-                                           self.model_time,
-                                           self.rrel.value,
-                                           self.model_params,
-                                           n_cme, n_hcs_max,
-                                           streak_times[i, :, :, :])
+            v, cme_r_bounds, cme_v_bounds, hcs_r, streak_r = solve_radial(self.input_v_ts[:, i],
+                                                                          bslice,
+                                                                          self.input_iscme_ts[:, i],
+                                                                          self.model_time,
+                                                                          self.rrel.value,
+                                                                          self.model_params,
+                                                                          n_cme, n_hcs_max,
+                                                                          streak_times[i, :, :, :])
             # Save the output at each longitude
             self.v_grid[:, :, i] = v * self.kms
             self.cme_particles_r[:, :, :, i] = cme_r_bounds * u.dimensionless_unscaled
@@ -1001,7 +1000,7 @@ class HUXt:
                 self.streak_particles_r[:, :, :, i] = streak_r * u.dimensionless_unscaled
 
         # Update CMEs positions by tracking through the solution.
-        if self.track_cmes == True:
+        if self.track_cmes:
             updated_cmes = []
             for cme_num, cme in enumerate(self.cmes):
                 cme._track_(self, cme_num)
@@ -1011,9 +1010,6 @@ class HUXt:
 
         # Create the bgrid
         if self.track_b:
-            # create the input lon grid
-            dlon = self.dlon.value
-            lon_grid = np.arange(dlon / 2, 2 * np.pi - dlon / 2 + 0.01, dlon)
 
             if self.nlon == 1:
                 lons = np.array([self.lon.value])
@@ -1136,10 +1132,10 @@ class HUXt:
 class HUXt3d:
     """
     A class containing a list of HUXt classes, to enable mutliple latitudes to
-    be simulated, plotted, animated, etc, together
+    be simulated, plotted, animated, etc. together
     
     Attributes inherited from HUXt. Additional:
-        lat: The list of latitudes of individual HUXt runs, in radians from equator
+        lat: The list of latitudes of individual HUXt runs, in radians from the equator
         nlat: The number of latitudes simulated
         HUXtlat: List of individual HUXt model classes at each latitude
         v_in: a list of Carrington longitude solar wind profiles at each simulated latitude
@@ -1169,11 +1165,11 @@ class HUXt3d:
             br_map: Inner Br boundary Carrington map. Must have no units.
             br_map_lat: List of latitude positions for br_map, in radians
             br_map_long: List of Carrington longitudes for br_map, in radians
-            latitude_max: Maximum helio latitude (from equator) of HUXt plane, in degrees
-            latitude_min: Maximum helio latitude (from equator) of HUXt plane, in degrees
+            latitude_max: Maximum helio latitude (from the equator) of HUXt plane, in degrees
+            latitude_min: Maximum helio latitude (from the equator) of HUXt plane, in degrees
             cr_num: Integer Carrington rotation number. Used to determine the planetary and spacecraft positions
             cr_lon_init: Carrington longitude of Earth at model initialisation, in degrees.
-            lon_out: A specific single longitude (relative to Earth_ to compute HUXt solution along, in degrees
+            lon_out: A specific single longitude (relative to Earth) to compute HUXt solution along, in degrees
             lon_start: The first longitude (in a clockwise sense) of the longitude range to solve HUXt over.
             lon_stop: The last longitude (in a clockwise sense) of the longitude range to solve HUXt over.
             r_min: The radial inner boundary distance of HUXt.
@@ -1236,9 +1232,9 @@ def huxt_constants():
         constants: A dictionary of constants that configure HUXt
     """
     nlong = 128  # Number of longitude bins for a full longitude grid [128]
-    dr = 1.5 * u.solRad  # Radial grid step. With v_max, this sets the model time step [1.5*u.solRad]
+    dr = 1.5 * u.solRad  # Radial grid step. With v_max, this sets the model time step [1.5 Rs]
     nlat = 45  # Number of latitude bins for a full latitude grid [45]
-    v_max = 3000 * u.km / u.s  # Maximum expected solar wind speed. Sets timestep [2000*u.km / u.s]
+    v_max = 3000 * u.km / u.s  # Maximum expected solar wind speed. Sets timestep [3000 km/s]
 
     # CONSTANTS - DON'T CHANGE
     twopi = 2.0 * np.pi
@@ -1489,6 +1485,7 @@ def solve_radial(vinput, binput, iscmeinput, model_time, rrel, params,
     Tracks CME frotns as test particles
     Args:
         vinput: Timeseries of inner boundary solar wind speeds.
+        binput: Timeseries of inner boundary radial magnetic field.
         iscmeinput: Timeseries of in/out of a CME at the inner boundary.
         model_time: Array of model timesteps.
         rrel: Array of model radial coordinates relative to 30rS.
@@ -1510,7 +1507,7 @@ def solve_radial(vinput, binput, iscmeinput, model_time, rrel, params,
     nt_out = np.int32(params[4])
     nr = np.int32(params[5])
     r_boundary = params[7]
-    accel_limit = bool(params[9]) # switch used to determine if speed limit is applied to acceleration.
+    accel_limit = bool(params[9])  # switch used to determine if speed limit is applied to acceleration.
     # Compute the radial grid for the test particles
     rgrid = (rrel - rrel[0]) * 695700.0 + r_boundary  # Can't use astropy.units because numba
     dr = rgrid[1] - rgrid[0]
@@ -1557,7 +1554,7 @@ def solve_radial(vinput, binput, iscmeinput, model_time, rrel, params,
         # Update the inner boundary conditions
         v[0] = vinput[t]
 
-        # see if there's a HCS crossing to be inserted at the boundary
+        # see if there's an HCS crossing to be inserted at the boundary
         if t > 0:
             if binput[t] - binput[t - 1] > 0:
                 r_hcsparticles[hcs_count, 0] = r_boundary
@@ -1611,7 +1608,7 @@ def solve_radial(vinput, binput, iscmeinput, model_time, rrel, params,
         if t > 0 and do_cme:
             for n in range(0, n_cme):  # loop over each CME
                 for bound in range(0, 2):  # loop over front and rear boundaries
-                    if np.isnan(r_cmeparticles[n, bound]) == False:
+                    if not np.isnan(r_cmeparticles[n, bound]):
                         # Linearly interpolate the speed
                         v_test = np.interp(r_cmeparticles[n, bound] - dr / 2, rgrid, v)
 
@@ -1631,7 +1628,7 @@ def solve_radial(vinput, binput, iscmeinput, model_time, rrel, params,
         if t > 0:
             for n in range(0, n_hcs_max):  # loop over each HCS
 
-                if np.isnan(r_hcsparticles[n, 0]) == False:
+                if not np.isnan(r_hcsparticles[n, 0]):
                     # Linearly interpolate the speed
                     v_test = np.interp(r_hcsparticles[n, 0] - dr / 2, rgrid, v)
 
@@ -1646,7 +1643,7 @@ def solve_radial(vinput, binput, iscmeinput, model_time, rrel, params,
         if t > 0 and do_streak:
             for istreak in range(0, n_streaks):
                 for irot in range(0, n_rots):
-                    if np.isnan(r_streakparticles[istreak, irot]) == False:
+                    if not np.isnan(r_streakparticles[istreak, irot]):
                         # Linearly interpolate the speed
                         v_test = np.interp(r_streakparticles[istreak, irot] - dr / 2, rgrid, v)
 
@@ -1686,7 +1683,7 @@ def add_cmes_to_input_series(vinput, model_time, lon, r_boundary, cme_params, la
         r_boundary: The HUXt inner boundary in rS
         cme_params: Array of ConeCME parameters to include in the solution. One row for each CME, with columns as
                     required by _is_in_cone_cme_boundary_expanding_
-        latitude: Latitude (from equator) of the HUXt plane
+        latitude: Latitude (from the equator) of the HUXt plane
     Returns: 
         v: vinput with CME speeds added
         isincme: Boolean time series of CME occurrence at inner boundary
@@ -1820,10 +1817,8 @@ def _is_in_cme_boundary_(r_boundary, lon, lat, time, cme_params):
     cme_t_launch = cme_params[0]
     cme_lon = cme_params[1]
     cme_lat = cme_params[2]
-    # cme_width = cme_params[3]
     cme_v = cme_params[4]
-    # cme_initial_height = cme_params[5]
-    cme_radius = cme_params[6] # the physical width at the inner boundary
+    cme_radius = cme_params[6]  # the physical width at the inner boundary
     cme_thickness = cme_params[7]
     cme_fixed_duration = cme_params[10]
     fixed_duration = cme_params[11]
@@ -2017,7 +2012,7 @@ def bgrid_from_hcs(hcs_particles_r, input_b_ts, model_time, time_out, r_grid, lo
             thistime = time_out[t]
             id_t = np.argmin(np.abs(model_time - thistime))
 
-            # make all of the bgrid at this longitude equal to the inner boundary polarity
+            # make all the bgrid at this longitude equal to the inner boundary polarity
             bgrid[t, :, ilon] = input_b_ts[id_t, id_lon]
 
             # step through each HCS inversion and flip everything beyond each one
