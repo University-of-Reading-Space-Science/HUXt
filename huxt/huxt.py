@@ -1085,9 +1085,21 @@ class HUXt:
         keys = ['cr_num', 'cr_lon_init', 'simtime', 'dt', 'v_max', 'r_accel', 'alpha',
                 'dt_scale', 'time_out', 'dt_out', 'r', 'dr', 'lon', 'dlon', 'r_grid', 'lon_grid',
                 'v_grid', 'latitude', 'v_boundary', '_v_boundary_init_', 'cme_particles_r', 'cme_particles_v',
-                'streak_particles_r', 'hcs_particles_r', 'frame', 'track_cmes', 'accel_limit']
+                'streak_particles_r', 'streak_lon_r0', 'hcs_particles_r', 'frame', 'track_cmes', 'accel_limit',
+                'track_b', 'track_streak']
+
+        # Handle keys to magnetic field arrays seperately
+        mag_keys = ['_b_boundary_init_', 'b_boundary_lons', 'b_boundary', 'b_grid']
 
         for k, v in self.__dict__.items():
+
+            if k == "streak_lon_r0":
+                print("************************")
+                print("************************")
+            print(k)
+            if k == "streak_lon_r0":
+                print("************************")
+                print("************************")
 
             if k in keys:
                 if isinstance(v, str):
@@ -1095,6 +1107,9 @@ class HUXt:
                 elif isinstance(v, u.Quantity):
                     dset = out_file.create_dataset(k, data=v.value)
                     dset.attrs['unit'] = v.unit.to_string()
+                elif isinstance(v, np.ndarray):
+                    dset = out_file.create_dataset(k, data=v)
+                    dset.attrs['unit'] = u.dimensionless_unscaled.to_string()
                 elif isinstance(v, bool):
                     dset = out_file.create_dataset(k, data=int(v))
                     dset.attrs['unit'] = "bool"
@@ -1111,6 +1126,23 @@ class HUXt:
                     dset.dims[2].label = 'longitude'
 
                 out_file.flush()
+
+            # Only save the magnetic field arrays if they exist.
+            if self.track_b:
+                if k in mag_keys:
+                    if isinstance(v, np.ndarray):
+                        dset = out_file.create_dataset(k, data=v)
+                        dset.attrs['unit'] = u.dimensionless_unscaled.to_string()
+                    elif isinstance(v, u.Quantity):
+                        dset = out_file.create_dataset(k, data=v.value)
+                        dset.attrs['unit'] = v.unit.to_string()
+
+                    if k == 'b_grid':
+                        dset.dims[0].label = 'time'
+                        dset.dims[1].label = 'radius'
+                        dset.dims[2].label = 'longitude'
+
+                    out_file.flush()
 
         out_file.close()
         return out_filepath
@@ -1895,19 +1927,40 @@ def load_HUXt_run(filepath):
         frame = data['frame'][()].decode("utf-8")
         track_cmes = bool(data['track_cmes'][()])
         accel_limit = bool(data['accel_limit'][()])
+        track_b = bool(data['track_b'][()])
+        track_streak = bool(data['track_streak'][()])
+
+        if track_b:
+            b_boundary = data['_b_boundary_init_'][()]
+            b_boundary_lons = data['b_boundary_lons'][()] * u.Unit(data['b_boundary_lons'].attrs['unit'])
 
         # Create the model class
-        if nlon == 1:
-            model = HUXt(v_boundary=v_boundary, cr_num=cr_num, cr_lon_init=cr_lon_init,
-                         r_min=r.min(), r_max=r.max(),
-                         lon_out=lon, simtime=simtime,
-                         dt_scale=dt_scale, latitude=lat, frame=frame, track_cmes=track_cmes, accel_limit=accel_limit)
-        elif nlon > 1:
-            model = HUXt(v_boundary=v_boundary, cr_num=cr_num, cr_lon_init=cr_lon_init,
-                         r_min=r.min(), r_max=r.max(),
-                         lon_start=lon.min(), lon_stop=lon.max(),
-                         simtime=simtime, dt_scale=dt_scale,
-                         latitude=lat, frame=frame, track_cmes=track_cmes, accel_limit=accel_limit)
+        if not track_b:
+            if nlon == 1:
+                model = HUXt(v_boundary=v_boundary, cr_num=cr_num, cr_lon_init=cr_lon_init,
+                             r_min=r.min(), r_max=r.max(),
+                             lon_out=lon, simtime=simtime,
+                             dt_scale=dt_scale, latitude=lat, frame=frame,
+                             track_cmes=track_cmes, accel_limit=accel_limit)
+            elif nlon > 1:
+                model = HUXt(v_boundary=v_boundary, cr_num=cr_num, cr_lon_init=cr_lon_init,
+                             r_min=r.min(), r_max=r.max(),
+                             lon_start=lon.min(), lon_stop=lon.max(),
+                             simtime=simtime, dt_scale=dt_scale,
+                             latitude=lat, frame=frame, track_cmes=track_cmes, accel_limit=accel_limit)
+        elif track_b:
+            if nlon == 1:
+                model = HUXt(v_boundary=v_boundary, b_boundary=b_boundary, cr_num=cr_num, cr_lon_init=cr_lon_init,
+                             r_min=r.min(), r_max=r.max(),
+                             lon_out=lon, simtime=simtime,
+                             dt_scale=dt_scale, latitude=lat, frame=frame,
+                             track_cmes=track_cmes, accel_limit=accel_limit)
+            elif nlon > 1:
+                model = HUXt(v_boundary=v_boundary, b_boundary=b_boundary, cr_num=cr_num, cr_lon_init=cr_lon_init,
+                             r_min=r.min(), r_max=r.max(),
+                             lon_start=lon.min(), lon_stop=lon.max(),
+                             simtime=simtime, dt_scale=dt_scale,
+                             latitude=lat, frame=frame, track_cmes=track_cmes, accel_limit=accel_limit)
 
         # Reset the longitudes, as when onlyt a wedge is simulated, it gets confused.
         model.lon = lon
@@ -1916,6 +1969,15 @@ def load_HUXt_run(filepath):
         model.v_grid = data['v_grid'][()] * u.Unit(data['v_boundary'].attrs['unit'])
         model.cme_particles_r = data['cme_particles_r'][()]
         model.cme_particles_v = data['cme_particles_v'][()]
+
+        if track_b:
+            model.b_boundary_lons = b_boundary_lons
+            model.b_grid = data['b_grid'][()]
+            model.hcs_particles_r = data['hcs_particles_r'][()] * u.Unit(data['hcs_particles_r'].attrs['unit'])
+        if track_streak:
+            model.track_streak = track_streak
+            model.streak_particles_r = data['streak_particles_r'][()] * u.Unit(data['streak_particles_r'].attrs['unit'])
+            model.streak_lon_r0 = data['streak_lon_r0'][()]
 
         # Create list of the ConeCMEs
         cme_list = []
