@@ -582,6 +582,10 @@ class HUXt:
         # Setup longitude coordinates - in radians.
         self.lon, self.dlon, self.nlon = longitude_grid(lon_out=lon_out, lon_start=lon_start, lon_stop=lon_stop)
 
+        if (self.frame == 'sidereal') & (self.nlon == 1):
+            print("Warning: HUXt configured for a 1-D run in the sidereal frame. This simulation will not work"
+                  "correctly with functions like huxt_analysis.get_observer_time_series()")
+
         # Set up the latitude
         self.latitude = latitude.to(u.rad)
 

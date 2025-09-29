@@ -491,6 +491,10 @@ def get_observer_timeseries(model, observer='Earth', suppress_warning=False):
     deltalon = obs_pos.lon_hae - earth_pos.lon_hae
     model_lon_obs = zerototwopi(model_lon_earth + deltalon.value)
 
+    if (model.frame == 'sidereal') & (model.nlon == 1) & (not suppress_warning):
+        print("Warning: HUXt configured for a 1-D run in the sidereal frame. This simulation will not work correctly"
+              "with functions like huxt_analysis.get_observer_time_series()")
+
     if model.nlon == 1 and not suppress_warning:
         print('Single longitude simulated. Extracting time series at Observer r')
 
