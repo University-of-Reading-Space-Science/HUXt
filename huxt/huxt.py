@@ -161,7 +161,7 @@ class ConeCME:
     @u.quantity_input(fixed_duration=u.s)
     def __init__(self, t_launch=0.0 * u.s, longitude=0.0 * u.deg, latitude=0.0 * u.deg, v=1000.0 * (u.km / u.s),
                  width=30.0 * u.deg, thickness=0.0 * u.solRad, initial_height=30 * u.solRad, cme_expansion=False,
-                 cme_fixed_duration=True, fixed_duration=12 * 60 * 60 * u.s):
+                 cme_fixed_duration=True, fixed_duration=12 * 60 * 60 * u.s, label=None):
 
         """
         Set up a Cone CME with specified parameters.
@@ -195,6 +195,11 @@ class ConeCME:
         self.cme_expansion = cme_expansion
         self.cme_fixed_duration = cme_fixed_duration
         self.fixed_duration = fixed_duration
+        if isinstance(label, str) | (label is None):
+            self.label = label
+        else:
+            raise ValueError(f'Label must be an instance of str or None, not {type(label)}')
+
         self.__version__ = get_version()
         return
 
@@ -675,7 +680,7 @@ class HUXt:
             # Mesh the spatial coordinates.
         self.lon_grid, self.r_grid = np.meshgrid(self.lon, self.r)
 
-        # Empty dictionary for storing the coordinates of CME boundaries.
+        # Empty list for storing ConeCME objects
         self.cmes = []
 
         self.track_cmes = track_cmes  # If true, cmes are tracked, which costs a little extra computation time
@@ -803,6 +808,7 @@ class HUXt:
         # Quality control the CME list. Check:
         # Only ConeCMEs in list
         # Make sidereal correction if necessary
+        # Check launch time is not in spin up period before simulation time.
         cme_list_checked = []
         for cme in input_cme_list:
 
@@ -822,8 +828,12 @@ class HUXt:
                 else:
                     cme.longitude_huxt = cme.longitude
 
-                # add the CME to the list
-                cme_list_checked.append(cme)
+                if cme.t_launch >= 0*u.s:
+                    # add the CME to the list
+                    cme_list_checked.append(cme)
+                else:
+                    print(f"Warning: ConeCME had negative t_launch ({cme.t_launch}), which is not allowed.")
+                    print("Warning: This ConeCME object was not passed into the HUXt solver")
             else:
                 print("Warning: cme_list contained objects other than ConeCME instances. These were excluded")
 
@@ -1055,6 +1065,13 @@ class HUXt:
 
                 if k == "frame":
                     cmegrp.create_dataset(k, data=v)
+
+                if k == 'label':
+                    if isinstance(v, str):
+                        cmegrp.create_dataset(k, data=v)
+                    else:
+                        cmegrp.create_dataset(k, data='None')
+
 
                 if k not in ["coords", "frame"]:
                     # check if the CME property has a value (new BOOLs do not)
@@ -2007,6 +2024,12 @@ def load_HUXt_run(filepath):
                               initial_height=initial_height)
             
             cme.frame = cme_data['frame'][()].decode("utf-8")
+
+            label = cme_data['frame'][()].decode("utf-8")
+            if label == 'None':
+                cme.label = None
+            else:
+                cme.label = label
 
             # Now sort out coordinates.
             # Use the same dictionary structure as defined in ConeCME._track_

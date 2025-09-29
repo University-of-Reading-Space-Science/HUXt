@@ -999,10 +999,10 @@ def cone_dict_to_cme_list(model, cme_params):
         # Set the initial height to be 21.5 rS, the default for WSA
         iheight = 21.5 * u.solRad
 
-        thick = 0 * u.solRad  # (1.0 - cme_val['xcld']) * radius
+        thick = 0 * u.solRad
 
         cme = h.ConeCME(t_launch=dt_cme, longitude=lon, latitude=lat, width=wid, v=speed, thickness=thick,
-                        initial_height=iheight)
+                        initial_height=iheight, label=f"CME_{cme_id:02d}")
         cme_list.append(cme)
 
     # sort the CME list into chronological order
