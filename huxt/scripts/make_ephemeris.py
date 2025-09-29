@@ -19,6 +19,7 @@ def get_naif_body_codes_dict():
               'STA': -234,
               'STB': -235,
               'ACE': -92,
+              'ULYSSES': -55,
               'MERCURY': 199,
               'VENUS': 299,
               'EARTH': 399,
@@ -81,8 +82,11 @@ def main():
         elif body == 'ACE':
             t_start = Time('2006-07-03T00:00:00')
             t_stop = get_ACE_latest_horizons_date()
+        elif body == 'ULYSSES':
+            t_start = Time('1990-10-7T00:00:00')
+            t_stop = Time('2009-06-29T00:00:00')
 
-        if body in ['STA', 'STB', 'PSP', 'SOLO', 'ACE']:
+        if body in ['STA', 'STB', 'PSP', 'SOLO', 'ACE', 'ULYSSES']:
             time_lookup = {'start': t_start, 'stop': t_stop, 'step': '3H'}
         else:
             time_lookup = {'start': t_start, 'stop': t_stop, 'step': '12H'}

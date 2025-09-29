@@ -43,7 +43,7 @@ class Observer:
             body: String indicating which body to look up the positions of .
             times: A list/array of Astropy Times to interpolate the coordinate of the selected body.
         """
-        craft = ["ACE", "STA", "STB", "PSP", "SOLO"]
+        craft = ["ACE", "STA", "STB", "PSP", "SOLO", "ULYSSES"]
         planets = ["MERCURY", "VENUS", "EARTH", "MARS", "JUPITER", "SATURN"]
         bodies = planets + craft
         if body.upper() in bodies:

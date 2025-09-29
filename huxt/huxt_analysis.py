@@ -132,6 +132,9 @@ def plot(model, time, save=False, tag='', fighandle=np.nan, axhandle=np.nan, min
         spacecraft_list = get_spacecraft_to_plot(model)
         observers_list = planet_list + spacecraft_list
 
+        print(spacecraft_list)
+        print(observers_list)
+
         # Add on observers
         styles = observer_styles()
         for body in observers_list:
@@ -1575,7 +1578,8 @@ def observer_styles():
               'STA': {'marker': '^', 'color': 'tab:red'},
               'STB': {'marker': '^', 'color': 'tab:cyan'},
               'PSP': {'marker': '^', 'color': 'tab:orange'},
-              'SOLO': {'marker': '^', 'color': 'tab:pink'}}
+              'SOLO': {'marker': '^', 'color': 'tab:pink'},
+              'ULYSSES': {'marker': '^', 'color': 'tab:brown'}}
 
     return styles
 
@@ -1625,6 +1629,10 @@ def get_spacecraft_to_plot(model):
 
         if model.time_init > datetime.datetime(2006, 7, 3):
             spacecraft_list.append('ACE')
+
+    if (model.time_init > datetime.datetime(1990, 10, 7)) & \
+       (model.time_init < datetime.datetime(2009, 6, 29)):
+        spacecraft_list.append('ULYSSES')
 
     return spacecraft_list
 
