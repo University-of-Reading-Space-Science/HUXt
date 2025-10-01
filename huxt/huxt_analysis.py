@@ -1629,7 +1629,9 @@ def get_spacecraft_to_plot(model):
 
     if (model.time_init > datetime.datetime(1990, 10, 7)) & \
        (model.time_init < datetime.datetime(2009, 6, 29)):
-        spacecraft_list.append('ULYSSES')
+
+        if (model.r.min() > 280*u.solRad) | (model.r.max() > 280*u.solRad):
+            spacecraft_list.append('ULYSSES')
 
     return spacecraft_list
 
