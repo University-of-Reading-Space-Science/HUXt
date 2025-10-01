@@ -2079,9 +2079,6 @@ def huxt_td_input_from_WSA_runs(datadir, start_dt, stop_dt, latitude, deacc=True
     # get all the files in a given directory that are within the data range
     files_with_dates = get_files_in_date_range(datadir, start_dt, stop_dt, format_template)
 
-    for file_date, filepath in files_with_dates:
-        print(f"{file_date}: {filepath}")
-
     # read in each file and extract the speeds and Br at a given lat
     vlong_list = []
     brlong_list = []

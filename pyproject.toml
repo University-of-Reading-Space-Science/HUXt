@@ -29,7 +29,8 @@ dependencies = [
   "pyhdf==0.11.6",
   "requests==2.32.5",
   "scipy==1.16.1",
-  "sunpy==7.0.1"
+  "sunpy==7.0.1",
+  "tqdm==4.67.1"
 ]
 
 [tool.setuptools.package-data]

@@ -4,7 +4,7 @@
 ## Additions
 - Added `accel_limit` keyword to HUXt, which turns off the solar wind acceleration factor for speeds >650km/s. This mostly affects the simulaiton of fast CMEs, which were unphysically accelerated by this term.
 - A script `make_ephemeris` is included to regenerate the HUXt ephemeris file from JPL Horizons. It is necessary to run this intermittently for the most recent STEREO-A and ACE position data. A command line tool `huxt-make-ephemeris` is created when huxt is installed as a package.
-- The new ephemeris file includes positions for Solar Orbiter, Parker Solar Probe, and ACE. These craft are added to the plotting functions.
+- The new ephemeris file includes positions for Solar Orbiter, Parker Solar Probe, ACE, and ULYSSES. These craft are added to the plotting functions.
 - A command line tool `huxt-open-examples` is created when huxt is installed, which copies the master copy of the examples notebook into the users huxt directory and then opens this copy in the browser.
 - The `pyproject.toml` can be used to install huxt locally.
 - Updated `environment.yml` file and requirements in `pyproject.toml` to fix all the dependabot alerts and safety issues.
@@ -12,6 +12,10 @@
 ## Breaking changes
 - The `accel_limi` keyword is set to `True` by default, and so unless this is switched to `False`, huxt will return slighty different simulations if any of the boundary conditions (or ConeCMEs) had speeds >650km/s.
 - The new ephemeris file is obtained from JPL Horizons, and has a reduced cadence for planets (12 hr) and increased cadence for craft (3 hr) to better manage the ephemeris file size. This means functions to compute CME arrival times at bodies, or extract time series at bodies, will return slightly different results. In the test suite this resulted in a change in CME arrival times of around 1 minute, which is far smaller than the model time step and is essentially noise.
+- Added a `label` keyword into the ConeCME class, as this is helpful for connecting cone CME parameters from the cone files to the simulation outputs. However, this means the save and load functionality will not work save files produced with earlier versions of HUXt.
+
+## Bug Fixes
+- A bug existed where ConeCMEs with negative `t_launch` attributes could be partially injected into the simulation if they have a duration that spanned into positive model times. These events were not properly injected into the simulation, with only some fraction of the perturbation included. Now ConeCMEs with `t_launch` < 0 are excluded from the simulation and a warning is returned about those events that are removed.
 
 # V4.2.3
 ## Bug fixes

@@ -132,9 +132,6 @@ def plot(model, time, save=False, tag='', fighandle=np.nan, axhandle=np.nan, min
         spacecraft_list = get_spacecraft_to_plot(model)
         observers_list = planet_list + spacecraft_list
 
-        print(spacecraft_list)
-        print(observers_list)
-
         # Add on observers
         styles = observer_styles()
         for body in observers_list:

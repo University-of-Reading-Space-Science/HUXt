@@ -1077,7 +1077,7 @@ class HUXt:
                         cmegrp.create_dataset(k, data='None')
 
 
-                if k not in ["coords", "frame"]:
+                if k not in ["coords", "frame", "label"]:
                     # check if the CME property has a value (new BOOLs do not)
                     if hasattr(v, 'value'):
                         dset = cmegrp.create_dataset(k, data=v.value)
@@ -1113,14 +1113,6 @@ class HUXt:
         mag_keys = ['_b_boundary_init_', 'b_boundary_lons', 'b_boundary', 'b_grid']
 
         for k, v in self.__dict__.items():
-
-            if k == "streak_lon_r0":
-                print("************************")
-                print("************************")
-            print(k)
-            if k == "streak_lon_r0":
-                print("************************")
-                print("************************")
 
             if k in keys:
                 if isinstance(v, str):
@@ -2125,4 +2117,4 @@ def bgrid_from_hcs(hcs_particles_r, input_b_ts, model_time, time_out, r_grid, lo
 
 
 def get_version():
-    return "4.2.3"
+    return "5.0.0"
