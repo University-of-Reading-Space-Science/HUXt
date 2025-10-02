@@ -1,0 +1,49 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "huxt"
+version = "5.0.0"
+description = "Heliospheric Upwind eXtrapolation with Time-dependence. A computationally efficient solar wind model."
+readme = "README.md"
+authors = [
+  {name = "Luke Barnard", email = "l.a.barnard@reading.ac.uk" },
+  {name = "Mathew Owens", email = "m.j.owens@reading.ac.uk" },
+]
+license-files = ["LICENSE.md"]
+requires-python = "==3.12.11"
+dependencies = [
+  "appdirs==1.4.4",
+  "astropy==7.1.0",
+  "dtaidistance==2.3.13",
+  "h5py==3.14.0",
+  "httplib2==0.30.0",
+  "imageio==2.37.0",
+  "imageio-ffmpeg==0.6.0",
+  "jupyterlab==4.4.7",
+  "matplotlib==3.10.6",
+  "numba==0.61.2",
+  "numpy==2.2.6",
+  "pandas==2.3.2",
+  "pyhdf==0.11.6",
+  "requests==2.32.5",
+  "scipy==1.16.1",
+  "sunpy==7.0.1",
+  "tqdm==4.67.1"
+]
+
+[tool.setuptools.package-data]
+"huxt.data.ephemeris" = ["*.hdf5"]
+"huxt.data.example_inputs" = ["*.fits", "*.in", "*.fits", "*.nc", "*.dat"]
+"huxt.data.example_inputs.WSA_GONGZ" = ["*.fits"]
+"huxt.notebooks" = ["*.ipynb"]
+
+[project.scripts]
+huxt-make-ephemeris = "huxt.scripts.make_ephemeris:main"
+huxt-open-examples = "huxt.scripts.open_examples_notebook:main"
+
+[project.urls]
+Homepage = "https://github.com/University-of-Reading-Space-Science/HUXt"
+Repository = "https://github.com/University-of-Reading-Space-Science/HUXt.git"
+Issues = "https://github.com/University-of-Reading-Space-Science/HUXt/issues"
