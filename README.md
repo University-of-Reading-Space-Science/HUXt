@@ -15,12 +15,15 @@ As of v5.0.0, HUXt can be installed via conda-forge. We recommend installing HUX
 
 ```
 >>> conda create --name huxt huxt
+>>> conda activate huxt
 ```
 
-Alternatively, if you are developing features in HUXt, it can be easier to work with an editable installation. To do this, it is easiest to clone this repository, and with the anaconda prompt in the HUXt root directory:
+## Development Installation
+If you are developing features in HUXt, it can be easier to work with an editable installation. To do this, it is easiest to clone this repository, and with the anaconda prompt in the HUXt root directory:
 
 ```
 >>> conda env create -f environment.yml
+>>> conda activate huxt
 >>> pip install --no-deps -e .
 ```
 
@@ -29,8 +32,8 @@ A simple `pip install -e .` will not create an useable version of HUXt, as we de
 Installation through either method produces two command line tools. The first, `huxt-open-examples` starts JupyterLab and opens our examples notebook in a browser. The second `huxt-make-ephemeris` runs a script that updates the HUXt ephemeris file using JPL Horizons. This is intermittently necessary to update the ephemeris data for the STEREO-A and ACE spacecraft, as JPL Horizons only provides ephemeris data for these missions a few months into the future. 
 
 
-## Testing
-A small test suite is included in ['test_huxt.py'](tests/test_huxt.py), which compares a local version of HUXt against a simple analytical solution and some reference simulation data included in this repository. The test suite uses `pytest`, which is included in the `huxt` environment. Using the anaconda prompt from the root directory of `HUXt`, these tests can be performed by calling pytest from within the HUXt root directory:
+### Testing
+For testing with a development installation, a small test suite is included in ['test_huxt.py'](tests/test_huxt.py), which compares a local version of HUXt against a simple analytical solution and some reference simulation data included in this repository. The test suite uses `pytest`, which is included in the `huxt` environment. Using the anaconda prompt from the root directory of `HUXt`, these tests can be performed by calling pytest from within the HUXt root directory:
 ```
 pytest
 ```
