@@ -1,0 +1,27 @@
+# Ignore all files in debug folder
+*
+
+# But track specific documentation files
+!.gitignore
+!README.md
+!*.md
+!LICENSE.md
+
+# Ignore Python cache and outputs
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Ignore data and output files
+*.png
+*.pdf
+*.hdf5
+*.nc
+*.fits
+
+# Ignore Jupyter notebooks
+*.ipynb
+
+# Ignore log files
+*.log

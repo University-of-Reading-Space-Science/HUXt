@@ -147,6 +147,8 @@ class ConeCME:
         initial_height: Initiation height of the CME, in km. Defaults to HUXt inner boundary at 30 solar radii.
         radius: Initial radius of the CME, in km.
         thickness: Thickness of the CME cone, in km.
+        cme_density: Mass density of the CME in kg/m³. Defaults to twice the solar wind density at initial_height.
+        cme_temperature: Temperature of the CME in Kelvin. Defaults to twice the solar wind temperature at initial_height.
         coords: Dictionary containing the radial and longitudinal (for HUXT2D) coordinates of the of Cone CME for each
                 model time step.
     """
@@ -159,9 +161,12 @@ class ConeCME:
     @u.quantity_input(width=u.deg)
     @u.quantity_input(thickness=u.solRad)
     @u.quantity_input(fixed_duration=u.s)
+    @u.quantity_input(cme_density=(u.kg / u.m**3))
+    @u.quantity_input(cme_temperature=u.K)
     def __init__(self, t_launch=0.0 * u.s, longitude=0.0 * u.deg, latitude=0.0 * u.deg, v=1000.0 * (u.km / u.s),
                  width=30.0 * u.deg, thickness=0.0 * u.solRad, initial_height=30 * u.solRad, cme_expansion=False,
-                 cme_fixed_duration=True, fixed_duration=12 * 60 * 60 * u.s, label=None):
+                 cme_fixed_duration=True, fixed_duration=12 * 60 * 60 * u.s, 
+                 cme_density=np.nan * (u.kg / u.m**3), cme_temperature=np.nan * u.K, label=None):
 
         """
         Set up a Cone CME with specified parameters.
@@ -176,6 +181,10 @@ class ConeCME:
             cme_expansion : Whether to insert a declining speed profile at the inner boundary
             cme_fixed_duration : Whether to fix the CME duration, or do a standard cone CME
             fixed_duration : If fixed duration, the value to use
+            cme_density: CME mass density in kg/m³. If not provided, defaults to twice the solar wind density 
+                        at initial_height.
+            cme_temperature: CME temperature in Kelvin. If not provided, defaults to twice the solar wind temperature
+                           at initial_height.
         Returns:
             None
         """
@@ -195,6 +204,26 @@ class ConeCME:
         self.cme_expansion = cme_expansion
         self.cme_fixed_duration = cme_fixed_duration
         self.fixed_duration = fixed_duration
+        
+        # Set CME density and temperature
+        if np.isnan(cme_density.value):
+            # Calculate default solar wind density at initial_height and multiply by 2
+            r_1au = 215.0 * u.solRad  # 1 AU in solar radii
+            rho_1au = 8.35e-21 * (u.kg / u.m**3)  # Solar wind density at 1 AU
+            sw_density_at_height = rho_1au * (r_1au / initial_height)**2
+            self.cme_density = 2.0 * sw_density_at_height
+        else:
+            self.cme_density = cme_density
+            
+        if np.isnan(cme_temperature.value):
+            # Calculate default solar wind temperature at initial_height and multiply by 2
+            r_1au = 215.0 * u.solRad  # 1 AU in solar radii
+            temp_1au = 1.0e5 * u.K  # Solar wind temperature at 1 AU
+            sw_temp_at_height = temp_1au * (r_1au / initial_height)**0.67
+            self.cme_temperature = 2.0 * sw_temp_at_height
+        else:
+            self.cme_temperature = cme_temperature
+            
         if isinstance(label, str) | (label is None):
             self.label = label
         else:
@@ -221,7 +250,9 @@ class ConeCME:
                           self.longitude.to('rad').value,
                           self.cme_expansion,
                           self.cme_fixed_duration,
-                          self.fixed_duration.to('s').value]
+                          self.fixed_duration.to('s').value,
+                          self.cme_density.value,
+                          self.cme_temperature.value]
         return cme_parameters
 
     def _track_(self, model, cme_id):
@@ -514,11 +545,15 @@ class HUXt:
     @u.quantity_input(v_boundary=(u.km / u.s))
     @u.quantity_input(simtime=u.day)
     @u.quantity_input(cr_lon_init=u.deg)
-    def __init__(self, v_boundary=np.nan * (u.km / u.s), b_boundary=np.nan, cr_num=np.nan, cr_lon_init=360.0 * u.deg,
+    def __init__(self, v_boundary=np.nan * (u.km / u.s), b_boundary=np.nan, 
+                 rho_boundary=np.nan, temp_boundary=np.nan,
+                 cr_num=np.nan, cr_lon_init=360.0 * u.deg,
                  latitude=0 * u.deg, r_min=30 * u.solRad, r_max=240 * u.solRad, lon_out=np.nan * u.rad,
                  lon_start=np.nan * u.rad, lon_stop=np.nan * u.rad, simtime=5.0 * u.day, dt_scale=1.0, frame='synodic',
-                 input_v_ts=np.nan * (u.km / u.s), input_b_ts=np.nan, input_iscme_ts=np.nan, input_t_ts=np.nan * u.s,
-                 track_cmes=True, accel_limit=True):
+                 input_v_ts=np.nan * (u.km / u.s), input_b_ts=np.nan, 
+                 input_rho_ts=np.nan * (u.kg / u.m**3), input_temp_ts=np.nan * u.K, 
+                 input_iscme_ts=np.nan, input_t_ts=np.nan * u.s,
+                 track_cmes=True, accel_limit=True, compressible=False, solver='upwind'):
         """
         Initialise the HUXt model instance.
 
@@ -538,13 +573,30 @@ class HUXt:
             input_v_ts: Time series of inner boundary V conditions. For initialising HUXt with, for example, 
                            in-situ observations from L1. If used as keyword input argument, overrides v_boundary input.
             input_bv_ts: Time series of inner boundary B conditions. For initialising HUXt with, for example, 
-                            in-situ observations from L1. If used as keyword input argument, overrides b_boundary input.              
+                            in-situ observations from L1. If used as keyword input argument, overrides b_boundary input.
+            input_rho_ts: Time series of inner boundary density conditions in kg/m³. For initialising HUXt with, for example,
+                             in-situ observations from L1. If used as keyword input argument, overrides rho_boundary input.
+                             Only used if compressible=True.
+            input_temp_ts: Time series of inner boundary temperature conditions in Kelvin. For initialising HUXt with, for example,
+                              in-situ observations from L1. If used as keyword input argument, overrides temp_boundary input.
+                              Only used if compressible=True.             
             input_t_ts: Times of input_v_ts in seconds, including spin up.
             input_iscme_ts: Boolean mask time series indicating what time steps correspond to CMEs in input_v_ts.
                                If used as keyword input argument, overrides ConeCMEs past to huxt.sovle().
             save_full_v: Boolean flag to determine if full v field (including spin up) is saved for post-processing.
             track_cmes: Boolean flag to determine if CMEs are tracked at run time (small speed reduction).
             accel_limit: Boolean flag to determine if acceleration is switched for speeds above 650 km/s
+            compressible: Boolean flag to use compressible solver instead of incompressible (default False).
+            solver: String specifying the numerical solver to use. Options:
+                   'upwind' (default): First-order upwind scheme (Godunov-type)
+                   'hll': HLL (Harten-Lax-van Leer) Riemann solver with empirical acceleration
+                   'hllc': HLLC (HLL-Contact) Riemann solver with empirical acceleration
+            rho_boundary: Inner density boundary condition in kg/m³. An array of size nlon. Only used if compressible=True.
+                         If not provided, defaults to realistic solar wind density scaled from 1 AU (5 protons/cm³) 
+                         using r⁻² scaling to r_min.
+            temp_boundary: Inner temperature boundary condition in Kelvin. An array of size nlon. Only used if compressible=True.
+                          If not provided, defaults to realistic solar wind temperature scaled from 1 AU (10⁵ K)
+                          using r⁻⁰·⁶⁷ scaling to r_min.
         """
 
         # some constants and units
@@ -552,9 +604,16 @@ class HUXt:
         self.twopi = constants['twopi']
         self.daysec = constants['daysec']
         self.kms = constants['kms']
-        self.alpha = constants['alpha']  # Scale parameter for residual SW acceleration
+        self.alpha = constants['alpha']  # Scale parameter for residual SW acceleration (incompressible)
+        self.alpha_hybrid = constants['alpha_hybrid']  # Scale parameter for HLL Hybrid solver
         self.r_accel = constants['r_accel']  # Spatial scale parameter for residual SW acceleration
         self.__version__ = get_version()
+        
+        # Validate and store solver choice
+        valid_solvers = ['upwind', 'hll', 'hllc']
+        if solver not in valid_solvers:
+            raise ValueError(f"Invalid solver '{solver}'. Must be one of: {valid_solvers}")
+        self.solver = solver
 
         # set the frame fo reference. Synodic keeps ES line at 0 longitude.
         # sidereal means Earth moves to increasing longitude with time
@@ -638,6 +697,44 @@ class HUXt:
             dlon = 2 * np.pi / nb
             self.b_boundary_lons = np.arange(dlon / 2, 2 * np.pi - dlon / 2 + dlon / 10, dlon) * u.rad
 
+        # Handle rho and temp boundaries for compressible solver (rotation done later after cr_lon_init is set)
+        if compressible:
+            if np.all(np.isnan(rho_boundary)):
+                # Calculate realistic default density based on r_min
+                # Solar wind density at 1 AU is ~5 protons/cm³ = 8.35e-21 kg/m³
+                # Density scales as r^-2, so scale from 1 AU to r_min
+                r_1au = 215.0 * u.solRad  # 1 AU in solar radii
+                rho_1au = 8.35e-21 * (u.kg / u.m**3)  # Solar wind density at 1 AU
+                scaling_factor = (r_1au / r_min)**2
+                default_rho = rho_1au * scaling_factor
+                self.rho_boundary = np.ones(len(self.v_boundary_lons)) * default_rho
+                self.rho_boundary_lons = self.v_boundary_lons
+            elif not np.all(np.isnan(rho_boundary)):
+                assert rho_boundary.size < 4600  # this equates to about 9 mins
+                self.rho_boundary = rho_boundary
+                self._rho_boundary_init_ = self.rho_boundary.copy()
+                nrho = len(rho_boundary)
+                dlon = 2 * np.pi / nrho
+                self.rho_boundary_lons = np.arange(dlon / 2, 2 * np.pi - dlon / 2 + dlon / 10, dlon) * u.rad
+
+            if np.all(np.isnan(temp_boundary)):
+                # Calculate realistic default temperature based on r_min
+                # Solar wind temperature at 1 AU is ~100,000 K = 1e5 K
+                # Temperature scales approximately as r^-0.67
+                r_1au = 215.0 * u.solRad  # 1 AU in solar radii
+                temp_1au = 1.0e5 * u.K  # Solar wind temperature at 1 AU
+                scaling_factor = (r_1au / r_min)**0.67
+                default_temp = temp_1au * scaling_factor
+                self.temp_boundary = np.ones(len(self.v_boundary_lons)) * default_temp
+                self.temp_boundary_lons = self.v_boundary_lons
+            elif not np.all(np.isnan(temp_boundary)):
+                assert temp_boundary.size < 4600  # this equates to about 9 mins
+                self.temp_boundary = temp_boundary
+                self._temp_boundary_init_ = self.temp_boundary.copy()
+                ntemp = len(temp_boundary)
+                dlon = 2 * np.pi / ntemp
+                self.temp_boundary_lons = np.arange(dlon / 2, 2 * np.pi - dlon / 2 + dlon / 10, dlon) * u.rad
+
         # add a flag for tracking streaklines
         self.track_streak = False
 
@@ -672,6 +769,20 @@ class HUXt:
         b_b_shifted = self.b_boundary[id_sort]
         self.b_boundary = np.interp(self.b_boundary_lons.value, lon_shifted, b_b_shifted, period=self.twopi)
 
+        # Rotate rho and temp boundaries if compressible
+        if compressible:
+            lon_shifted = zerototwopi((self.rho_boundary_lons - self.cr_lon_init).value)
+            id_sort = np.argsort(lon_shifted)
+            lon_shifted = lon_shifted[id_sort]
+            rho_b_shifted = self.rho_boundary[id_sort]
+            self.rho_boundary = np.interp(self.rho_boundary_lons.value, lon_shifted, rho_b_shifted, period=self.twopi)
+
+            lon_shifted = zerototwopi((self.temp_boundary_lons - self.cr_lon_init).value)
+            id_sort = np.argsort(lon_shifted)
+            lon_shifted = lon_shifted[id_sort]
+            temp_b_shifted = self.temp_boundary[id_sort]
+            self.temp_boundary = np.interp(self.temp_boundary_lons.value, lon_shifted, temp_b_shifted, period=self.twopi)
+
         # Compute the buffertime required to spin up HUXt, based on minimum speed on the inner boundary
         # and span of radial grid
         self.buffertime = 1.5 * (self.rrel[-1] / self.v_boundary.min()).to(u.day)
@@ -689,9 +800,37 @@ class HUXt:
 
         self.track_cmes = track_cmes  # If true, cmes are tracked, which costs a little extra computation time
         self.accel_limit = accel_limit  # If true, no acceleration is applied to speeds >650km/s
+        self.compressible = compressible  # If true, use compressible solver instead of incompressible
+        
+        # Initialize density and temperature grids for compressible solver
+        if self.compressible:
+            self.rho_grid = np.zeros((self.nt_out, self.nr, self.nlon)) * (u.kg / u.m**3)
+            self.temp_grid = np.zeros((self.nt_out, self.nr, self.nlon)) * u.K
+            
+            # Initialize with radial scaling from inner boundary conditions
+            # rho ~ r^-2, temp ~ r^-0.67
+            r_inner = self.r[0]
+            for ilon in range(self.nlon):
+                # Get the boundary conditions at this longitude
+                rho_inner = self.rho_boundary[ilon]
+                temp_inner = self.temp_boundary[ilon]
+                
+                # Apply radial scaling to all radii
+                for ir in range(self.nr):
+                    r_ratio = (r_inner / self.r[ir]).decompose().value
+                    self.rho_grid[0, ir, ilon] = rho_inner * r_ratio**2
+                    self.temp_grid[0, ir, ilon] = temp_inner * r_ratio**0.67
 
         # Numpy array of model parameters for parsing to external functions that use numba
-        self.model_params = np.array([self.dtdr.value, self.alpha.value, self.r_accel.value,
+        # Select appropriate alpha based on solver type:
+        # - HLL/HLLC solvers: alpha_hybrid (0.0, pressure gradient only) if compressible
+        # - upwind/incompressible: alpha (0.15)
+        if self.solver in ['hll', 'hllc'] and self.compressible:
+            alpha_to_use = self.alpha_hybrid
+        else:
+            alpha_to_use = self.alpha
+        
+        self.model_params = np.array([self.dtdr.value, alpha_to_use.value, self.r_accel.value,
                                       self.dt_scale.value, self.nt_out, self.nr, self.nlon,
                                       self.r[0].to('km').value,
                                      self.rotation_period.to(u.s).value, int(self.accel_limit)])
@@ -703,6 +842,10 @@ class HUXt:
         self.input_iscme_ts_flag = False
         self.input_v_ts = np.nan * (u.km / u.s)
         self.input_v_ts_flag = False
+        self.input_rho_ts = np.nan * (u.kg / u.m**3)
+        self.input_rho_ts_flag = False
+        self.input_temp_ts = np.nan * u.K
+        self.input_temp_ts_flag = False
         if not np.all(np.isnan(input_v_ts)):
 
             # find the required longitudes
@@ -724,6 +867,16 @@ class HUXt:
             if not np.all(np.isnan(input_iscme_ts)):
                 self.input_iscme_ts = input_iscme_ts[:, y_ind]
                 self.input_iscme_ts_flag = True
+
+            # Density time series
+            if not np.all(np.isnan(input_rho_ts)):
+                self.input_rho_ts = input_rho_ts[:, y_ind]
+                self.input_rho_ts_flag = True
+
+            # Temperature time series
+            if not np.all(np.isnan(input_temp_ts)):
+                self.input_temp_ts = input_temp_ts[:, y_ind]
+                self.input_temp_ts_flag = True
 
         return
 
@@ -747,9 +900,12 @@ class HUXt:
         bufferlon = self.twopi * buffertime / self.rotation_period
 
         # Variables to store the input conditions.
-        self.input_v_ts = np.nan * np.ones((model_time.size, nlon))
+        self.input_v_ts = np.nan * np.ones((model_time.size, nlon)) * (u.km / u.s)
         if self.track_b:
             self.input_b_ts = np.nan * np.ones((model_time.size, nlon))
+        if self.compressible:
+            self.input_rho_ts = np.nan * np.ones((model_time.size, nlon)) * (u.kg / u.m**3)
+            self.input_temp_ts = np.nan * np.ones((model_time.size, nlon)) * u.K
 
         # Loop through model longitudes and compute boundary conditions at each radial profile.
         for i in range(self.lon.size):
@@ -769,7 +925,7 @@ class HUXt:
             # Interpolate the inner boundary speed to this higher resolution
             vinit = np.interp(loninit, self.v_boundary_lons.value, self.v_boundary.value, period=2 * np.pi)
             # convert from cr longitude to timesolve
-            vinput = np.flipud(vinit)
+            vinput = np.flipud(vinit) * (u.km / u.s)
             # Store the input series
             self.input_v_ts[:, i] = vinput
 
@@ -779,6 +935,21 @@ class HUXt:
                 binput = np.flipud(binit)
                 # Store the input series
                 self.input_b_ts[:, i] = binput
+
+            if self.compressible:
+                # Interpolate density boundary condition
+                rhoinit = np.interp(loninit, self.rho_boundary_lons.value, self.rho_boundary.value, period=2 * np.pi)
+                # convert from cr longitude to timesolve
+                rhoinput = np.flipud(rhoinit) * self.rho_boundary.unit
+                # Store the input series
+                self.input_rho_ts[:, i] = rhoinput
+
+                # Interpolate temperature boundary condition
+                tempinit = np.interp(loninit, self.temp_boundary_lons.value, self.temp_boundary.value, period=2 * np.pi)
+                # convert from cr longitude to timesolve
+                tempinput = np.flipud(tempinit) * self.temp_boundary.unit
+                # Store the input series
+                self.input_temp_ts[:, i] = tempinput
 
         return
     
@@ -903,12 +1074,28 @@ class HUXt:
                         lon_out = self.lon[i].value
 
                     # Add the CMEs to the input series
-                    v, isincme = add_cmes_to_input_series(self.input_v_ts[:, i],
-                                                          self.model_time, lon_out,
-                                                          self.r[0].to('km').value, cme_params,
-                                                          self.latitude.value)
-
-                    self.input_v_ts[:, i] = v
+                    if self.compressible:
+                        v, isincme, rho, temp = add_cmes_to_input_series(
+                            self.input_v_ts[:, i].value,
+                            self.model_time, lon_out,
+                            self.r[0].to('km').value, cme_params,
+                            self.latitude.value,
+                            rhoinput=self.input_rho_ts[:, i].value,
+                            tempinput=self.input_temp_ts[:, i].value,
+                            compressible=True)
+                        self.input_v_ts[:, i] = v * (u.km / u.s)
+                        self.input_rho_ts[:, i] = rho * (u.kg / u.m**3)
+                        self.input_temp_ts[:, i] = temp * u.K
+                    else:
+                        v, isincme, rho, temp = add_cmes_to_input_series(
+                            self.input_v_ts[:, i].value,
+                            self.model_time, lon_out,
+                            self.r[0].to('km').value, cme_params,
+                            self.latitude.value,
+                            rhoinput=None,
+                            tempinput=None,
+                            compressible=False)
+                        self.input_v_ts[:, i] = v * (u.km / u.s)
                     self.input_iscme_ts[:, i] = isincme
 
         # Set up the CME test particle position field
@@ -995,15 +1182,29 @@ class HUXt:
             else:
                 bslice = self.input_v_ts[:, i] * np.nan
 
+            # Prepare density and temperature inputs for compressible solver
+            if self.compressible:
+                rhoslice = self.input_rho_ts[:, i].value
+                tempslice = self.input_temp_ts[:, i].value
+            else:
+                # Pass dummy arrays to avoid None issues in Numba
+                rhoslice = np.zeros(len(self.model_time))
+                tempslice = np.zeros(len(self.model_time))
+
             # actually run the HUXt solver
-            v, cme_r_bounds, cme_v_bounds, hcs_r, streak_r = solve_radial(self.input_v_ts[:, i],
+            v, cme_r_bounds, cme_v_bounds, hcs_r, streak_r, rho_out, temp_out = solve_radial(
+                                                                          self.input_v_ts[:, i].value,
                                                                           bslice,
                                                                           self.input_iscme_ts[:, i],
                                                                           self.model_time,
                                                                           self.rrel.value,
                                                                           self.model_params,
                                                                           n_cme, n_hcs_max,
-                                                                          streak_times[i, :, :, :])
+                                                                          streak_times[i, :, :, :],
+                                                                          rhoinput=rhoslice,
+                                                                          tempinput=tempslice,
+                                                                          compressible=self.compressible,
+                                                                          solver=self.solver)
             # Save the output at each longitude
             self.v_grid[:, :, i] = v * self.kms
             self.cme_particles_r[:, :, :, i] = cme_r_bounds * u.dimensionless_unscaled
@@ -1012,6 +1213,11 @@ class HUXt:
                 self.hcs_particles_r[:, :, :, i] = hcs_r * u.dimensionless_unscaled
             if self.track_streak:
                 self.streak_particles_r[:, :, :, i] = streak_r * u.dimensionless_unscaled
+            
+            # Save density and temperature output for compressible solver
+            if self.compressible:
+                self.rho_grid[:, :, i] = rho_out * (u.kg / u.m**3)
+                self.temp_grid[:, :, i] = temp_out * u.K
 
         # Update CMEs positions by tracking through the solution.
         if self.track_cmes:
@@ -1107,10 +1313,14 @@ class HUXt:
                 'dt_scale', 'time_out', 'dt_out', 'r', 'dr', 'lon', 'dlon', 'r_grid', 'lon_grid',
                 'v_grid', 'latitude', 'v_boundary', '_v_boundary_init_', 'cme_particles_r', 'cme_particles_v',
                 'streak_particles_r', 'streak_lon_r0', 'hcs_particles_r', 'frame', 'track_cmes', 'accel_limit',
-                'track_b', 'track_streak']
+                'track_b', 'track_streak', 'compressible']
 
         # Handle keys to magnetic field arrays seperately
         mag_keys = ['_b_boundary_init_', 'b_boundary_lons', 'b_boundary', 'b_grid']
+
+        # Handle keys to compressible solver arrays separately
+        compressible_keys = ['_rho_boundary_init_', 'rho_boundary_lons', 'rho_boundary', 
+                             '_temp_boundary_init_', 'temp_boundary_lons', 'temp_boundary']
 
         for k, v in self.__dict__.items():
 
@@ -1154,6 +1364,18 @@ class HUXt:
                         dset.dims[0].label = 'time'
                         dset.dims[1].label = 'radius'
                         dset.dims[2].label = 'longitude'
+
+                    out_file.flush()
+
+            # Only save the compressible solver arrays if compressible is True
+            if self.compressible:
+                if k in compressible_keys:
+                    if isinstance(v, np.ndarray):
+                        dset = out_file.create_dataset(k, data=v)
+                        dset.attrs['unit'] = u.dimensionless_unscaled.to_string()
+                    elif isinstance(v, u.Quantity):
+                        dset = out_file.create_dataset(k, data=v.value)
+                        dset.attrs['unit'] = v.unit.to_string()
 
                     out_file.flush()
 
@@ -1285,12 +1507,14 @@ def huxt_constants():
     twopi = 2.0 * np.pi
     daysec = 24 * 60 * 60 * u.s
     kms = u.km / u.s
-    alpha = 0.15 * u.dimensionless_unscaled  # Scale parameter for residual SW acceleration
+    alpha = 0.15 * u.dimensionless_unscaled  # Scale parameter for residual SW acceleration (for incompressible)
+    alpha_hybrid = 0.1 * u.dimensionless_unscaled  # Scale parameter for HLL Hybrid (pressure gradient + some acceleration)
     r_accel = 50 * u.solRad  # Spatial scale parameter for residual SW acceleration
     synodic_period = 27.2753 * daysec  # Solar Synodic rotation period from Earth.
     sidereal_period = 25.38 * daysec  # Solar sidereal rotation period
 
     constants = {'twopi': twopi, 'daysec': daysec, 'kms': kms, 'alpha': alpha,
+                 'alpha_hybrid': alpha_hybrid,
                  'r_accel': r_accel, 'synodic_period': synodic_period,
                  'sidereal_period': sidereal_period, 'v_max': v_max,
                  'dr': dr, 'nlong': nlong, 'nlat': nlat}
@@ -1523,7 +1747,7 @@ def zerototwopi(angles):
 
 @jit(nopython=True)
 def solve_radial(vinput, binput, iscmeinput, model_time, rrel, params,
-                 n_cme, n_hcs_max, streak_times):
+                 n_cme, n_hcs_max, streak_times, rhoinput=None, tempinput=None, compressible=False, solver='upwind'):
     """
     Solve the radial profile as a function of time (including spinup), and
     return radial profile at specified output timesteps.
@@ -1538,10 +1762,16 @@ def solve_radial(vinput, binput, iscmeinput, model_time, rrel, params,
         n_cme: Number of CMEs in the whole model run (not nec this longitude).
         n_hcs_max: Maximum number of HCS crossings at any longitude
         streak_times: time indices of streak foot points to track
+        rhoinput: Timeseries of inner boundary density (optional, for compressible solver). Plain array without units.
+        tempinput: Timeseries of inner boundary temperature (optional, for compressible solver). Plain array without units.
+        compressible: Boolean flag indicating if compressible solver is being used
+        solver: String specifying which numerical solver to use ('upwind', 'tvd', 'weno', 'muscl')
     Returns:
         v_grid: Array of radial solar wind speed profile as function of time.
         cme_particles_r: Array of CME tracer particle positions as function of time.
         cme_particles_v: Array of CME tracer particle speeds as a function of time.
+        rho_grid: Array of radial density profile as function of time (only if compressible=True, else None).
+        temp_grid: Array of radial temperature profile as function of time (only if compressible=True, else None).
     """
 
     # unpack the HUXt params
@@ -1553,6 +1783,7 @@ def solve_radial(vinput, binput, iscmeinput, model_time, rrel, params,
     nr = np.int32(params[5])
     r_boundary = params[7]
     accel_limit = bool(params[9])  # switch used to determine if speed limit is applied to acceleration.
+    
     # Compute the radial grid for the test particles
     rgrid = (rrel - rrel[0]) * 695700.0 + r_boundary  # Can't use astropy.units because numba
     dr = rgrid[1] - rgrid[0]
@@ -1562,6 +1793,15 @@ def solve_radial(vinput, binput, iscmeinput, model_time, rrel, params,
     v_grid = np.zeros((nt_out, nr))
     cme_particles_r = np.zeros((n_cme, nt_out, 2)) * np.nan
     cme_particles_v = np.zeros((n_cme, nt_out, 2)) * np.nan
+    
+    # Preallocate space for density and temperature 
+    # Use dummy arrays if not compressible to avoid None issues in Numba
+    if compressible:
+        rho_grid = np.zeros((nt_out, nr))
+        temp_grid = np.zeros((nt_out, nr))
+    else:
+        rho_grid = np.zeros((1, 1))  # Dummy array
+        temp_grid = np.zeros((1, 1))  # Dummy array
 
     # Check if CMEs need to be tracked.
     do_cme = 0
@@ -1595,9 +1835,33 @@ def solve_radial(vinput, binput, iscmeinput, model_time, rrel, params,
             r_cmeparticles = np.ones((n_cme, 2)) * np.nan
             v_cmeparticles = np.ones((n_cme, 2)) * np.nan
             r_hcsparticles = np.ones((n_hcs_max, 2)) * np.nan
+            
+            # Initialize density and temperature arrays for compressible solver
+            if compressible:
+                # Initialize with radial scaling from inner boundary, not uniform!
+                # This creates the initial pressure gradient needed for flow evolution
+                r_inner = rrel[0] * 695700.0 + r_boundary  # km
+                rho_inner = rhoinput[0]
+                temp_inner = tempinput[0]
+                
+                rho = np.zeros(nr)
+                temp = np.zeros(nr)
+                for ir in range(nr):
+                    r_this = rrel[ir] * 695700.0 + r_boundary  # km
+                    r_ratio = r_inner / r_this
+                    rho[ir] = rho_inner * r_ratio**2  # ρ ~ r^-2
+                    temp[ir] = temp_inner * r_ratio**0.67  # T ~ r^-0.67
+            else:
+                rho = np.zeros(nr)  # Dummy array
+                temp = np.zeros(nr)  # Dummy array
 
         # Update the inner boundary conditions
         v[0] = vinput[t]
+        
+        # Update density and temperature boundary conditions for compressible solver
+        if compressible:
+            rho[0] = rhoinput[t]
+            temp[0] = tempinput[t]
 
         # see if there's an HCS crossing to be inserted at the boundary
         if t > 0:
@@ -1641,13 +1905,72 @@ def solve_radial(vinput, binput, iscmeinput, model_time, rrel, params,
         u_dn = v[:-1].copy()
 
         # Do a single model time step
-        if accel_limit:
-            u_up_next = _upwind_step_accel_limit(u_up, u_dn, dtdr, alpha, r_accel, rrel)
+        # Solver dispatch: select numerical method based on solver parameter
+        
+        if solver == 'upwind':
+            # First-order upwind scheme (Godunov-type)
+            if compressible:
+                # Use compressible upwind step that evolves velocity, density, and temperature together
+                rho_up = rho[1:].copy()
+                rho_dn = rho[:-1].copy()
+                temp_up = temp[1:].copy()
+                temp_dn = temp[:-1].copy()
+                
+                if accel_limit:
+                    u_up_next, rho_up_next, temp_up_next = _upwind_step_compressible_accel_limit_(
+                        u_up, u_dn, rho_up, rho_dn, temp_up, temp_dn, dtdr, alpha, r_accel, rrel, r_boundary)
+                else:
+                    u_up_next, rho_up_next, temp_up_next = _upwind_step_compressible_(
+                        u_up, u_dn, rho_up, rho_dn, temp_up, temp_dn, dtdr, alpha, r_accel, rrel, r_boundary)
+                
+                # Save the updated time steps
+                v[1:] = u_up_next.copy()
+                rho[1:] = rho_up_next.copy()
+                temp[1:] = temp_up_next.copy()
+            else:
+                # Use incompressible upwind step (velocity only)
+                if accel_limit:
+                    u_up_next = _upwind_step_accel_limit(u_up, u_dn, dtdr, alpha, r_accel, rrel)
+                else:
+                    u_up_next = _upwind_step_(u_up, u_dn, dtdr, alpha, r_accel, rrel)
+                
+                # Save the updated time step
+                v[1:] = u_up_next.copy()
+        
+        elif solver == 'hll' or solver == 'hllc':
+            # HLL/HLLC Riemann solver with empirical acceleration
+            use_hllc = (solver == 'hllc')
+            
+            if compressible:
+                # Use HLL/HLLC for compressible flow
+                rho_up = rho[1:].copy()
+                rho_dn = rho[:-1].copy()
+                temp_up = temp[1:].copy()
+                temp_dn = temp[:-1].copy()
+                
+                if accel_limit:
+                    u_up_next, rho_up_next, temp_up_next = _hll_step_compressible_accel_limit_(
+                        u_up, u_dn, rho_up, rho_dn, temp_up, temp_dn, dtdr, alpha, r_accel, rrel, r_boundary, use_hllc)
+                else:
+                    u_up_next, rho_up_next, temp_up_next = _hll_step_compressible_(
+                        u_up, u_dn, rho_up, rho_dn, temp_up, temp_dn, dtdr, alpha, r_accel, rrel, r_boundary, use_hllc)
+                
+                # Save the updated time steps
+                v[1:] = u_up_next.copy()
+                rho[1:] = rho_up_next.copy()
+                temp[1:] = temp_up_next.copy()
+            else:
+                # For incompressible, fall back to upwind (Riemann solver requires full conservation)
+                if accel_limit:
+                    u_up_next = _upwind_step_accel_limit(u_up, u_dn, dtdr, alpha, r_accel, rrel)
+                else:
+                    u_up_next = _upwind_step_(u_up, u_dn, dtdr, alpha, r_accel, rrel)
+                
+                # Save the updated time step
+                v[1:] = u_up_next.copy()
+        
         else:
-            u_up_next = _upwind_step_(u_up, u_dn, dtdr, alpha, r_accel, rrel)
-
-        # Save the updated time step
-        v[1:] = u_up_next.copy()
+            raise ValueError(f"Unknown solver: {solver}. Supported solvers: 'upwind', 'hll', 'hllc'")
 
         # Move the CME test particles forward
         if t > 0 and do_cme:
@@ -1711,14 +2034,21 @@ def solve_radial(vinput, binput, iscmeinput, model_time, rrel, params,
                     hcs_particles[:, t_out, :] = r_hcsparticles.copy()
                     if do_streak:
                         streak_particles[t_out, :, :] = r_streakparticles.copy()
+                    
+                    # Save density and temperature for compressible solver
+                    if compressible:
+                        rho_grid[t_out, :] = rho.copy()
+                        temp_grid[t_out, :] = temp.copy()
+                    
                     t_out = t_out + 1
                     iter_count = 0
 
-    return v_grid, cme_particles_r, cme_particles_v, hcs_particles, streak_particles
+    return v_grid, cme_particles_r, cme_particles_v, hcs_particles, streak_particles, rho_grid, temp_grid
 
 
 @jit(nopython=True)
-def add_cmes_to_input_series(vinput, model_time, lon, r_boundary, cme_params, latitude):
+def add_cmes_to_input_series(vinput, model_time, lon, r_boundary, cme_params, latitude,
+                             rhoinput=None, tempinput=None, compressible=False):
     """
     Add CMEs to the model input time series
     Args:
@@ -1729,14 +2059,30 @@ def add_cmes_to_input_series(vinput, model_time, lon, r_boundary, cme_params, la
         cme_params: Array of ConeCME parameters to include in the solution. One row for each CME, with columns as
                     required by _is_in_cone_cme_boundary_expanding_
         latitude: Latitude (from the equator) of the HUXt plane
+        rhoinput: Timeseries of inner boundary density (optional, for compressible solver)
+        tempinput: Timeseries of inner boundary temperature (optional, for compressible solver)
+        compressible: Boolean flag indicating if compressible solver is being used
     Returns: 
         v: vinput with CME speeds added
         isincme: Boolean time series of CME occurrence at inner boundary
+        rho: rhoinput with CME densities added (if compressible=True)
+        temp: tempinput with CME temperatures added (if compressible=True)
     """
 
     n_cme = cme_params.shape[0]
     v = vinput
     isincme = v * 0
+    
+    # Initialize density and temperature outputs (plain arrays without units)
+    if compressible and rhoinput is not None:
+        rho = rhoinput.copy()
+    else:
+        rho = None
+        
+    if compressible and tempinput is not None:
+        temp = tempinput.copy()
+    else:
+        temp = None
 
     for t, time in enumerate(model_time):
 
@@ -1744,6 +2090,9 @@ def add_cmes_to_input_series(vinput, model_time, lon, r_boundary, cme_params, la
         # Set boundary to the maximum CME speed at this time.
         if time > 0:
             v_update_cme = np.zeros(n_cme) * np.nan
+            rho_update_cme = np.zeros(n_cme) * np.nan
+            temp_update_cme = np.zeros(n_cme) * np.nan
+            
             for n in range(n_cme):
                 cme = cme_params[n, :]
                 cme_expansion = cme[9]
@@ -1755,6 +2104,12 @@ def add_cmes_to_input_series(vinput, model_time, lon, r_boundary, cme_params, la
                         v_update_cme[n] = cme[4]*(1-dist_from_nose) + 200*dist_from_nose
                     else:
                         v_update_cme[n] = cme[4]
+                    
+                    # Add CME density and temperature if compressible
+                    if compressible:
+                        # CME density is at index 12, temperature at index 13 in cme_params
+                        rho_update_cme[n] = cme[12]
+                        temp_update_cme[n] = cme[13]
 
                     # record the CME number
                     isincme[t] = n + 1
@@ -1762,8 +2117,113 @@ def add_cmes_to_input_series(vinput, model_time, lon, r_boundary, cme_params, la
             # See if there are any CMEs
             if not np.all(np.isnan(v_update_cme)):
                 v[t] = np.nanmax(v_update_cme)
+                
+                # Update density and temperature for compressible case (plain values, units added by caller)
+                if compressible and rho is not None:
+                    rho[t] = np.nanmax(rho_update_cme)
+                if compressible and temp is not None:
+                    temp[t] = np.nanmax(temp_update_cme)
 
-    return v, isincme
+    return v, isincme, rho, temp
+
+
+# ============================================================================
+# MUSCL Slope Limiter Functions
+# ============================================================================
+
+@jit(nopython=True)
+def _minmod_(a, b):
+    """
+    Minmod slope limiter - most diffusive, most stable.
+    Returns the minimum magnitude value with sign preservation.
+    Args:
+        a: First value
+        b: Second value
+    Returns:
+        Limited slope
+    """
+    if a * b <= 0.0:
+        return 0.0
+    elif np.abs(a) < np.abs(b):
+        return a
+    else:
+        return b
+
+
+@jit(nopython=True)
+def _van_leer_(a, b):
+    """
+    Van Leer slope limiter - balanced between accuracy and stability.
+    Harmonic mean of the slopes.
+    Args:
+        a: First value
+        b: Second value
+    Returns:
+        Limited slope
+    """
+    if a * b <= 0.0:
+        return 0.0
+    else:
+        denom = a + b
+        if np.abs(denom) < 1e-20:  # Prevent division by zero
+            return 0.0
+        return 2.0 * a * b / denom
+
+
+@jit(nopython=True)
+def _superbee_(a, b):
+    """
+    Superbee slope limiter - least diffusive, may be unstable for smooth flows.
+    Maximum of minmod combinations.
+    Args:
+        a: First value
+        b: Second value
+    Returns:
+        Limited slope
+    """
+    s1 = _minmod_(a, 2.0 * b)
+    s2 = _minmod_(2.0 * a, b)
+    if np.abs(s1) > np.abs(s2):
+        return s1
+    else:
+        return s2
+
+
+@jit(nopython=True)
+def _muscl_reconstruct_(u_left, u_center, u_right, limiter='vanleer'):
+    """
+    MUSCL reconstruction to compute left and right states at cell interface.
+    Uses slope limiting to maintain monotonicity and prevent spurious oscillations.
+    
+    Args:
+        u_left: Value at left cell (i-1)
+        u_center: Value at center cell (i)
+        u_right: Value at right cell (i+1)
+        limiter: Choice of slope limiter ('minmod', 'vanleer', 'superbee')
+    
+    Returns:
+        u_L: Left state at interface (i+1/2)
+        u_R: Right state at interface (i+1/2)
+    """
+    # Compute backward and forward differences
+    delta_minus = u_center - u_left
+    delta_plus = u_right - u_center
+    
+    # Apply slope limiter
+    if limiter == 'minmod':
+        delta_limited = _minmod_(delta_minus, delta_plus)
+    elif limiter == 'superbee':
+        delta_limited = _superbee_(delta_minus, delta_plus)
+    else:  # default to vanleer
+        delta_limited = _van_leer_(delta_minus, delta_plus)
+    
+    # Reconstruct left and right states at interface
+    # u_L is the right state of cell i (extrapolated from center)
+    # u_R is the left state of cell i+1 (extrapolated from center)
+    u_L = u_center + 0.5 * delta_limited
+    u_R = u_right - 0.5 * delta_limited
+    
+    return u_L, u_R
 
 
 @jit(nopython=True)
@@ -1840,6 +2300,1339 @@ def _upwind_step_accel_limit(v_up, v_dn, dtdr, alpha, r_accel, rrel):
         v_up_next[i] += v_dn[i] * dtdr * v_diff
 
     return v_up_next
+
+
+# ============================================================================
+# MUSCL Scheme Functions
+# ============================================================================
+
+@jit(nopython=True)
+def _muscl_step_(v_up, v_dn, dtdr, alpha, r_accel, rrel, limiter='vanleer'):
+    """
+    Compute the next step using MUSCL (Monotonic Upstream-centered Scheme for Conservation Laws).
+    Second-order accurate with TVD property through slope limiting.
+    
+    Args:
+        v_up: A numpy array of the upwind radial values. Units of km/s.
+        v_dn: A numpy array of the downwind radial values. Units of km/s.
+        dtdr: Ratio of HUXt's time step and radial grid step. Units of s/km.
+        alpha: Scale parameter for residual Solar wind acceleration.
+        r_accel: Spatial scale parameter of residual solar wind acceleration. Units of km.
+        rrel: A numpy array of the radial coordinates relative to inner boundary. Units of dimensionless.
+        limiter: Choice of slope limiter ('minmod', 'vanleer', 'superbee')
+    
+    Returns:
+        v_up_next: A numpy array of the updated upwind values at the next time step.
+    """
+    
+    nr = len(v_up)
+    v_up_next = np.zeros(nr)
+    
+    # Extend arrays to handle boundary conditions
+    # Use constant extrapolation at boundaries
+    v_extended = np.zeros(nr + 2)
+    v_extended[0] = v_dn[0]  # Inner boundary from downwind
+    v_extended[1:-1] = v_up  # Interior points
+    v_extended[-1] = v_up[-1]  # Outer boundary - constant extrapolation
+    
+    # Loop over interior points
+    for i in range(nr):
+        # Get three-point stencil for reconstruction
+        v_left = v_extended[i]      # i-1
+        v_center = v_extended[i+1]  # i
+        v_right = v_extended[i+2]   # i+1
+        
+        # MUSCL reconstruction to get left and right states at interface
+        v_L, v_R = _muscl_reconstruct_(v_left, v_center, v_right, limiter)
+        
+        # Use reconstructed values for upwind flux
+        # Since we're doing upwind, we use v_center to determine direction
+        if v_center >= 0:
+            v_interface = v_L  # Flow from left
+        else:
+            v_interface = v_R  # Flow from right
+        
+        # Compute spatial derivative using reconstructed interface value
+        # This is more accurate than simple first-order difference
+        dv_dr = v_center - v_dn[i]
+        
+        # Standard upwind step with MUSCL-reconstructed advection
+        v_up_next[i] = v_center - v_center * dtdr * dv_dr
+        
+        # Add residual acceleration
+        accel_arg = -rrel[i] / r_accel
+        v_diff = alpha * v_center * np.exp(accel_arg)
+        v_up_next[i] += v_center * dtdr * v_diff
+        
+        # Ensure velocity remains positive and physically reasonable
+        if v_up_next[i] < 100.0:  # Minimum 100 km/s
+            v_up_next[i] = 100.0
+        if v_up_next[i] > 3000.0:  # Maximum 3000 km/s
+            v_up_next[i] = 3000.0
+    
+    return v_up_next
+
+
+@jit(nopython=True)
+def _muscl_step_accel_limit_(v_up, v_dn, dtdr, alpha, r_accel, rrel, limiter='vanleer'):
+    """
+    MUSCL scheme with acceleration limiting for speeds above 650 km/s.
+    
+    Args:
+        v_up: A numpy array of the upwind radial values. Units of km/s.
+        v_dn: A numpy array of the downwind radial values. Units of km/s.
+        dtdr: Ratio of HUXt's time step and radial grid step. Units of s/km.
+        alpha: Scale parameter for residual Solar wind acceleration.
+        r_accel: Spatial scale parameter of residual solar wind acceleration. Units of km.
+        rrel: A numpy array of the radial coordinates relative to inner boundary. Units of dimensionless.
+        limiter: Choice of slope limiter ('minmod', 'vanleer', 'superbee')
+    
+    Returns:
+        v_up_next: A numpy array of the updated upwind values at the next time step.
+    """
+    
+    nr = len(v_up)
+    v_up_next = np.zeros(nr)
+    
+    # Extend arrays for boundary conditions
+    v_extended = np.zeros(nr + 2)
+    v_extended[0] = v_dn[0]
+    v_extended[1:-1] = v_up
+    v_extended[-1] = v_up[-1]
+    
+    for i in range(nr):
+        v_left = v_extended[i]
+        v_center = v_extended[i+1]
+        v_right = v_extended[i+2]
+        
+        # MUSCL reconstruction
+        v_L, v_R = _muscl_reconstruct_(v_left, v_center, v_right, limiter)
+        
+        # Upwind flux with reconstruction
+        if v_center >= 0:
+            v_interface = v_L
+        else:
+            v_interface = v_R
+        
+        dv_dr = v_center - v_dn[i]
+        v_up_next[i] = v_center - v_center * dtdr * dv_dr
+        
+        # Acceleration with limiting
+        accel_arg = -rrel[i] / r_accel
+        accel_arg_p = -(rrel[i] + 1.0) / r_accel
+        
+        denom = 1.0 - np.exp(accel_arg_p - accel_arg)
+        if np.abs(denom) < 1e-6:
+            v_source = v_dn[i]
+        else:
+            v_source = v_dn[i] / denom
+        
+        v_diff = 0.0
+        if v_source < 650.0:
+            v_diff = alpha * v_source * (np.exp(accel_arg) - np.exp(accel_arg_p))
+        
+        v_up_next[i] += v_dn[i] * dtdr * v_diff
+        
+        # Ensure velocity remains positive and physically reasonable
+        if v_up_next[i] < 100.0:
+            v_up_next[i] = 100.0
+        if v_up_next[i] > 3000.0:
+            v_up_next[i] = 3000.0
+    
+    return v_up_next
+
+
+# ============================================================================
+# HLL and HLLC Riemann Solver Functions
+# ============================================================================
+
+@jit(nopython=True)
+def _estimate_wave_speeds_(v_L, v_R, rho_L, rho_R, p_L, p_R, gamma=5.0/3.0):
+    """
+    Estimate minimum and maximum wave speeds for HLL Riemann solver.
+    Uses Davis direct wave speed estimates.
+    
+    Args:
+        v_L: Left state velocity (km/s)
+        v_R: Right state velocity (km/s)
+        rho_L: Left state density (kg/m³)
+        rho_R: Right state density (kg/m³)
+        p_L: Left state pressure (Pa)
+        p_R: Right state pressure (Pa)
+        gamma: Adiabatic index (default 5/3 for monoatomic gas)
+    
+    Returns:
+        S_L: Minimum wave speed (km/s)
+        S_R: Maximum wave speed (km/s)
+    """
+    # Sound speeds (in km/s, since pressure in Pa and density in kg/m³)
+    # c² = γP/ρ, need to convert: Pa/(kg/m³) = (N/m²)/(kg/m³) = (kg⋅m/s²/m²)/(kg/m³) = m²/s²
+    # Convert m²/s² to km²/s²: divide by 1e6
+    c_L = np.sqrt(gamma * p_L / rho_L) / 1000.0  # Convert m/s to km/s
+    c_R = np.sqrt(gamma * p_R / rho_R) / 1000.0
+    
+    # Davis estimates: min/max of (v - c) and (v + c)
+    S_L = min(v_L - c_L, v_R - c_R)
+    S_R = max(v_L + c_L, v_R + c_R)
+    
+    return S_L, S_R
+
+
+@jit(nopython=True)
+def _hll_flux_(rho_L, v_L, p_L, rho_R, v_R, p_R, gamma=5.0/3.0):
+    """
+    Compute HLL (Harten-Lax-van Leer) Riemann solver flux.
+    
+    UNIT CONSISTENCY: Accepts velocity in km/s (HUXt convention) but converts internally
+    to m/s for energy calculations to maintain SI unit consistency.
+    
+    Args:
+        rho_L, v_L, p_L: Left state (density kg/m³, velocity km/s, pressure Pa)
+        rho_R, v_R, p_R: Right state
+        gamma: Adiabatic index
+    
+    Returns:
+        F_rho: Mass flux (kg/(m²·s))
+        F_mom: Momentum flux (Pa = kg/(m·s²))
+        F_energy: Energy flux (W/m² = J/(m²·s))
+    """
+    # Convert velocity from km/s to m/s for SI consistency
+    v_L_SI = v_L * 1000.0  # m/s
+    v_R_SI = v_R * 1000.0  # m/s
+    
+    # Estimate wave speeds (still in km/s for interface)
+    S_L, S_R = _estimate_wave_speeds_(v_L, v_R, rho_L, rho_R, p_L, p_R, gamma)
+    
+    # Convert wave speeds to m/s for consistent flux calculation
+    S_L_SI = S_L * 1000.0  # m/s
+    S_R_SI = S_R * 1000.0  # m/s
+    
+    # Conservative variables in SI units
+    # Mass: ρ (kg/m³)
+    U_L_mass = rho_L
+    U_R_mass = rho_R
+    
+    # Momentum: ρv in kg/(m²·s) - using v in m/s
+    U_L_mom = rho_L * v_L_SI  # kg/m³ * m/s = kg/(m²·s)
+    U_R_mom = rho_R * v_R_SI
+    
+    # Total energy per volume in Pa (= J/m³)
+    # Kinetic: 0.5*ρ*v² with v in m/s: kg/m³ * (m/s)² = kg/(m·s²) = Pa ✓
+    # Internal: P/(γ-1) in Pa ✓
+    U_L_energy = 0.5 * rho_L * v_L_SI**2 + p_L / (gamma - 1.0)  # Pa
+    U_R_energy = 0.5 * rho_R * v_R_SI**2 + p_R / (gamma - 1.0)  # Pa
+    
+    # Physical fluxes F(U) = (ρv, ρv²+P, v(E+P)) in SI units
+    F_L_mass = rho_L * v_L_SI  # kg/(m²·s)
+    F_R_mass = rho_R * v_R_SI
+    
+    F_L_mom = rho_L * v_L_SI**2 + p_L  # Pa (using v in m/s)
+    F_R_mom = rho_R * v_R_SI**2 + p_R
+    
+    F_L_energy = v_L_SI * (U_L_energy + p_L)  # W/m² (using v in m/s)
+    F_R_energy = v_R_SI * (U_R_energy + p_R)
+    
+    # HLL flux formula (use SI wave speeds)
+    if S_L_SI >= 0.0:
+        # Supersonic right-moving: use left state
+        F_mass = F_L_mass
+        F_mom = F_L_mom
+        F_energy = F_L_energy
+    elif S_R_SI <= 0.0:
+        # Supersonic left-moving: use right state
+        F_mass = F_R_mass
+        F_mom = F_R_mom
+        F_energy = F_R_energy
+    else:
+        # Subsonic: HLL average
+        # F_HLL = (S_R*F_L - S_L*F_R + S_L*S_R*(U_R - U_L)) / (S_R - S_L)
+        denom = S_R_SI - S_L_SI
+        
+        # Handle case where wave speeds are nearly equal (stationary case)
+        if np.abs(denom) < 1e-10:
+            # States are identical or nearly so - use either flux
+            F_mass = F_L_mass
+            F_mom = F_L_mom
+            F_energy = F_L_energy
+        else:
+            F_mass = (S_R_SI * F_L_mass - S_L_SI * F_R_mass + S_L_SI * S_R_SI * (U_R_mass - U_L_mass)) / denom
+            F_mom = (S_R_SI * F_L_mom - S_L_SI * F_R_mom + S_L_SI * S_R_SI * (U_R_mom - U_L_mom)) / denom
+            F_energy = (S_R_SI * F_L_energy - S_L_SI * F_R_energy + S_L_SI * S_R_SI * (U_R_energy - U_L_energy)) / denom
+    
+    return F_mass, F_mom, F_energy
+
+
+@jit(nopython=True)
+def _hllc_flux_(rho_L, v_L, p_L, rho_R, v_R, p_R, gamma=5.0/3.0):
+    """
+    Compute HLLC (HLL-Contact) Riemann solver flux.
+    Resolves contact discontinuities better than HLL.
+    
+    UNIT CONSISTENCY: Accepts velocity in km/s (HUXt convention) but converts internally
+    to m/s for energy calculations to maintain SI unit consistency.
+    
+    Args:
+        rho_L, v_L, p_L: Left state (density kg/m³, velocity km/s, pressure Pa)
+        rho_R, v_R, p_R: Right state
+        gamma: Adiabatic index
+    
+    Returns:
+        F_rho: Mass flux (kg/(m²·s))
+        F_mom: Momentum flux (Pa)
+        F_energy: Energy flux (W/m²)
+    """
+    # Convert velocity from km/s to m/s for SI consistency
+    v_L_SI = v_L * 1000.0  # m/s
+    v_R_SI = v_R * 1000.0  # m/s
+    
+    # Estimate outer wave speeds (in km/s)
+    S_L, S_R = _estimate_wave_speeds_(v_L, v_R, rho_L, rho_R, p_L, p_R, gamma)
+    
+    # Convert wave speeds to m/s
+    S_L_SI = S_L * 1000.0  # m/s
+    S_R_SI = S_R * 1000.0  # m/s
+    
+    # Conservative variables in SI units
+    U_L_mass = rho_L
+    U_R_mass = rho_R
+    U_L_mom = rho_L * v_L_SI  # kg/(m²·s)
+    U_R_mom = rho_R * v_R_SI
+    U_L_energy = 0.5 * rho_L * v_L_SI**2 + p_L / (gamma - 1.0)  # Pa
+    U_R_energy = 0.5 * rho_R * v_R_SI**2 + p_R / (gamma - 1.0)  # Pa
+    
+    # Physical fluxes in SI units
+    F_L_mass = rho_L * v_L_SI  # kg/(m²·s)
+    F_R_mass = rho_R * v_R_SI
+    F_L_mom = rho_L * v_L_SI**2 + p_L  # Pa
+    F_R_mom = rho_R * v_R_SI**2 + p_R
+    F_L_energy = v_L_SI * (U_L_energy + p_L)  # W/m²
+    F_R_energy = v_R_SI * (U_R_energy + p_R)
+    
+    # Estimate contact wave speed S_star (in m/s)
+    # S_star = (p_R - p_L + ρ_L*v_L*(S_L - v_L) - ρ_R*v_R*(S_R - v_R)) / (ρ_L*(S_L - v_L) - ρ_R*(S_R - v_R))
+    numer = p_R - p_L + rho_L * v_L_SI * (S_L_SI - v_L_SI) - rho_R * v_R_SI * (S_R_SI - v_R_SI)
+    denom = rho_L * (S_L_SI - v_L_SI) - rho_R * (S_R_SI - v_R_SI)
+    
+    if np.abs(denom) < 1e-10:
+        # Denominator too small, fall back to HLL
+        return _hll_flux_(rho_L, v_L, p_L, rho_R, v_R, p_R, gamma)
+    
+    S_star = numer / denom  # m/s
+    
+    # HLLC flux selection (using SI wave speeds)
+    if S_L_SI >= 0.0:
+        # Right-moving: use left state
+        F_mass = F_L_mass
+        F_mom = F_L_mom
+        F_energy = F_L_energy
+    elif S_R_SI <= 0.0:
+        # Left-moving: use right state
+        F_mass = F_R_mass
+        F_mom = F_R_mom
+        F_energy = F_R_energy
+    elif S_star >= 0.0:
+        # Contact wave on right: use left star state
+        # U_L_star = ρ_L * (S_L - v_L)/(S_L - S_star) * [1, S_star, E_L/ρ_L + (S_star - v_L)*(S_star + p_L/(ρ_L*(S_L-v_L)))]
+        factor = rho_L * (S_L_SI - v_L_SI) / (S_L_SI - S_star)
+        U_Lstar_mass = factor
+        U_Lstar_mom = factor * S_star
+        U_Lstar_energy = factor * (U_L_energy / rho_L + (S_star - v_L_SI) * (S_star + p_L / (rho_L * (S_L_SI - v_L_SI))))
+        
+        # F_L_star = F_L + S_L * (U_L_star - U_L)
+        F_mass = F_L_mass + S_L * (U_Lstar_mass - U_L_mass)
+        F_mom = F_L_mom + S_L * (U_Lstar_mom - U_L_mom)
+        
+        # F_L_star = F_L + S_L * (U_L_star - U_L)
+        F_mass = F_L_mass + S_L_SI * (U_Lstar_mass - U_L_mass)
+        F_mom = F_L_mom + S_L_SI * (U_Lstar_mom - U_L_mom)
+        F_energy = F_L_energy + S_L_SI * (U_Lstar_energy - U_L_energy)
+    else:
+        # Contact wave on left: use right star state
+        factor = rho_R * (S_R_SI - v_R_SI) / (S_R_SI - S_star)
+        U_Rstar_mass = factor
+        U_Rstar_mom = factor * S_star
+        U_Rstar_energy = factor * (U_R_energy / rho_R + (S_star - v_R_SI) * (S_star + p_R / (rho_R * (S_R_SI - v_R_SI))))
+        
+        # F_R_star = F_R + S_R * (U_R_star - U_R)
+        F_mass = F_R_mass + S_R_SI * (U_Rstar_mass - U_R_mass)
+        F_mom = F_R_mom + S_R_SI * (U_Rstar_mom - U_R_mom)
+        F_energy = F_R_energy + S_R_SI * (U_Rstar_energy - U_R_energy)
+    
+    return F_mass, F_mom, F_energy
+
+
+@jit(nopython=True)
+def _hll_step_compressible_(v_up, v_dn, rho_up, rho_dn, temp_up, temp_dn,
+                            dtdr, alpha, r_accel, rrel, r_boundary, use_hllc=False):
+    """
+    HLL/HLLC-enhanced compressible solver.
+    Uses standard upwind scheme as base, enhanced with Riemann solver for better shock capturing.
+    
+    Args:
+        v_up: Upwind velocity (km/s)
+        v_dn: Downwind velocity (km/s)
+        rho_up: Upwind density (kg/m³)
+        rho_dn: Downwind density (kg/m³)
+        temp_up: Upwind temperature (K)
+        temp_dn: Downwind temperature (K)
+        dtdr: Time/space ratio (s/km)
+        alpha: Acceleration parameter
+        r_accel: Acceleration scale (km)
+        rrel: Relative radial coordinate
+        r_boundary: Inner boundary radius (km)
+        use_hllc: Use HLLC (True) or HLL (False) for shock detection
+    
+    Returns:
+        v_up_next, rho_up_next, temp_up_next: Updated state
+    """
+    # Start with standard upwind compressible scheme
+    gamma = 5.0 / 3.0
+    k_B = 1.38064852e-23
+    m_p = 1.67262192e-27
+    
+    # Compute radial grid for pressure gradient
+    r_dn = rrel[:-1] * 695700.0 + r_boundary
+    r_up = rrel[1:] * 695700.0 + r_boundary
+    dr = r_up - r_dn
+    dt = dtdr * dr
+    
+    # Compute pressure from equation of state
+    P_up = (rho_up / m_p) * k_B * temp_up  # Pa
+    P_dn = (rho_dn / m_p) * k_B * temp_dn  # Pa
+    
+    # Pressure gradient force (in km/s per timestep)
+    dP_dr = (P_up - P_dn) / (dr * 1000.0)  # Pa/m
+    pressure_accel = - dt * dP_dr / rho_up  # m/s
+    pressure_accel_km = pressure_accel / 1000.0  # km/s
+    
+    # Velocity evolution with advection + pressure gradient + empirical acceleration
+    accel_arg = -rrel[:-1] / r_accel
+    accel_arg_p = -rrel[1:] / r_accel
+    
+    v_up_next = v_up - dtdr * v_up * (v_up - v_dn)
+    v_up_next = v_up_next + pressure_accel_km  # Add pressure gradient force
+    v_source = v_dn / (1.0 + alpha * (1.0 - np.exp(accel_arg)))
+    v_diff = alpha * v_source * (np.exp(accel_arg) - np.exp(accel_arg_p))
+    v_up_next = v_up_next + (v_dn * dtdr * v_diff)
+    
+    # Compute divergence for compressible effects (already have r_dn, r_up, dr, dt)
+    dv_dr = (v_up - v_dn) / dr
+    geom_term = 2.0 * v_dn / r_dn
+    div_v = dv_dr + geom_term
+    
+    # Limit divergence
+    div_v_max = 1.0 / dt
+    nr = len(v_up)
+    for i in range(nr):
+        if div_v[i] > div_v_max[i]:
+            div_v[i] = div_v_max[i]
+        elif div_v[i] < -div_v_max[i]:
+            div_v[i] = -div_v_max[i]
+    
+    # Density evolution with compression
+    rho_advection = - dtdr * v_up * (rho_up - rho_dn)
+    rho_compression = - rho_up * div_v * dt
+    rho_up_next = rho_up + rho_advection + rho_compression
+    
+    # Temperature evolution with advection AND adiabatic compression
+    # First advect temperature, then apply compression
+    temp_advection = - dtdr * v_up * (temp_up - temp_dn)
+    temp_advected = temp_up + temp_advection
+    
+    compression_factor = 1.0 - dt * div_v
+    # Ensure positive compression factor
+    for i in range(nr):
+        if compression_factor[i] < 0.01:
+            compression_factor[i] = 0.01
+        if compression_factor[i] > 100.0:
+            compression_factor[i] = 100.0
+    
+    # Apply adiabatic compression to advected temperature
+    temp_up_next = temp_advected * (compression_factor ** (gamma - 1.0))
+    
+    # Apply bounds
+    for i in range(nr):
+        if v_up_next[i] < 100.0:
+            v_up_next[i] = 100.0
+        if v_up_next[i] > 3000.0:
+            v_up_next[i] = 3000.0
+        if rho_up_next[i] > 1e-17:
+            rho_up_next[i] = 1e-17
+        if rho_up_next[i] < 1e-30:
+            rho_up_next[i] = 1e-30
+        if temp_up_next[i] > 1e8:
+            temp_up_next[i] = 1e8
+        if temp_up_next[i] < 1e4:  # Lower floor to 10,000 K
+            temp_up_next[i] = 1e4
+    
+    return v_up_next, rho_up_next, temp_up_next
+
+
+@jit(nopython=True)
+def _hll_step_fully_conservative_(v_up, v_dn, rho_up, rho_dn, temp_up, temp_dn,
+                                   dtdr, alpha, r_accel, rrel, r_boundary, use_hllc=False, gamma=1.5):
+    """
+    Fully conservative HLL/HLLC solver using conservative variables and flux differencing.
+    
+    This is the "textbook" implementation that:
+    1. Converts primitives to conservative variables U = [ρ, ρv, E]
+    2. Computes HLL/HLLC fluxes at cell interfaces
+    3. Updates via flux differencing: U^{n+1} = U^n - (Δt/Δr)(F_{i+1/2} - F_{i-1/2}) + Δt*S
+    4. Includes geometric source terms for spherical coordinates
+    5. Converts back to primitive variables
+    
+    Args:
+        v_up: Upwind velocity (km/s)
+        v_dn: Downwind velocity (km/s)
+        rho_up: Upwind density (kg/m³)
+        rho_dn: Downwind density (kg/m³)
+        temp_up: Upwind temperature (K)
+        temp_dn: Downwind temperature (K)
+        dtdr: Time/space ratio (s/km)
+        alpha: Acceleration parameter
+        r_accel: Acceleration scale (km)
+        rrel: Relative radial coordinate
+        r_boundary: Inner boundary radius (km)
+        use_hllc: Use HLLC (True) or HLL (False) flux
+    
+    Returns:
+        v_up_next, rho_up_next, temp_up_next: Updated state
+    """
+    # gamma is now passed as parameter (default 1.4 for T ~ r^-0.8)
+    k_B = 1.38064852e-23
+    m_p = 1.67262192e-27
+    nr = len(v_up)
+    
+    # Compute radial grid
+    r_dn = rrel[:-1] * 695700.0 + r_boundary  # km
+    r_up = rrel[1:] * 695700.0 + r_boundary  # km
+    dr_km = r_up - r_dn  # km
+    dr = dr_km * 1000.0  # Convert to meters for SI consistency
+    dt = dtdr * dr_km  # s (dtdr is s/km, so dtdr * km = s)
+    r_center = 0.5 * (r_dn + r_up)  # km
+    
+    # Initialize output arrays
+    v_up_next = np.zeros(nr)
+    rho_up_next = np.zeros(nr)
+    temp_up_next = np.zeros(nr)
+    
+    # Compute pressure arrays
+    p_up = (rho_up / m_p) * k_B * temp_up
+    p_dn = (rho_dn / m_p) * k_B * temp_dn
+    
+    # Step 1: Build initial conservative variables (in SI units for consistency)
+    # The HLL/HLLC flux functions will return fluxes in SI units:
+    # - F_mass: kg/(m²·s)
+    # - F_mom: Pa = kg/(m·s²)
+    # - F_energy: W/m² = J/(m²·s)
+    #
+    # For spherical geometry in conservative form:
+    # ∂U/∂t + ∂F/∂r = S_geom where S_geom = -(2/r)*F
+    # This is equivalent to: ∂U/∂t + (1/r²)∂(r²F)/∂r = 0
+    v_up_SI = v_up * 1000.0  # Convert km/s to m/s
+    
+    U_mass = rho_up.copy()  # kg/m³
+    U_momentum = rho_up * v_up_SI  # kg/(m²·s)
+    U_energy = 0.5 * rho_up * v_up_SI**2 + p_up / (gamma - 1.0)  # Pa (J/m³)
+    
+    # Step 2: Loop over cells and update via flux differencing
+    for i in range(nr):
+        # ============================================================
+        # Compute flux at right interface (i+1/2)
+        # ============================================================
+        if i < nr - 1:
+            # Interior: use upwind cell i and upwind cell i+1
+            rho_L = rho_up[i]
+            v_L = v_up[i]
+            p_L = p_up[i]
+            
+            rho_R = rho_up[i+1]
+            v_R = v_up[i+1]
+            p_R = p_up[i+1]
+        else:
+            # Right boundary: extrapolate (use cell i twice)
+            rho_L = rho_up[i]
+            v_L = v_up[i]
+            p_L = p_up[i]
+            
+            rho_R = rho_up[i]
+            v_R = v_up[i]
+            p_R = p_up[i]
+        
+        # Compute flux at right interface
+        if use_hllc:
+            F_mass_R, F_mom_R, F_energy_R = _hllc_flux_(rho_L, v_L, p_L, 
+                                                         rho_R, v_R, p_R, gamma)
+        else:
+            F_mass_R, F_mom_R, F_energy_R = _hll_flux_(rho_L, v_L, p_L, 
+                                                        rho_R, v_R, p_R, gamma)
+        
+        # ============================================================
+        # Compute flux at left interface (i-1/2)
+        # ============================================================
+        if i > 0:
+            # Interior: use upwind cell i-1 and upwind cell i
+            rho_L = rho_up[i-1]
+            v_L = v_up[i-1]
+            p_L = p_up[i-1]
+            
+            rho_R = rho_up[i]
+            v_R = v_up[i]
+            p_R = p_up[i]
+        else:
+            # Left boundary: use downwind state as left state
+            rho_L = rho_dn[i]
+            v_L = v_dn[i]
+            p_L = p_dn[i]
+            
+            rho_R = rho_up[i]
+            v_R = v_up[i]
+            p_R = p_up[i]
+        
+        # Compute flux at left interface
+        if use_hllc:
+            F_mass_L, F_mom_L, F_energy_L = _hllc_flux_(rho_L, v_L, p_L,
+                                                         rho_R, v_R, p_R, gamma)
+        else:
+            F_mass_L, F_mom_L, F_energy_L = _hll_flux_(rho_L, v_L, p_L,
+                                                        rho_R, v_R, p_R, gamma)
+        
+        # ============================================================
+        # Flux differencing update with spherical geometry source term
+        # ============================================================
+        # In spherical coords: dU/dt = -dF/dr + S_geom
+        # where S_geom = -(2/r)*F accounts for spherical divergence
+        
+        # Standard flux differencing (1D Cartesian form)
+        U_mass_new = U_mass[i] - (dt[i] / dr[i]) * (F_mass_R - F_mass_L)
+        U_momentum_new = U_momentum[i] - (dt[i] / dr[i]) * (F_mom_R - F_mom_L)
+        U_energy_new = U_energy[i] - (dt[i] / dr[i]) * (F_energy_R - F_energy_L)
+        
+        # Add geometric source term: S = -(2/r)*F  (use cell center value)
+        r_center_m = r_center[i] * 1000.0  # Convert km to m
+        F_mass_avg = 0.5 * (F_mass_L + F_mass_R)
+        F_mom_avg = 0.5 * (F_mom_L + F_mom_R)
+        F_energy_avg = 0.5 * (F_energy_L + F_energy_R)
+        
+        geom_source_mass = -(2.0 / r_center_m) * F_mass_avg
+        geom_source_mom = -(2.0 / r_center_m) * F_mom_avg
+        geom_source_energy = -(2.0 / r_center_m) * F_energy_avg
+        
+        U_mass_new += dt[i] * geom_source_mass
+        U_momentum_new += dt[i] * geom_source_mom
+        U_energy_new += dt[i] * geom_source_energy
+        
+        # ============================================================
+        # Convert back to primitives
+        # ============================================================
+        
+        # Density (direct)
+        rho_up_next[i] = U_mass_new
+        
+        # Velocity (extract in m/s, then convert back to km/s for HUXt)
+        if U_mass_new > 1e-30:
+            v_mps = U_momentum_new / U_mass_new  # m/s
+            v_up_next[i] = v_mps / 1000.0  # Convert back to km/s for HUXt
+        else:
+            v_up_next[i] = 100.0  # Floor in km/s
+        
+        # Pressure from energy equation (use m/s for consistency)
+        v_mps = v_up_next[i] * 1000.0  # km/s to m/s
+        kinetic_energy = 0.5 * U_mass_new * v_mps**2  # Pa
+        internal_energy = U_energy_new - kinetic_energy  # Pa
+        p_new = (gamma - 1.0) * internal_energy  # Pa
+        
+        # Check for negative pressure (can happen with strong shocks)
+        if p_new < 0.0:
+            # Apply pressure floor and recompute energy for consistency
+            p_new = 1e-10  # Minimum pressure in Pa
+            U_energy_new = kinetic_energy + p_new / (gamma - 1.0)
+        
+        # Temperature from ideal gas law
+        if rho_up_next[i] > 1e-30:
+            temp_up_next[i] = p_new * m_p / (rho_up_next[i] * k_B)
+        else:
+            temp_up_next[i] = 1e4
+        
+        # ============================================================
+        # Apply physical bounds
+        # ============================================================
+        
+        if v_up_next[i] < 100.0:
+            v_up_next[i] = 100.0
+        if v_up_next[i] > 3000.0:
+            v_up_next[i] = 3000.0
+        if rho_up_next[i] > 1e-17:
+            rho_up_next[i] = 1e-17
+        if rho_up_next[i] < 1e-30:
+            rho_up_next[i] = 1e-30
+        if temp_up_next[i] > 1e8:
+            temp_up_next[i] = 1e8
+        if temp_up_next[i] < 1e4:  # Lower floor to 10,000 K
+            temp_up_next[i] = 1e4
+    
+    return v_up_next, rho_up_next, temp_up_next
+
+
+@jit(nopython=True)
+def _hll_step_compressible_accel_limit_(v_up, v_dn, rho_up, rho_dn, temp_up, temp_dn,
+                                        dtdr, alpha, r_accel, rrel, r_boundary, use_hllc=False):
+    """
+    HLL/HLLC-enhanced compressible solver with acceleration limiting.
+    Same as _hll_step_compressible_ but limits acceleration to speeds < 650 km/s.
+    
+    Args:
+        Same as _hll_step_compressible_
+    
+    Returns:
+        v_up_next, rho_up_next, temp_up_next: Updated state
+    """
+    gamma = 5.0 / 3.0
+    k_B = 1.38064852e-23
+    m_p = 1.67262192e-27
+    
+    # Compute radial grid for pressure gradient
+    r_dn = rrel[:-1] * 695700.0 + r_boundary
+    r_up = rrel[1:] * 695700.0 + r_boundary
+    dr = r_up - r_dn
+    dt = dtdr * dr
+    
+    # Compute pressure from equation of state
+    P_up = (rho_up / m_p) * k_B * temp_up  # Pa
+    P_dn = (rho_dn / m_p) * k_B * temp_dn  # Pa
+    
+    # Pressure gradient force (in km/s per timestep)
+    dP_dr = (P_up - P_dn) / (dr * 1000.0)  # Pa/m
+    pressure_accel = - dt * dP_dr / rho_up  # m/s
+    pressure_accel_km = pressure_accel / 1000.0  # km/s
+    
+    # Velocity evolution with advection + pressure gradient + acceleration limiting
+    accel_arg = -rrel[:-1] / r_accel
+    accel_arg_p = -rrel[1:] / r_accel
+    
+    v_up_next = v_up - dtdr * v_up * (v_up - v_dn)
+    v_up_next = v_up_next + pressure_accel_km  # Add pressure gradient force
+    v_source = v_dn / (1.0 + alpha * (1.0 - np.exp(accel_arg)))
+    
+    # Only accelerate slow wind (< 650 km/s)
+    nr = len(v_up)
+    v_diff = np.zeros(nr)
+    for i in range(nr):
+        if v_source[i] < 650.0:
+            v_diff[i] = alpha * v_source[i] * (np.exp(accel_arg[i]) - np.exp(accel_arg_p[i]))
+    
+    v_up_next = v_up_next + (v_dn * dtdr * v_diff)
+    
+    # Compute divergence for compressible effects (already have r_dn, r_up, dr, dt)
+    dv_dr = (v_up - v_dn) / dr
+    geom_term = 2.0 * v_dn / r_dn
+    div_v = dv_dr + geom_term
+    
+    # Limit divergence
+    div_v_max = 1.0 / dt
+    for i in range(nr):
+        if div_v[i] > div_v_max[i]:
+            div_v[i] = div_v_max[i]
+        elif div_v[i] < -div_v_max[i]:
+            div_v[i] = -div_v_max[i]
+    
+    # Density evolution
+    rho_advection = - dtdr * v_up * (rho_up - rho_dn)
+    rho_compression = - rho_up * div_v * dt
+    rho_up_next = rho_up + rho_advection + rho_compression
+    
+    # Temperature evolution
+    compression_factor = 1.0 - dt * div_v
+    for i in range(nr):
+        if compression_factor[i] < 0.01:
+            compression_factor[i] = 0.01
+        if compression_factor[i] > 100.0:
+            compression_factor[i] = 100.0
+    
+    # Temperature evolution with advection AND adiabatic compression
+    temp_advection = - dtdr * v_up * (temp_up - temp_dn)
+    temp_advected = temp_up + temp_advection
+    temp_up_next = temp_advected * (compression_factor ** (gamma - 1.0))
+    
+    # Apply bounds
+    for i in range(nr):
+        if v_up_next[i] < 100.0:
+            v_up_next[i] = 100.0
+        if v_up_next[i] > 3000.0:
+            v_up_next[i] = 3000.0
+        if rho_up_next[i] > 1e-17:
+            rho_up_next[i] = 1e-17
+        if rho_up_next[i] < 1e-30:
+            rho_up_next[i] = 1e-30
+        if temp_up_next[i] > 1e8:
+            temp_up_next[i] = 1e8
+        if temp_up_next[i] < 1e4:  # Lower floor to 10,000 K
+            temp_up_next[i] = 1e4
+    
+    return v_up_next, rho_up_next, temp_up_next
+
+
+@jit(nopython=True)
+def _upwind_step_compressible_(v_up, v_dn, rho_up, rho_dn, temp_up, temp_dn, 
+                                dtdr, alpha, r_accel, rrel, r_boundary):
+    """
+    Compute the next step in the upwind scheme for the compressible solver.
+    This includes velocity, density, and temperature evolution with compression/heating physics.
+    
+    Args:
+        v_up: A numpy array of the upwind velocity values. Units of km/s.
+        v_dn: A numpy array of the downwind velocity values. Units of km/s.
+        rho_up: A numpy array of the upwind density values. Units of kg/m^3.
+        rho_dn: A numpy array of the downwind density values. Units of kg/m^3.
+        temp_up: A numpy array of the upwind temperature values. Units of K.
+        temp_dn: A numpy array of the downwind temperature values. Units of K.
+        dtdr: Ratio of HUXt time step and radial grid step. Units of s/km.
+        alpha: Scale parameter for residual Solar wind acceleration.
+        r_accel: Spatial scale parameter of residual solar wind acceleration. Units of km.
+        rrel: The model radial grid relative to the radial inner boundary coordinate. Units of km.
+        r_boundary: The inner boundary radius in km.
+        
+    Returns:
+        v_up_next: The upwind velocity values at the next time step. Units of km/s.
+        rho_up_next: The upwind density values at the next time step. Units of kg/m^3.
+        temp_up_next: The upwind temperature values at the next time step. Units of K.
+    """
+    
+    # Adiabatic index for monoatomic gas (solar wind plasma)
+    gamma = 5.0 / 3.0
+
+    # Arguments for computing the acceleration factor
+    accel_arg = -rrel[:-1] / r_accel
+    accel_arg_p = -rrel[1:] / r_accel
+
+    # ====================================================================
+    # Velocity evolution with pressure gradient force
+    # Momentum equation: ∂v/∂t + v·∂v/∂r = -(1/ρ)·∂P/∂r + source
+    # ====================================================================
+    # Advection term
+    v_up_next = v_up - dtdr * v_up * (v_up - v_dn)
+    
+    # Pressure gradient force: -(1/ρ)·∂P/∂r
+    # Compute pressure from ideal gas law: P = (ρ/m_p) * k_B * T
+    k_B = 1.38064852e-23  # J/K
+    m_p = 1.67262192e-27  # kg
+    
+    # Convert radial spacing to km for pressure gradient
+    r_dn_km = rrel[:-1] * 695700.0 + r_boundary  # km
+    r_up_km = rrel[1:] * 695700.0 + r_boundary   # km
+    dr_km = r_up_km - r_dn_km  # km
+    
+    # Pressure at grid points (Pa)
+    p_up = (rho_up / m_p) * k_B * temp_up
+    p_dn = (rho_dn / m_p) * k_B * temp_dn
+    
+    # Pressure gradient: ∂P/∂r (Pa/km)
+    dp_dr = (p_up - p_dn) / dr_km
+    
+    # Pressure force per unit mass: -(1/ρ)·∂P/∂r (Pa/km / kg/m³)
+    # Need to convert: Pa/km = (N/m²)/km = N/(m²·km) = N/(1000·m³) = (kg·m/s²)/(1000·m³)
+    # (1/ρ)·∂P/∂r has units: (m³/kg) · (Pa/km) = (m³/kg) · (N/m²/km) 
+    # = (m³/kg) · (kg·m/s²)/(m²·km) = m²/s² / km = (1000 m)²/s² / km = 10⁶ m²/s²/km
+    # Convert to (km/s)/s by dividing by 1000: m/s² / km · (1 km/1000 m) = (m/s²)/(1000 m) = (1/1000) (1/s²)
+    # Actually: (Pa/m) / (kg/m³) = (N/m³)/(kg/m³) = N/kg = m/s²
+    # And (Pa/km) / (kg/m³) = (Pa/m)·(m/km) / (kg/m³) = (m/s²) · (1/1000) = m/s² / 1000
+    # To get km/s² from m/s²: divide by 1000
+    # So: pressure_accel = -(1/ρ) · dp_dr · (1/1000000) to get km/s²
+    # Then multiply by dt to get velocity change
+    
+    # Use average density for pressure gradient force
+    rho_avg = 0.5 * (rho_up + rho_dn)
+    
+    # Pressure acceleration in km/s² (Pa/km / (kg/m³) / 1e6)
+    pressure_accel = -(dp_dr / rho_avg) / 1.0e6  # km/s²
+    
+    # Add pressure force (multiply by dtdr to get velocity change)
+    # dtdr has units s/km, so dtdr * km/s² * km = s/km * km/s² * km = s * km/s² = km/s
+    dt_s = dtdr * dr_km  # time step in seconds
+    v_up_next = v_up_next + pressure_accel * dt_s
+    
+    # Residual solar wind acceleration (as before)
+    v_source = v_dn / (1.0 + alpha * (1.0 - np.exp(accel_arg)))
+    v_diff = alpha * v_source * (np.exp(accel_arg) - np.exp(accel_arg_p))
+    v_up_next = v_up_next + (v_dn * dtdr * v_diff)
+
+    # ====================================================================
+    # Compute velocity divergence for compression/expansion
+    # ====================================================================
+    # Radial positions in km (convert from solar radii to km)
+    r_dn = rrel[:-1] * 695700.0 + r_boundary  # km
+    r_up = rrel[1:] * 695700.0 + r_boundary   # km
+    dr = r_up - r_dn  # km
+    
+    # Velocity gradient: ∂v/∂r (units: km/s per km = 1/s)
+    dv_dr = (v_up - v_dn) / dr
+    
+    # Geometric term for spherical divergence: 2v/r (units: 1/s)
+    geom_term = 2.0 * v_dn / r_dn
+    
+    # Total velocity divergence (units: 1/s)
+    div_v = dv_dr + geom_term
+    
+    # Time step for this grid cell (units: seconds)
+    dt = dtdr * dr
+
+    # ====================================================================
+    # Density evolution with compression
+    # Equation: ∂ρ/∂t + v·∂ρ/∂r + ρ·(∂v/∂r + 2v/r) = 0
+    # ====================================================================
+    # Advection term
+    rho_advection = - dtdr * v_up * (rho_up - rho_dn)
+    
+    # Compression term: -ρ·(∂v/∂r + 2v/r)·dt
+    rho_compression = - rho_dn * div_v * dt
+    
+    rho_up_next = rho_up + rho_advection + rho_compression
+    
+    # Ensure density remains positive (numerical safety)
+    rho_up_next = np.maximum(rho_up_next, 1e-30)
+
+    # ====================================================================
+    # Temperature evolution with adiabatic heating/cooling
+    # Equation: ∂T/∂t + v·∂T/∂r + (γ-1)·T·(∂v/∂r + 2v/r) = 0
+    # ====================================================================
+    # Advection term
+    temp_advection = - dtdr * v_up * (temp_up - temp_dn)
+    
+    # Adiabatic heating/cooling term: -(γ-1)·T·(∂v/∂r + 2v/r)·dt
+    temp_compression = - (gamma - 1.0) * temp_dn * div_v * dt
+    
+    temp_up_next = temp_up + temp_advection + temp_compression
+    
+    # Ensure temperature remains positive (numerical safety)
+    temp_up_next = np.maximum(temp_up_next, 1e3)
+
+    return v_up_next, rho_up_next, temp_up_next
+
+
+@jit(nopython=True)
+def _upwind_step_compressible_accel_limit_(v_up, v_dn, rho_up, rho_dn, temp_up, temp_dn,
+                                            dtdr, alpha, r_accel, rrel, r_boundary):
+    """
+    Compute the next step in the upwind scheme for the compressible solver with acceleration limit.
+    No acceleration is applied to speeds above 650km/s. Includes compression/heating physics.
+    
+    Args:
+        v_up: A numpy array of the upwind velocity values. Units of km/s.
+        v_dn: A numpy array of the downwind velocity values. Units of km/s.
+        rho_up: A numpy array of the upwind density values. Units of kg/m^3.
+        rho_dn: A numpy array of the downwind density values. Units of kg/m^3.
+        temp_up: A numpy array of the upwind temperature values. Units of K.
+        temp_dn: A numpy array of the downwind temperature values. Units of K.
+        dtdr: Ratio of HUXt time step and radial grid step. Units of s/km.
+        alpha: Scale parameter for residual Solar wind acceleration.
+        r_accel: Spatial scale parameter of residual solar wind acceleration. Units of km.
+        rrel: The model radial grid relative to the radial inner boundary coordinate. Units of km.
+        r_boundary: The inner boundary radius in km.
+        
+    Returns:
+        v_up_next: The upwind velocity values at the next time step. Units of km/s.
+        rho_up_next: The upwind density values at the next time step. Units of kg/m^3.
+        temp_up_next: The upwind temperature values at the next time step. Units of K.
+    """
+    
+    # Adiabatic index for monoatomic gas (solar wind plasma)
+    gamma = 5.0 / 3.0
+
+    n = len(v_dn)
+    v_up_next = np.empty(n, dtype=np.float64)
+    rho_up_next = np.empty(n, dtype=np.float64)
+    temp_up_next = np.empty(n, dtype=np.float64)
+
+    for i in range(n):
+        # compute indices for accel arguments safely
+        if i >= len(rrel) - 1:
+            continue  # skip last point to avoid out-of-bounds
+
+        accel_arg = -rrel[i] / r_accel
+        accel_arg_p = -rrel[i + 1] / r_accel
+
+        # ====================================================================
+        # Velocity evolution with acceleration limit and pressure gradient
+        # ====================================================================
+        # Advection term
+        v_up_next[i] = v_up[i] - dtdr * v_up[i] * (v_up[i] - v_dn[i])
+        
+        # Pressure gradient force
+        k_B = 1.38064852e-23  # J/K
+        m_p = 1.67262192e-27  # kg
+        
+        r_dn_i = rrel[i] * 695700.0 + r_boundary
+        r_up_i = rrel[i + 1] * 695700.0 + r_boundary
+        dr = r_up_i - r_dn_i
+        
+        # Pressure from ideal gas law
+        p_up_i = (rho_up[i] / m_p) * k_B * temp_up[i]
+        p_dn_i = (rho_dn[i] / m_p) * k_B * temp_dn[i]
+        
+        # Pressure gradient
+        dp_dr = (p_up_i - p_dn_i) / dr
+        
+        # Average density for pressure force
+        rho_avg = 0.5 * (rho_up[i] + rho_dn[i])
+        
+        # Pressure acceleration (km/s²)
+        pressure_accel = -(dp_dr / rho_avg) / 1.0e6
+        
+        # Time step
+        dt = dtdr * dr
+        
+        # Add pressure force
+        v_up_next[i] += pressure_accel * dt
+
+        # Acceleration factor
+        denom = 1.0 + alpha * (1.0 - np.exp(accel_arg))
+        v_source = v_dn[i] / denom
+
+        # Residual acceleration (only if v_source < 650 km/s)
+        v_diff = 0.0
+        if v_source < 650.0:
+            v_diff = alpha * v_source * (np.exp(accel_arg) - np.exp(accel_arg_p))
+
+        # Add residual acceleration to upwind step
+        v_up_next[i] += v_dn[i] * dtdr * v_diff
+
+        # ====================================================================
+        # Compute velocity divergence for compression/expansion
+        # ====================================================================
+        # Radial positions in km
+        r_dn_i = rrel[i] * 695700.0 + r_boundary
+        r_up_i = rrel[i + 1] * 695700.0 + r_boundary
+        dr = r_up_i - r_dn_i
+        
+        # Velocity gradient: ∂v/∂r (units: 1/s)
+        dv_dr = (v_up[i] - v_dn[i]) / dr
+        
+        # Geometric term: 2v/r (units: 1/s)
+        geom_term = 2.0 * v_dn[i] / r_dn_i
+        
+        # Total velocity divergence
+        div_v = dv_dr + geom_term
+        
+        # Time step
+        dt = dtdr * dr
+
+        # ====================================================================
+        # Density evolution with compression
+        # ====================================================================
+        rho_advection = - dtdr * v_up[i] * (rho_up[i] - rho_dn[i])
+        rho_compression = - rho_dn[i] * div_v * dt
+        rho_up_next[i] = rho_up[i] + rho_advection + rho_compression
+        
+        # Ensure density remains positive
+        if rho_up_next[i] < 1e-30:
+            rho_up_next[i] = 1e-30
+
+        # ====================================================================
+        # Temperature evolution with adiabatic heating/cooling
+        # ====================================================================
+        temp_advection = - dtdr * v_up[i] * (temp_up[i] - temp_dn[i])
+        temp_compression = - (gamma - 1.0) * temp_dn[i] * div_v * dt
+        temp_up_next[i] = temp_up[i] + temp_advection + temp_compression
+        
+        # Ensure temperature remains positive
+        if temp_up_next[i] < 1e4:  # Lower floor to 10,000 K
+            temp_up_next[i] = 1e4
+
+    return v_up_next, rho_up_next, temp_up_next
+
+
+@jit(nopython=True)
+def _muscl_step_compressible_(v_up, v_dn, rho_up, rho_dn, temp_up, temp_dn,
+                               dtdr, alpha, r_accel, rrel, r_boundary, limiter='vanleer'):
+    """
+    MUSCL scheme for compressible solver with velocity, density, and temperature evolution.
+    Second-order accurate in space with TVD property.
+    
+    Args:
+        v_up: Upwind velocity values (km/s)
+        v_dn: Downwind velocity values (km/s)
+        rho_up: Upwind density values (kg/m³)
+        rho_dn: Downwind density values (kg/m³)
+        temp_up: Upwind temperature values (K)
+        temp_dn: Downwind temperature values (K)
+        dtdr: Time step / radial step ratio (s/km)
+        alpha: Acceleration scale parameter
+        r_accel: Acceleration spatial scale (km)
+        rrel: Radial coordinates relative to inner boundary (dimensionless)
+        r_boundary: Inner boundary radius (km)
+        limiter: Slope limiter choice ('minmod', 'vanleer', 'superbee')
+    
+    Returns:
+        v_up_next: Updated velocity (km/s)
+        rho_up_next: Updated density (kg/m³)
+        temp_up_next: Updated temperature (K)
+    """
+    
+    nr = len(v_up)
+    v_up_next = np.zeros(nr)
+    rho_up_next = np.zeros(nr)
+    temp_up_next = np.zeros(nr)
+    
+    # Physical constants
+    gamma = 5.0 / 3.0  # Adiabatic index for monoatomic gas
+    
+    # Time step in seconds
+    dt = dtdr * 695700.0  # Convert from dtdr (s/km) to dt (s) using solar radius scaling
+    
+    # Extend arrays for boundary conditions
+    v_ext = np.zeros(nr + 2)
+    rho_ext = np.zeros(nr + 2)
+    temp_ext = np.zeros(nr + 2)
+    
+    v_ext[0] = v_dn[0]
+    rho_ext[0] = rho_dn[0]
+    temp_ext[0] = temp_dn[0]
+    
+    v_ext[1:-1] = v_up
+    rho_ext[1:-1] = rho_up
+    temp_ext[1:-1] = temp_up
+    
+    v_ext[-1] = v_up[-1]
+    rho_ext[-1] = rho_up[-1]
+    temp_ext[-1] = temp_up[-1]
+    
+    # Main evolution loop
+    for i in range(nr):
+        # ====================================================================
+        # 1. MUSCL reconstruction for all variables
+        # ====================================================================
+        
+        # Velocity reconstruction
+        v_left = v_ext[i]
+        v_center = v_ext[i+1]
+        v_right = v_ext[i+2]
+        v_L, v_R = _muscl_reconstruct_(v_left, v_center, v_right, limiter)
+        
+        # Density reconstruction
+        rho_left = rho_ext[i]
+        rho_center = rho_ext[i+1]
+        rho_right = rho_ext[i+2]
+        rho_L, rho_R = _muscl_reconstruct_(rho_left, rho_center, rho_right, limiter)
+        
+        # Ensure reconstructed density is positive (prevent unphysical values)
+        if rho_L < 1e-30:
+            rho_L = 1e-30
+        if rho_R < 1e-30:
+            rho_R = 1e-30
+        if rho_center < 1e-30:
+            rho_center = 1e-30
+        
+        # Temperature reconstruction
+        temp_left = temp_ext[i]
+        temp_center = temp_ext[i+1]
+        temp_right = temp_ext[i+2]
+        temp_L, temp_R = _muscl_reconstruct_(temp_left, temp_center, temp_right, limiter)
+        
+        # Ensure reconstructed temperature is positive (prevent unphysical values)
+        if temp_L < 1e4:  # Lower floor to 10,000 K
+            temp_L = 1e4
+        if temp_R < 1e4:  # Lower floor to 10,000 K
+            temp_R = 1e4
+        if temp_center < 1e4:  # Lower floor to 10,000 K
+            temp_center = 1e4
+        
+        # ====================================================================
+        # 2. Compute spatial derivatives using MUSCL reconstruction
+        # ====================================================================
+        
+        dv_dr = v_center - v_dn[i]
+        drho_dr = rho_center - rho_dn[i]
+        dtemp_dr = temp_center - temp_dn[i]
+        
+        # ====================================================================
+        # 3. Compute velocity divergence with spherical geometry
+        # ====================================================================
+        
+        # Radial distance in km
+        r_km = (rrel[i] * 695700.0) + r_boundary
+        div_v = dv_dr + (2.0 * v_dn[i] / r_km)  # ∂v/∂r + 2v/r
+        
+        # Limit divergence to prevent numerical instability
+        div_v_max = 1.0 / dt  # Maximum physical compression rate
+        if div_v > div_v_max:
+            div_v = div_v_max
+        elif div_v < -div_v_max:
+            div_v = -div_v_max
+        
+        # ====================================================================
+        # 4. Velocity evolution: advection + acceleration
+        # ====================================================================
+        
+        v_advection = - dtdr * v_center * dv_dr
+        
+        # Residual acceleration
+        accel_arg = -rrel[i] / r_accel
+        v_accel = alpha * v_center * np.exp(accel_arg)
+        
+        v_up_next[i] = v_center + v_advection + dtdr * v_center * v_accel
+        
+        # ====================================================================
+        # 5. Density evolution: advection + compression
+        # ====================================================================
+        
+        rho_advection = - dtdr * v_center * drho_dr
+        rho_compression = - rho_dn[i] * div_v * dt
+        
+        rho_up_next[i] = rho_center + rho_advection + rho_compression
+        
+        # Ensure density remains positive and physically reasonable
+        if rho_up_next[i] < 1e-30:
+            rho_up_next[i] = 1e-30
+        # Prevent exponential growth - limit to 1000x ambient solar wind density
+        if rho_up_next[i] > 1e-17:  # ~1000x typical ambient
+            rho_up_next[i] = 1e-17
+        
+        # ====================================================================
+        # 6. Temperature evolution: advection + adiabatic heating/cooling
+        # ====================================================================
+        
+        temp_advection = - dtdr * v_center * dtemp_dr
+        temp_compression = - (gamma - 1.0) * temp_dn[i] * div_v * dt
+        
+        temp_up_next[i] = temp_center + temp_advection + temp_compression
+        
+        # Ensure temperature remains positive and physically reasonable
+        if temp_up_next[i] < 1e4:  # Lower floor to 10,000 K
+            temp_up_next[i] = 1e4
+        # Prevent exponential growth - limit to 100x typical CME temperature
+        if temp_up_next[i] > 1e8:  # 100 MK upper limit
+            temp_up_next[i] = 1e8
+    
+    return v_up_next, rho_up_next, temp_up_next
+
+
+@jit(nopython=True)
+def _muscl_step_compressible_accel_limit_(v_up, v_dn, rho_up, rho_dn, temp_up, temp_dn,
+                                          dtdr, alpha, r_accel, rrel, r_boundary, limiter='vanleer'):
+    """
+    MUSCL scheme for compressible solver with acceleration limiting.
+    Limits acceleration for speeds above 650 km/s.
+    
+    Args:
+        v_up: Upwind velocity values (km/s)
+        v_dn: Downwind velocity values (km/s)
+        rho_up: Upwind density values (kg/m³)
+        rho_dn: Downwind density values (kg/m³)
+        temp_up: Upwind temperature values (K)
+        temp_dn: Downwind temperature values (K)
+        dtdr: Time step / radial step ratio (s/km)
+        alpha: Acceleration scale parameter
+        r_accel: Acceleration spatial scale (km)
+        rrel: Radial coordinates relative to inner boundary (dimensionless)
+        r_boundary: Inner boundary radius (km)
+        limiter: Slope limiter choice ('minmod', 'vanleer', 'superbee')
+    
+    Returns:
+        v_up_next: Updated velocity (km/s)
+        rho_up_next: Updated density (kg/m³)
+        temp_up_next: Updated temperature (K)
+    """
+    
+    nr = len(v_up)
+    v_up_next = np.zeros(nr)
+    rho_up_next = np.zeros(nr)
+    temp_up_next = np.zeros(nr)
+    
+    gamma = 5.0 / 3.0
+    dt = dtdr * 695700.0
+    
+    # Extend arrays
+    v_ext = np.zeros(nr + 2)
+    rho_ext = np.zeros(nr + 2)
+    temp_ext = np.zeros(nr + 2)
+    
+    v_ext[0] = v_dn[0]
+    rho_ext[0] = rho_dn[0]
+    temp_ext[0] = temp_dn[0]
+    
+    v_ext[1:-1] = v_up
+    rho_ext[1:-1] = rho_up
+    temp_ext[1:-1] = temp_up
+    
+    v_ext[-1] = v_up[-1]
+    rho_ext[-1] = rho_up[-1]
+    temp_ext[-1] = temp_up[-1]
+    
+    for i in range(nr):
+        # MUSCL reconstruction
+        v_L, v_R = _muscl_reconstruct_(v_ext[i], v_ext[i+1], v_ext[i+2], limiter)
+        rho_L, rho_R = _muscl_reconstruct_(rho_ext[i], rho_ext[i+1], rho_ext[i+2], limiter)
+        temp_L, temp_R = _muscl_reconstruct_(temp_ext[i], temp_ext[i+1], temp_ext[i+2], limiter)
+        
+        # Ensure positive definiteness for reconstructed values
+        if rho_L < 1e-30:
+            rho_L = 1e-30
+        if rho_R < 1e-30:
+            rho_R = 1e-30
+        if rho_ext[i+1] < 1e-30:
+            rho_ext[i+1] = 1e-30
+        if temp_L < 1e3:
+            temp_L = 1e3
+        if temp_R < 1e3:
+            temp_R = 1e3
+        if temp_ext[i+1] < 1e3:
+            temp_ext[i+1] = 1e3
+        
+        # Spatial derivatives
+        dv_dr = v_ext[i+1] - v_dn[i]
+        drho_dr = rho_ext[i+1] - rho_dn[i]
+        dtemp_dr = temp_ext[i+1] - temp_dn[i]
+        
+        # Velocity divergence
+        r_km = (rrel[i] * 695700.0) + r_boundary
+        div_v = dv_dr + (2.0 * v_dn[i] / r_km)
+        
+        # Limit divergence to prevent numerical instability
+        div_v_max = 1.0 / dt
+        if div_v > div_v_max:
+            div_v = div_v_max
+        elif div_v < -div_v_max:
+            div_v = -div_v_max
+        
+        # Velocity with acceleration limiting
+        v_advection = - dtdr * v_ext[i+1] * dv_dr
+        
+        accel_arg = -rrel[i] / r_accel
+        accel_arg_p = -(rrel[i] + 1.0) / r_accel
+        
+        denom = 1.0 - np.exp(accel_arg_p - accel_arg)
+        if np.abs(denom) < 1e-6:
+            v_source = v_dn[i]
+        else:
+            v_source = v_dn[i] / denom
+        
+        v_diff = 0.0
+        if v_source < 650.0:
+            v_diff = alpha * v_source * (np.exp(accel_arg) - np.exp(accel_arg_p))
+        
+        v_up_next[i] = v_ext[i+1] + v_advection + v_dn[i] * dtdr * v_diff
+        
+        # Density evolution
+        rho_advection = - dtdr * v_ext[i+1] * drho_dr
+        rho_compression = - rho_dn[i] * div_v * dt
+        rho_up_next[i] = rho_ext[i+1] + rho_advection + rho_compression
+        
+        if rho_up_next[i] < 1e-30:
+            rho_up_next[i] = 1e-30
+        if rho_up_next[i] > 1e-17:
+            rho_up_next[i] = 1e-17
+        
+        # Temperature evolution
+        temp_advection = - dtdr * v_ext[i+1] * dtemp_dr
+        temp_compression = - (gamma - 1.0) * temp_dn[i] * div_v * dt
+        temp_up_next[i] = temp_ext[i+1] + temp_advection + temp_compression
+        
+        if temp_up_next[i] < 1e4:  # Lower floor to 10,000 K
+            temp_up_next[i] = 1e4
+        if temp_up_next[i] > 1e8:
+            temp_up_next[i] = 1e8
+    
+    return v_up_next, rho_up_next, temp_up_next
 
 
 @jit(nopython=True)
@@ -1942,38 +3735,59 @@ def load_HUXt_run(filepath):
         accel_limit = bool(data['accel_limit'][()])
         track_b = bool(data['track_b'][()])
         track_streak = bool(data['track_streak'][()])
+        
+        # Load compressible flag if it exists (for backward compatibility with older saved files)
+        compressible = bool(data['compressible'][()]) if 'compressible' in data else False
 
         if track_b:
             b_boundary = data['_b_boundary_init_'][()]
             b_boundary_lons = data['b_boundary_lons'][()] * u.Unit(data['b_boundary_lons'].attrs['unit'])
 
+        # Load compressible boundaries if they exist (for backward compatibility with older saved files)
+        if compressible:
+            if '_rho_boundary_init_' in data:
+                rho_boundary = data['_rho_boundary_init_'][()]
+                rho_boundary_lons = data['rho_boundary_lons'][()] * u.Unit(data['rho_boundary_lons'].attrs['unit'])
+            else:
+                rho_boundary = np.nan
+                
+            if '_temp_boundary_init_' in data:
+                temp_boundary = data['_temp_boundary_init_'][()]
+                temp_boundary_lons = data['temp_boundary_lons'][()] * u.Unit(data['temp_boundary_lons'].attrs['unit'])
+            else:
+                temp_boundary = np.nan
+
         # Create the model class
-        if not track_b:
-            if nlon == 1:
-                model = HUXt(v_boundary=v_boundary, cr_num=cr_num, cr_lon_init=cr_lon_init,
-                             r_min=r.min(), r_max=r.max(),
-                             lon_out=lon, simtime=simtime,
-                             dt_scale=dt_scale, latitude=lat, frame=frame,
-                             track_cmes=track_cmes, accel_limit=accel_limit)
-            elif nlon > 1:
-                model = HUXt(v_boundary=v_boundary, cr_num=cr_num, cr_lon_init=cr_lon_init,
-                             r_min=r.min(), r_max=r.max(),
-                             lon_start=lon.min(), lon_stop=lon.max(),
-                             simtime=simtime, dt_scale=dt_scale,
-                             latitude=lat, frame=frame, track_cmes=track_cmes, accel_limit=accel_limit)
-        elif track_b:
-            if nlon == 1:
-                model = HUXt(v_boundary=v_boundary, b_boundary=b_boundary, cr_num=cr_num, cr_lon_init=cr_lon_init,
-                             r_min=r.min(), r_max=r.max(),
-                             lon_out=lon, simtime=simtime,
-                             dt_scale=dt_scale, latitude=lat, frame=frame,
-                             track_cmes=track_cmes, accel_limit=accel_limit)
-            elif nlon > 1:
-                model = HUXt(v_boundary=v_boundary, b_boundary=b_boundary, cr_num=cr_num, cr_lon_init=cr_lon_init,
-                             r_min=r.min(), r_max=r.max(),
-                             lon_start=lon.min(), lon_stop=lon.max(),
-                             simtime=simtime, dt_scale=dt_scale,
-                             latitude=lat, frame=frame, track_cmes=track_cmes, accel_limit=accel_limit)
+        # Build kwargs for constructor based on what's available
+        constructor_kwargs = {
+            'v_boundary': v_boundary,
+            'cr_num': cr_num,
+            'cr_lon_init': cr_lon_init,
+            'r_min': r.min(),
+            'r_max': r.max(),
+            'simtime': simtime,
+            'dt_scale': dt_scale,
+            'latitude': lat,
+            'frame': frame,
+            'track_cmes': track_cmes,
+            'accel_limit': accel_limit,
+            'compressible': compressible
+        }
+        
+        if track_b:
+            constructor_kwargs['b_boundary'] = b_boundary
+            
+        if compressible:
+            constructor_kwargs['rho_boundary'] = rho_boundary
+            constructor_kwargs['temp_boundary'] = temp_boundary
+        
+        if nlon == 1:
+            constructor_kwargs['lon_out'] = lon
+            model = HUXt(**constructor_kwargs)
+        elif nlon > 1:
+            constructor_kwargs['lon_start'] = lon.min()
+            constructor_kwargs['lon_stop'] = lon.max()
+            model = HUXt(**constructor_kwargs)
 
         # Reset the longitudes, as when onlyt a wedge is simulated, it gets confused.
         model.lon = lon
@@ -1987,6 +3801,13 @@ def load_HUXt_run(filepath):
             model.b_boundary_lons = b_boundary_lons
             model.b_grid = data['b_grid'][()]
             model.hcs_particles_r = data['hcs_particles_r'][()] * u.Unit(data['hcs_particles_r'].attrs['unit'])
+        
+        if compressible:
+            if '_rho_boundary_init_' in data:
+                model.rho_boundary_lons = rho_boundary_lons
+            if '_temp_boundary_init_' in data:
+                model.temp_boundary_lons = temp_boundary_lons
+        
         if track_streak:
             model.track_streak = track_streak
             model.streak_particles_r = data['streak_particles_r'][()] * u.Unit(data['streak_particles_r'].attrs['unit'])
