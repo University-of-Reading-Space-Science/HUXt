@@ -484,12 +484,12 @@ def plot_compressible(model, time, save=False, tag='', fighandle=np.nan, minimal
                 ax.plot(obslon, obs.r[id_t], markersize=14, color=styles[body]['color'], 
                        marker=styles[body]['marker'], linestyle='', label=label)
         
-        # Set background color and adjust position to make room for colorbars and legend
+        # Set background color and adjust position to make room for text at top and legend at bottom
         for ax in axes:
             ax.patch.set_facecolor('slategrey')
             pos = ax.get_position()
-            # Move plots up to make room for colorbar and legend below
-            new_pos = [pos.x0, pos.y0 + 0.15, pos.width, pos.height]
+            # Move plots down and shrink height to make room for text above and legend below
+            new_pos = [pos.x0, pos.y0 + 0.10, pos.width, pos.height * 0.85]
             ax.set_position(new_pos)
 
         # Add colorbars below each plot
@@ -499,7 +499,7 @@ def plot_compressible(model, time, save=False, tag='', fighandle=np.nan, minimal
             (axes[2], cnt_T, r"$\log_{10}(T)$ [K]", np.arange(Tmin, Tmax, 0.5))
         ]):
             pos = ax.get_position()
-            dh = 0.04  # Vertical offset from plot
+            dh = 0.035  # Vertical offset from plot
             cb_height = 0.02  # Colorbar height
             # Make colorbar same width as panel
             left = pos.x0
@@ -510,31 +510,33 @@ def plot_compressible(model, time, save=False, tag='', fighandle=np.nan, minimal
             cbar.set_ticks(ticks)
             cbar.ax.tick_params(labelsize=12)
             # Position label below colorbar with larger font
-            cbaxes.text(0.5, -1.8, label, fontsize=16, transform=cbaxes.transAxes, 
+            cbaxes.text(0.5, -1.6, label, fontsize=16, transform=cbaxes.transAxes, 
                        horizontalalignment='center', verticalalignment='top')
 
-        # Add legend below colorbars, centered on middle panel
+        # Add legend below colorbars, centered on figure
         if annotateplot and len(observers_list) > 0:
-            # Use axes[0] which has the labels, but position relative to figure center
+            # Use axes[0] which has the labels, position relative to figure center
             legend = axes[0].legend(ncol=len(observers_list), loc='center', frameon=False, fontsize=14,
                           handletextpad=0.1, columnspacing=0.5, 
-                          bbox_to_anchor=(0.5, -0.35), bbox_transform=fig.transFigure)
+                          bbox_to_anchor=(0.5, -0.23), bbox_transform=fig.transFigure)
             
-        if annotateplot:
-            # Get positions of left and right panels for alignment
-            pos_left = axes[0].get_position()
-            pos_right = axes[2].get_position()
-            
-            # Add time label at top right, aligned with right edge of right panel
-            time_label = "{:3.2f} days | ".format(model.time_out[id_t].to(u.day).value)
-            time_label = time_label + (model.time_init + time).strftime('%Y-%m-%d %H:%M')
-            fig.text(pos_right.x1, pos_right.y1 + 0.02, time_label, fontsize=15, fontweight='bold',
-                    horizontalalignment='right', verticalalignment='bottom')
-            
-            # Add model info at top left, aligned with left edge of left panel
-            model_label = "HUXt2D Compressible | Lat: {:3.0f}°".format(model.latitude.to(u.deg).value)
-            fig.text(pos_left.x0, pos_left.y1 + 0.02, model_label, fontsize=16, fontweight='bold',
-                    horizontalalignment='left', verticalalignment='bottom')
+    if annotateplot:
+        # Get positions of left and right panels for alignment
+        pos_left = axes[0].get_position()
+        pos_right = axes[2].get_position()
+        
+        # Add time label at top right, aligned with right edge of right panel
+        # Position well above plot to avoid overlap with titles
+        time_label = "{:3.2f} days | ".format(model.time_out[id_t].to(u.day).value)
+        time_label = time_label + (model.time_init + time).strftime('%Y-%m-%d %H:%M')
+        fig.text(pos_right.x1, pos_right.y1 + 0.06, time_label, fontsize=15, fontweight='bold',
+                horizontalalignment='right', verticalalignment='bottom')
+        
+        # Add model info at top left, aligned with left edge of left panel
+        # Position well above plot to avoid overlap with titles
+        model_label = "HUXt2D Compressible | Lat: {:3.0f}°".format(model.latitude.to(u.deg).value)
+        fig.text(pos_left.x0, pos_left.y1 + 0.06, model_label, fontsize=16, fontweight='bold',
+                horizontalalignment='left', verticalalignment='bottom')
 
     if plot_rmax:
         for ax in axes:
