@@ -254,3 +254,15 @@ def test_input_mapping():
     assert (b_frac * 100 < btol)
 
     return
+
+
+if __name__ == "__main__":
+    print("Starting test_analytic_solution...")
+    try:
+        test_analytic_solution()
+        print("✓ test_analytic_solution PASSED")
+    except Exception as e:
+        print(f"✗ test_analytic_solution FAILED: {e}")
+        import traceback
+        traceback.print_exc()
+        exit(1)

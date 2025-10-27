@@ -6,6 +6,7 @@ from appdirs import user_data_dir
 import astropy.units as u
 from astropy.time import Time, TimeDelta
 import h5py
+from joblib import Parallel, delayed
 import numpy as np
 from numba import jit
 from pathlib import Path
@@ -553,7 +554,7 @@ class HUXt:
                  input_v_ts=np.nan * (u.km / u.s), input_b_ts=np.nan, 
                  input_rho_ts=np.nan * (u.kg / u.m**3), input_temp_ts=np.nan * u.K, 
                  input_iscme_ts=np.nan, input_t_ts=np.nan * u.s,
-                 track_cmes=True, accel_limit=True, compressible=False, solver='upwind'):
+                 track_cmes=True, accel_limit=True, compressible=False, solver='upwind', parallel=True):
         """
         Initialise the HUXt model instance.
 
@@ -594,6 +595,9 @@ class HUXt:
                    'pluto': PLUTO-style fully conservative HLL solver (requires compressible=True)
                            Uses flux differencing with geometric source terms S = -(2/r)*F
                            Designed for starting at inner boundaries (21.5 Rs recommended)
+            parallel: Boolean flag to enable parallel computation across longitude slices (default True).
+                     Uses joblib threading backend for parallelization. Set to False for debugging
+                     or if running on a single-core system.
             rho_boundary: Inner density boundary condition in kg/m³. An array of size nlon. Only used if compressible=True.
                          If not provided, defaults to realistic solar wind density scaled from 1 AU (5 protons/cm³) 
                          using r⁻² scaling to r_min.
@@ -614,15 +618,14 @@ class HUXt:
         self.__version__ = get_version()
         
         # Validate and store solver choice
-        valid_solvers = ['upwind', 'hll', 'hllc', 'pluto']
+        valid_solvers = ['upwind', 'hll', 'hllc']
         if solver not in valid_solvers:
             raise ValueError(f"Invalid solver '{solver}'. Must be one of: {valid_solvers}")
         
-        # PLUTO solver requires compressible=True
-        if solver == 'pluto' and not compressible:
-            raise ValueError("PLUTO solver requires compressible=True")
-        
         self.solver = solver
+        
+        # Store parallel computation flag
+        self.parallel = parallel
 
         # set the frame fo reference. Synodic keeps ES line at 0 longitude.
         # sidereal means Earth moves to increasing longitude with time
@@ -835,9 +838,7 @@ class HUXt:
         # - HLL/HLLC solvers: alpha_hybrid (0.0, pressure gradient only) if compressible
         # - PLUTO solver: no acceleration (alpha = 0.0)
         # - upwind/incompressible: alpha (0.15)
-        if self.solver == 'pluto':
-            alpha_to_use = 0.0 * u.dimensionless_unscaled  # PLUTO uses no empirical acceleration
-        elif self.solver in ['hll', 'hllc'] and self.compressible:
+        if self.solver in ['hll', 'hllc'] and self.compressible:
             alpha_to_use = self.alpha_hybrid
         else:
             alpha_to_use = self.alpha
@@ -965,6 +966,52 @@ class HUXt:
                 self.input_temp_ts[:, i] = tempinput
 
         return
+    
+    def process_longitude(self, i, n_cme, n_hcs_max, streak_times):
+        """
+        Process a single longitude slice in the HUXt simulation.
+        This helper function is used for parallel execution across longitudes.
+        
+        Args:
+            i: Longitude index to process
+            n_cme: Number of CMEs
+            n_hcs_max: Maximum number of HCS particles
+            streak_times: Streakline timing data
+            
+        Returns:
+            Tuple of (i, v, cme_r_bounds, cme_v_bounds, hcs_r, streak_r, rho_out, temp_out)
+        """
+        # check if there is b polarity data
+        if self.track_b:
+            bslice = self.input_b_ts[:, i]
+        else:
+            bslice = self.input_v_ts[:, i] * np.nan
+
+        # Prepare density and temperature inputs for compressible solver
+        if self.compressible:
+            rhoslice = self.input_rho_ts[:, i].value
+            tempslice = self.input_temp_ts[:, i].value
+        else:
+            # Pass dummy arrays to avoid None issues in Numba
+            rhoslice = np.zeros(len(self.model_time))
+            tempslice = np.zeros(len(self.model_time))
+
+        # actually run the HUXt solver
+        v, cme_r_bounds, cme_v_bounds, hcs_r, streak_r, rho_out, temp_out = solve_radial(
+                                                                      self.input_v_ts[:, i].value,
+                                                                      bslice,
+                                                                      self.input_iscme_ts[:, i],
+                                                                      self.model_time,
+                                                                      self.rrel.value,
+                                                                      self.model_params,
+                                                                      n_cme, n_hcs_max,
+                                                                      streak_times[i, :, :, :],
+                                                                      rhoinput=rhoslice,
+                                                                      tempinput=tempslice,
+                                                                      compressible=self.compressible,
+                                                                      solver=self.solver)
+        
+        return (i, v, cme_r_bounds, cme_v_bounds, hcs_r, streak_r, rho_out, temp_out)
     
     @u.quantity_input(streak_carr=u.rad)
     def solve(self, cme_list, streak_carr=np.array([])*u.rad, save=False, tag=''):
@@ -1187,50 +1234,47 @@ class HUXt:
         # Solve the time series at each longitude
         # ======================================================================
 
-        for i in range(self.lon.size):
-
-            # check if there is b polarity data
-            if self.track_b:
-                bslice = self.input_b_ts[:, i]
-            else:
-                bslice = self.input_v_ts[:, i] * np.nan
-
-            # Prepare density and temperature inputs for compressible solver
-            if self.compressible:
-                rhoslice = self.input_rho_ts[:, i].value
-                tempslice = self.input_temp_ts[:, i].value
-            else:
-                # Pass dummy arrays to avoid None issues in Numba
-                rhoslice = np.zeros(len(self.model_time))
-                tempslice = np.zeros(len(self.model_time))
-
-            # actually run the HUXt solver
-            v, cme_r_bounds, cme_v_bounds, hcs_r, streak_r, rho_out, temp_out = solve_radial(
-                                                                          self.input_v_ts[:, i].value,
-                                                                          bslice,
-                                                                          self.input_iscme_ts[:, i],
-                                                                          self.model_time,
-                                                                          self.rrel.value,
-                                                                          self.model_params,
-                                                                          n_cme, n_hcs_max,
-                                                                          streak_times[i, :, :, :],
-                                                                          rhoinput=rhoslice,
-                                                                          tempinput=tempslice,
-                                                                          compressible=self.compressible,
-                                                                          solver=self.solver)
-            # Save the output at each longitude
-            self.v_grid[:, :, i] = v * self.kms
-            self.cme_particles_r[:, :, :, i] = cme_r_bounds * u.dimensionless_unscaled
-            self.cme_particles_v[:, :, :, i] = cme_v_bounds * u.dimensionless_unscaled
-            if self.track_b:
-                self.hcs_particles_r[:, :, :, i] = hcs_r * u.dimensionless_unscaled
-            if self.track_streak:
-                self.streak_particles_r[:, :, :, i] = streak_r * u.dimensionless_unscaled
+        if self.parallel:
+            # Parallel execution using joblib
+            results = Parallel(n_jobs=-1, backend='threading')(
+                delayed(self.process_longitude)(i, n_cme, n_hcs_max, streak_times) 
+                for i in range(self.lon.size)
+            )
             
-            # Save density and temperature output for compressible solver
-            if self.compressible:
-                self.rho_grid[:, :, i] = rho_out * (u.kg / u.m**3)
-                self.temp_grid[:, :, i] = temp_out * u.K
+            # Unpack results into grids
+            for i, v, cme_r_bounds, cme_v_bounds, hcs_r, streak_r, rho_out, temp_out in results:
+                self.v_grid[:, :, i] = v * self.kms
+                self.cme_particles_r[:, :, :, i] = cme_r_bounds * u.dimensionless_unscaled
+                self.cme_particles_v[:, :, :, i] = cme_v_bounds * u.dimensionless_unscaled
+                if self.track_b:
+                    self.hcs_particles_r[:, :, :, i] = hcs_r * u.dimensionless_unscaled
+                if self.track_streak:
+                    self.streak_particles_r[:, :, :, i] = streak_r * u.dimensionless_unscaled
+                
+                # Save density and temperature output for compressible solver
+                if self.compressible:
+                    self.rho_grid[:, :, i] = rho_out * (u.kg / u.m**3)
+                    self.temp_grid[:, :, i] = temp_out * u.K
+        else:
+            # Serial execution (original loop)
+            for i in range(self.lon.size):
+                i, v, cme_r_bounds, cme_v_bounds, hcs_r, streak_r, rho_out, temp_out = self.process_longitude(
+                    i, n_cme, n_hcs_max, streak_times
+                )
+                
+                # Save the output at each longitude
+                self.v_grid[:, :, i] = v * self.kms
+                self.cme_particles_r[:, :, :, i] = cme_r_bounds * u.dimensionless_unscaled
+                self.cme_particles_v[:, :, :, i] = cme_v_bounds * u.dimensionless_unscaled
+                if self.track_b:
+                    self.hcs_particles_r[:, :, :, i] = hcs_r * u.dimensionless_unscaled
+                if self.track_streak:
+                    self.streak_particles_r[:, :, :, i] = streak_r * u.dimensionless_unscaled
+                
+                # Save density and temperature output for compressible solver
+                if self.compressible:
+                    self.rho_grid[:, :, i] = rho_out * (u.kg / u.m**3)
+                    self.temp_grid[:, :, i] = temp_out * u.K
 
         # Update CMEs positions by tracking through the solution.
         if self.track_cmes:
@@ -1984,25 +2028,8 @@ def solve_radial(vinput, binput, iscmeinput, model_time, rrel, params,
                 # Save the updated time step
                 v[1:] = u_up_next.copy()
         
-        elif solver == 'pluto':
-            # PLUTO-style fully conservative solver (requires compressible=True)
-            # Uses flux differencing with geometric source terms
-            # No empirical acceleration - purely conservative
-            rho_up = rho[1:].copy()
-            rho_dn = rho[:-1].copy()
-            temp_up = temp[1:].copy()
-            temp_dn = temp[:-1].copy()
-            
-            u_up_next, rho_up_next, temp_up_next = _pluto_step_(
-                u_up, u_dn, rho_up, rho_dn, temp_up, temp_dn, dtdr, rrel, r_boundary, gamma_pluto)
-            
-            # Save the updated time steps
-            v[1:] = u_up_next.copy()
-            rho[1:] = rho_up_next.copy()
-            temp[1:] = temp_up_next.copy()
-        
         else:
-            raise ValueError(f"Unknown solver: {solver}. Supported solvers: 'upwind', 'hll', 'hllc', 'pluto'")
+            raise ValueError(f"Unknown solver: {solver}. Supported solvers: 'upwind', 'hll', 'hllc'")
 
         # Move the CME test particles forward
         if t > 0 and do_cme:
@@ -2258,7 +2285,7 @@ def _muscl_reconstruct_(u_left, u_center, u_right, limiter='vanleer'):
     return u_L, u_R
 
 
-@jit(nopython=True)
+@jit(nopython=True, parallel=True)
 def _upwind_step_(v_up, v_dn, dtdr, alpha, r_accel, rrel):
     """
     Compute the next step in the upwind scheme of Burgers equation with added acceleration of the solar wind.
@@ -2693,7 +2720,7 @@ def _hllc_flux_(rho_L, v_L, p_L, rho_R, v_R, p_R, gamma=5.0/3.0):
     return F_mass, F_mom, F_energy
 
 
-@jit(nopython=True)
+@jit(nopython=True, parallel=True)
 def _hll_step_compressible_(v_up, v_dn, rho_up, rho_dn, temp_up, temp_dn,
                             dtdr, alpha, r_accel, rrel, r_boundary, use_hllc=False):
     """
@@ -2800,172 +2827,6 @@ def _hll_step_compressible_(v_up, v_dn, rho_up, rho_dn, temp_up, temp_dn,
     return v_up_next, rho_up_next, temp_up_next
 
 
-@jit(nopython=True)
-def _pluto_step_(v_up, v_dn, rho_up, rho_dn, temp_up, temp_dn,
-                 dtdr, rrel, r_boundary, gamma=1.5):
-    """
-    PLUTO-style fully conservative solver using HLL Riemann solver with flux differencing.
-    
-    Implements the exact method from PLUTO (Mignone et al. 2007):
-    1. Conservative variables: U = [ρ, ρv, E] where E = ½ρv² + P/(γ-1)
-    2. HLL flux at interfaces
-    3. Update: U^{n+1} = U^n - (Δt/Δr)(F_{i+1/2} - F_{i-1/2}) + Δt*S
-    4. Geometric source for spherical coordinates: S = -(2/r)*F
-    5. No empirical acceleration (purely conservative)
-    
-    Following sunRunner1D configuration:
-    - Gamma = 1.5 (polytropic index)
-    - HLL Riemann solver
-    - Spherical geometry with proper source terms
-    
-    Args:
-        v_up: Upwind velocity (km/s) - numpy array
-        v_dn: Downwind velocity (km/s) - numpy array
-        rho_up: Upwind density (kg/m³) - numpy array
-        rho_dn: Downwind density (kg/m³) - numpy array
-        temp_up: Upwind temperature (K) - numpy array
-        temp_dn: Downwind temperature (K) - numpy array
-        dtdr: Time step / radial step (s/km)
-        rrel: Radial grid relative to inner boundary (dimensionless)
-        r_boundary: Inner boundary radius (km)
-        gamma: Adiabatic index (default 1.5 for sunRunner1D)
-    
-    Returns:
-        v_up_next: Updated velocity (km/s)
-        rho_up_next: Updated density (kg/m³)
-        temp_up_next: Updated temperature (K)
-    """
-    
-    nr = len(v_up)
-    
-    # Physical constants
-    k_B = 1.38064852e-23  # Boltzmann constant (J/K)
-    m_p = 1.67262192e-27  # Proton mass (kg)
-    
-    # Convert radial coordinates to km
-    r = rrel * 695700.0 + r_boundary  # km
-    
-    # Convert primitives to conservative variables U = [ρ, ρv, E]
-    U_rho = rho_up.copy()
-    U_mom = rho_up * v_up  # momentum density (note: v in km/s)
-    
-    # Pressure (Pa = J/m³)
-    P_up = (rho_up / m_p) * k_B * temp_up
-    P_dn = (rho_dn / m_p) * k_B * temp_dn
-    
-    # Total energy density (convert velocity to m/s for energy calculation)
-    v_up_mps = v_up * 1000.0  # km/s → m/s
-    v_dn_mps = v_dn * 1000.0  # km/s → m/s
-    U_energy = 0.5 * rho_up * (v_up_mps**2) + P_up / (gamma - 1.0)  # J/m³
-    
-    # Compute fluxes at cell interfaces using HLL Riemann solver
-    flux_rho = np.zeros(nr + 1)
-    flux_mom = np.zeros(nr + 1)
-    flux_energy = np.zeros(nr + 1)
-    
-    for i in range(nr + 1):
-        if i == 0:
-            # Left boundary: use boundary values as left state
-            rho_L = rho_dn[0]
-            v_L = v_dn[0]  # km/s
-            p_L = P_dn[0]
-            rho_R = rho_up[0]
-            v_R = v_up[0]  # km/s
-            p_R = P_up[0]
-        elif i == nr:
-            # Right boundary: constant extrapolation
-            rho_L = rho_up[nr-1]
-            v_L = v_up[nr-1]
-            p_L = P_up[nr-1]
-            rho_R = rho_up[nr-1]
-            v_R = v_up[nr-1]
-            p_R = P_up[nr-1]
-        else:
-            # Interior interface
-            rho_L = rho_up[i-1]
-            v_L = v_up[i-1]
-            p_L = P_up[i-1]
-            rho_R = rho_up[i]
-            v_R = v_up[i]
-            p_R = P_up[i]
-        
-        # Compute HLL flux
-        F_rho_i, F_mom_i, F_energy_i = _hll_flux_(rho_L, v_L, p_L, rho_R, v_R, p_R, gamma)
-        flux_rho[i] = F_rho_i
-        flux_mom[i] = F_mom_i
-        flux_energy[i] = F_energy_i
-    
-    # Update conservative variables via flux differencing with geometric source terms
-    U_rho_new = np.zeros(nr)
-    U_mom_new = np.zeros(nr)
-    U_energy_new = np.zeros(nr)
-    
-    for i in range(nr):
-        # Radial spacing
-        dr_i = (r[i+1] - r[i]) if i < nr-1 else (r[i] - r[i-1])  # km
-        dt_i = dtdr * dr_i  # time step (s)
-        r_i = r[i]  # km
-        
-        # Flux difference
-        dF_rho = (flux_rho[i+1] - flux_rho[i]) / dr_i
-        dF_mom = (flux_mom[i+1] - flux_mom[i]) / dr_i
-        dF_energy = (flux_energy[i+1] - flux_energy[i]) / dr_i
-        
-        # Geometric source term: S = -(2/r)*F
-        F_rho_center = 0.5 * (flux_rho[i] + flux_rho[i+1])
-        F_mom_center = 0.5 * (flux_mom[i] + flux_mom[i+1])
-        F_energy_center = 0.5 * (flux_energy[i] + flux_energy[i+1])
-        
-        S_rho = -(2.0 / r_i) * F_rho_center
-        S_mom = -(2.0 / r_i) * F_mom_center
-        S_energy = -(2.0 / r_i) * F_energy_center
-        
-        # Update: U^{n+1} = U^n - Δt*(∂F/∂r) + Δt*S
-        U_rho_new[i] = U_rho[i] - dt_i * dF_rho + dt_i * S_rho
-        U_mom_new[i] = U_mom[i] - dt_i * dF_mom + dt_i * S_mom
-        U_energy_new[i] = U_energy[i] - dt_i * dF_energy + dt_i * S_energy
-        
-        # Ensure positivity
-        if U_rho_new[i] < 1e-30:
-            U_rho_new[i] = 1e-30
-        if U_energy_new[i] < 0.0:
-            U_energy_new[i] = 1e-30
-    
-    # Convert back to primitive variables
-    rho_up_next = U_rho_new.copy()
-    v_up_next = U_mom_new / U_rho_new  # Still in km/s units
-    
-    # Recover pressure and temperature
-    v_up_next_mps = v_up_next * 1000.0  # Convert to m/s for energy
-    P_new = (gamma - 1.0) * (U_energy_new - 0.5 * rho_up_next * (v_up_next_mps**2))
-    
-    # Ensure positive pressure
-    for i in range(nr):
-        if P_new[i] < 0.0:
-            P_new[i] = 1e-10
-    
-    # Temperature from ideal gas: T = P * m_p / (ρ * k_B)
-    temp_up_next = P_new * m_p / (rho_up_next * k_B)
-    
-    # Apply physical bounds
-    for i in range(nr):
-        if v_up_next[i] < 100.0:
-            v_up_next[i] = 100.0
-        if v_up_next[i] > 3000.0:
-            v_up_next[i] = 3000.0
-        if rho_up_next[i] < 1e-30:
-            rho_up_next[i] = 1e-30
-        if rho_up_next[i] > 1e-17:
-            rho_up_next[i] = 1e-17
-        if temp_up_next[i] < 1e4:
-            temp_up_next[i] = 1e4
-        if temp_up_next[i] > 1e8:
-            temp_up_next[i] = 1e8
-    
-    return v_up_next, rho_up_next, temp_up_next
-
-
-@jit(nopython=True)
 def _hll_step_fully_conservative_(v_up, v_dn, rho_up, rho_dn, temp_up, temp_dn,
                                    dtdr, alpha, r_accel, rrel, r_boundary, use_hllc=False, gamma=1.5):
     """
@@ -3171,7 +3032,7 @@ def _hll_step_fully_conservative_(v_up, v_dn, rho_up, rho_dn, temp_up, temp_dn,
     return v_up_next, rho_up_next, temp_up_next
 
 
-@jit(nopython=True)
+@jit(nopython=True, parallel=True)
 def _hll_step_compressible_accel_limit_(v_up, v_dn, rho_up, rho_dn, temp_up, temp_dn,
                                         dtdr, alpha, r_accel, rrel, r_boundary, use_hllc=False):
     """
@@ -3269,7 +3130,7 @@ def _hll_step_compressible_accel_limit_(v_up, v_dn, rho_up, rho_dn, temp_up, tem
     return v_up_next, rho_up_next, temp_up_next
 
 
-@jit(nopython=True)
+@jit(nopython=True, parallel=True)
 def _upwind_step_compressible_(v_up, v_dn, rho_up, rho_dn, temp_up, temp_dn, 
                                 dtdr, alpha, r_accel, rrel, r_boundary):
     """

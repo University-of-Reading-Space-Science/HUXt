@@ -307,6 +307,231 @@ def animate(model, tag, duration=10, fps=20, plotHCS=True, trace_earth_connectio
     return
 
 
+@u.quantity_input(time=u.day)
+def plot_compressible(model, time, save=False, tag='', fighandle=np.nan, minimalplot=False, 
+                      annotateplot=True, plot_rmax=None):
+    """
+    Make three contour plots on polar axes of the compressible solar wind solution at a specific time.
+    Shows velocity, density, and temperature in separate subplots.
+    
+    Args:
+        model: An instance of the HUXt class with a completed compressible solution.
+        time: Time to look up closest model time to (with an astropy.unit of time).
+        save: Boolean to determine if the figure is saved.
+        tag: String to append to the filename if saving the figure.
+        fighandle: Figure handle for placing plot in existing figure.
+        minimalplot: Boolean, if True removes colorbar, planets, spacecraft, and labels.
+        annotateplot: Boolean, whether to include text and legends
+        plot_rmax: float (no units, but in Rs). Limit outer boundary to help with field lines during CMEs
+    Returns:
+        fig: Figure handle.
+        axes: Array of axes handles [ax_v, ax_rho, ax_T].
+    """
+    
+    if not hasattr(model, 'rho_grid') or not hasattr(model, 'temp_grid'):
+        raise ValueError("Model must be run with compressible=True to use plot_compressible")
+
+    if (time < model.time_out.min()) | (time > (model.time_out.max())):
+        print("Error, input time outside span of model times. Defaulting to closest time")
+
+    # Create figure with 3 subplots
+    if isinstance(fighandle, float):
+        fig, axes = plt.subplots(1, 3, figsize=(24, 8), subplot_kw={"projection": "polar"})
+    else:
+        fig = fighandle
+        axes = [fig.add_subplot(1, 3, i+1, projection='polar') for i in range(3)]
+
+    id_t = np.argmin(np.abs(model.time_out - time))
+
+    # Get plotting data
+    lon_arr, dlon, nlon = h.longitude_grid()
+    lon, rad = np.meshgrid(lon_arr.value, model.r.value)
+
+    # Prepare data arrays for velocity, density, and temperature
+    v_sub = model.v_grid.value[id_t, :, :].copy()
+    rho_sub = model.rho_grid.value[id_t, :, :].copy()
+    temp_sub = model.temp_grid.value[id_t, :, :].copy()
+    
+    # Convert density to number density (protons/cm³)
+    m_p = 1.6726e-27  # kg
+    n_sub = rho_sub / m_p / 1e6
+    
+    # Insert into full array
+    if lon_arr.size != model.lon.size:
+        v = np.zeros((model.nr, nlon)) * np.nan
+        n = np.zeros((model.nr, nlon)) * np.nan
+        temp = np.zeros((model.nr, nlon)) * np.nan
+        if model.lon.size != 1:
+            for i, lo in enumerate(model.lon):
+                id_match = np.argwhere(lon_arr == lo)[0][0]
+                v[:, id_match] = v_sub[:, i]
+                n[:, id_match] = n_sub[:, i]
+                temp[:, id_match] = temp_sub[:, i]
+        else:
+            print('Warning: Trying to contour single radial solution will fail.')
+    else:
+        v = v_sub
+        n = n_sub
+        temp = temp_sub
+
+    # Pad out to fill the full 2pi of contouring
+    pad = lon[:, 0].reshape((lon.shape[0], 1)) + model.twopi
+    lon = np.concatenate((lon, pad), axis=1)
+    pad = rad[:, 0].reshape((rad.shape[0], 1))
+    rad = np.concatenate((rad, pad), axis=1)
+    
+    pad_v = v[:, 0].reshape((v.shape[0], 1))
+    v = np.concatenate((v, pad_v), axis=1)
+    pad_n = n[:, 0].reshape((n.shape[0], 1))
+    n = np.concatenate((n, pad_n), axis=1)
+    pad_temp = temp[:, 0].reshape((temp.shape[0], 1))
+    temp = np.concatenate((temp, pad_temp), axis=1)
+
+    # Define colormaps and levels for each quantity
+    # Velocity
+    cmap_v = mpl.cm.viridis.copy()
+    cmap_v.set_over('lightgrey')
+    cmap_v.set_under([0, 0, 0])
+    vmin, vmax, dv = 200, 810, 10
+    levels_v = np.arange(vmin, vmax + dv, dv)
+    
+    # Density (log scale)
+    cmap_n = mpl.cm.plasma.copy()
+    cmap_n.set_over('white')
+    cmap_n.set_under([0, 0, 0])
+    # Use log10 of density for better visualization
+    n_log = np.log10(n)
+    nmin, nmax, dn = -1, 3, 0.1  # log10 scale: 0.1 to 1000 protons/cm³
+    levels_n = np.arange(nmin, nmax + dn, dn)
+    
+    # Temperature (log scale)
+    cmap_T = mpl.cm.inferno.copy()
+    cmap_T.set_over('white')
+    cmap_T.set_under([0, 0, 0])
+    # Use log10 of temperature
+    T_log = np.log10(temp)
+    Tmin, Tmax, dT = 4, 6, 0.05  # log10 scale: 10^4 to 10^6 K
+    levels_T = np.arange(Tmin, Tmax + dT, dT)
+
+    # Plot 1: Velocity
+    cnt_v = axes[0].contourf(lon, rad, v, levels=levels_v, cmap=cmap_v, extend='both')
+    cnt_v.set(edgecolor="face")
+    axes[0].set_ylim(0, model.r.value.max())
+    axes[0].set_yticklabels([])
+    axes[0].set_xticklabels([])
+    axes[0].plot(0, 0, 'o', color=[1.0, 0.5, 0.25], markersize=16)
+    axes[0].set_title('Solar Wind Speed', fontsize=16, fontweight='bold', pad=20)
+    
+    # Plot 2: Density
+    cnt_n = axes[1].contourf(lon, rad, n_log, levels=levels_n, cmap=cmap_n, extend='both')
+    cnt_n.set(edgecolor="face")
+    axes[1].set_ylim(0, model.r.value.max())
+    axes[1].set_yticklabels([])
+    axes[1].set_xticklabels([])
+    axes[1].plot(0, 0, 'o', color=[1.0, 0.5, 0.25], markersize=16)
+    axes[1].set_title('Proton Density', fontsize=16, fontweight='bold', pad=20)
+    
+    # Plot 3: Temperature
+    cnt_T = axes[2].contourf(lon, rad, T_log, levels=levels_T, cmap=cmap_T, extend='both')
+    cnt_T.set(edgecolor="face")
+    axes[2].set_ylim(0, model.r.value.max())
+    axes[2].set_yticklabels([])
+    axes[2].set_xticklabels([])
+    axes[2].plot(0, 0, 'o', color=[1.0, 0.5, 0.25], markersize=16)
+    axes[2].set_title('Proton Temperature', fontsize=16, fontweight='bold', pad=20)
+
+    # Add CME boundaries to all plots
+    if model.track_cmes:
+        cme_colors = get_cme_colors()
+        for j, cme in enumerate(model.cmes):
+            cid = np.mod(j, len(cme_colors))
+            cme_lons = cme.coords[id_t]['lon']
+            cme_r = cme.coords[id_t]['r'].to(u.solRad)
+            if np.any(np.isfinite(cme_r)):
+                cme_lons = np.append(cme_lons, cme_lons[0])
+                cme_r = np.append(cme_r, cme_r[0])
+                for ax in axes:
+                    ax.plot(cme_lons, cme_r, '-', color=cme_colors[cid], linewidth=3)
+
+    if not minimalplot:
+        # Determine which bodies should be plotted
+        planet_list = get_planets_to_plot(model)
+        spacecraft_list = get_spacecraft_to_plot(model)
+        observers_list = planet_list + spacecraft_list
+
+        # Add observers to all plots
+        styles = observer_styles()
+        for body in observers_list:
+            obs = model.get_observer(body)
+            deltalon = 0.0 * u.rad
+            if model.frame == 'sidereal':
+                earth_pos = model.get_observer('EARTH')
+                deltalon = earth_pos.lon_hae[id_t] - earth_pos.lon_hae[0]
+
+            obslon = zerototwopi(obs.lon[id_t] + deltalon)
+            for ax in axes:
+                ax.plot(obslon, obs.r[id_t], markersize=14, color=styles[body]['color'], 
+                       marker=styles[body]['marker'], linestyle='')
+        
+        # Add legend only to first plot
+        if annotateplot:
+            axes[0].legend([styles[body]['marker'] for body in observers_list], observers_list,
+                          ncol=len(observers_list), loc='lower center', frameon=False, fontsize=12,
+                          handletextpad=0.1, columnspacing=0.5, bbox_to_anchor=(0.5, -0.18))
+        
+        # Set background color
+        for ax in axes:
+            ax.patch.set_facecolor('slategrey')
+            pos = ax.get_position()
+            new_pos = [pos.x0, pos.y0 + 0.08, pos.width, pos.height]
+            ax.set_position(new_pos)
+
+        # Add colorbars
+        for i, (ax, cnt, label, ticks) in enumerate([
+            (axes[0], cnt_v, r"$V_{SW}$ [km/s]", np.arange(vmin, vmax, dv * 10)),
+            (axes[1], cnt_n, r"$\log_{10}(n)$ [protons/cm³]", np.arange(nmin, nmax, 1.0)),
+            (axes[2], cnt_T, r"$\log_{10}(T)$ [K]", np.arange(Tmin, Tmax, 0.5))
+        ]):
+            pos = ax.get_position()
+            dh = 0.03  # Vertical offset from plot
+            cb_height = 0.03  # Colorbar height
+            # Make colorbar same width as panel
+            left = pos.x0
+            bottom = pos.y0 - dh
+            wid = pos.width
+            cbaxes = fig.add_axes([left, bottom, wid, cb_height])
+            cbar = fig.colorbar(cnt, cax=cbaxes, orientation='horizontal')
+            cbar.set_ticks(ticks)
+            cbaxes.text(0.5, -2.5, label, fontsize=14, transform=cbaxes.transAxes, 
+                       horizontalalignment='center', verticalalignment='top')
+
+        if annotateplot:
+            # Add time label at top right of figure, aligned with right panel
+            label = "{:3.2f} days".format(model.time_out[id_t].to(u.day).value)
+            label = label + ' | ' + (model.time_init + time).strftime('%Y-%m-%d %H:%M')
+            pos_right = axes[2].get_position()
+            fig.text(pos_right.x1, 0.96, label, fontsize=14, 
+                    horizontalalignment='right', verticalalignment='top')
+            
+            # Add model info at top left of figure, aligned with left panel
+            label = "HUXt2D Compressible | Lat: {:3.0f} deg".format(model.latitude.to(u.deg).value)
+            pos_left = axes[0].get_position()
+            fig.text(pos_left.x0, 0.96, label, fontsize=14, verticalalignment='top')
+
+    if plot_rmax:
+        for ax in axes:
+            ax.set_rmax(plot_rmax)
+
+    if save:
+        cr_num = np.int32(model.cr_num.value)
+        filename = "HUXt_compressible_CR{:03d}_{}_frame_{:03d}.png".format(cr_num, tag, id_t)
+        figure_dir = get_figure_dir()
+        filepath = figure_dir.joinpath(filename)
+        fig.savefig(filepath, dpi=150, bbox_inches='tight')
+
+    return fig, axes
+
+
 def plot_radial(model, time, lon, save=False, tag=''):
     """
     Plot the radial solar wind profile at model time closest to specified time.
