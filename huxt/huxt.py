@@ -1982,10 +1982,10 @@ def solve_radial(vinput, binput, iscmeinput, model_time, rrel, params,
                     u_up_next, rho_up_next, temp_up_next = _upwind_step_compressible_(
                         u_up, u_dn, rho_up, rho_dn, temp_up, temp_dn, dtdr, alpha, r_accel, rrel, r_boundary)
                 
-                # Save the updated time steps
-                v[1:] = u_up_next.copy()
-                rho[1:] = rho_up_next.copy()
-                temp[1:] = temp_up_next.copy()
+                # Save the updated time steps (direct assignment, no copy needed)
+                v[1:] = u_up_next
+                rho[1:] = rho_up_next
+                temp[1:] = temp_up_next
             else:
                 # Use incompressible upwind step (velocity only)
                 if accel_limit:
@@ -1993,8 +1993,8 @@ def solve_radial(vinput, binput, iscmeinput, model_time, rrel, params,
                 else:
                     u_up_next = _upwind_step_(u_up, u_dn, dtdr, alpha, r_accel, rrel)
                 
-                # Save the updated time step
-                v[1:] = u_up_next.copy()
+                # Save the updated time step (direct assignment, no copy needed)
+                v[1:] = u_up_next
         
         elif solver == 'hll' or solver == 'hllc':
             # HLL/HLLC Riemann solver with empirical acceleration
@@ -2014,10 +2014,10 @@ def solve_radial(vinput, binput, iscmeinput, model_time, rrel, params,
                     u_up_next, rho_up_next, temp_up_next = _hll_step_compressible_(
                         u_up, u_dn, rho_up, rho_dn, temp_up, temp_dn, dtdr, alpha, r_accel, rrel, r_boundary, use_hllc)
                 
-                # Save the updated time steps
-                v[1:] = u_up_next.copy()
-                rho[1:] = rho_up_next.copy()
-                temp[1:] = temp_up_next.copy()
+                # Save the updated time steps (direct assignment, no copy needed)
+                v[1:] = u_up_next
+                rho[1:] = rho_up_next
+                temp[1:] = temp_up_next
             else:
                 # For incompressible, fall back to upwind (Riemann solver requires full conservation)
                 if accel_limit:
@@ -2025,8 +2025,8 @@ def solve_radial(vinput, binput, iscmeinput, model_time, rrel, params,
                 else:
                     u_up_next = _upwind_step_(u_up, u_dn, dtdr, alpha, r_accel, rrel)
                 
-                # Save the updated time step
-                v[1:] = u_up_next.copy()
+                # Save the updated time step (direct assignment, no copy needed)
+                v[1:] = u_up_next
         
         else:
             raise ValueError(f"Unknown solver: {solver}. Supported solvers: 'upwind', 'hll', 'hllc'")
