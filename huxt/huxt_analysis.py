@@ -478,14 +478,15 @@ def plot_compressible(model, time, save=False, tag='', fighandle=np.nan, minimal
                 deltalon = earth_pos.lon_hae[id_t] - earth_pos.lon_hae[0]
 
             obslon = zerototwopi(obs.lon[id_t] + deltalon)
-            for ax in axes:
+            # Plot on all axes, but only add label on first axis for legend
+            for i, ax in enumerate(axes):
+                label = body if i == 0 else None
                 ax.plot(obslon, obs.r[id_t], markersize=14, color=styles[body]['color'], 
-                       marker=styles[body]['marker'], linestyle='')
+                       marker=styles[body]['marker'], linestyle='', label=label)
         
         # Add legend only to first plot
         if annotateplot:
-            axes[0].legend([styles[body]['marker'] for body in observers_list], observers_list,
-                          ncol=len(observers_list), loc='lower center', frameon=False, fontsize=12,
+            axes[0].legend(ncol=len(observers_list), loc='lower center', frameon=False, fontsize=12,
                           handletextpad=0.1, columnspacing=0.5, bbox_to_anchor=(0.5, -0.18))
         
         # Set background color
