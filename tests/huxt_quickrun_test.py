@@ -75,6 +75,11 @@ t_interest = 2*u.day
 HA.plot(model_comp, t_interest)
 HA.plot_compressible(model_comp, t_interest)
 
+HA.plot_earth_timeseries(model_comp)
+
+HA.animate(model_comp, tag = 
+           'compressible_with_CME')
+
 
 #Repeat with incompressible model
 model_incomp = H.HUXt(v_boundary=vr_in, lon_start=300*u.deg, lon_stop=60*u.deg, simtime=5*u.day, dt_scale=4,

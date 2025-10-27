@@ -277,16 +277,25 @@ def animate(model, tag, duration=10, fps=20, plotHCS=True, trace_earth_connectio
             frame: An image array for rendering to movie clip.
         """
         plt.clf()  # Clear the previous frame
-        ax = fig.add_subplot(111, projection='polar')
         
         # Get the time index closest to this fraction of movie duration
         i = np.int32((model.nt_out - 1) * frame / nframes)
-        plot(model, model.time_out[i], fighandle=fig, axhandle=ax, plotHCS=plotHCS,
-             trace_earth_connection=trace_earth_connection, plot_rmax=plot_rmax)
+        
+        # Use plot_compressible for compressible models, otherwise use standard plot
+        if hasattr(model, 'compressible') and model.compressible:
+            plot_compressible(model, model.time_out[i], fighandle=fig, minimalplot=False, 
+                            annotateplot=True, plot_rmax=plot_rmax)
+        else:
+            ax = fig.add_subplot(111, projection='polar')
+            plot(model, model.time_out[i], fighandle=fig, axhandle=ax, plotHCS=plotHCS,
+                 trace_earth_connection=trace_earth_connection, plot_rmax=plot_rmax)
         return frame
     
-    # Create a new figure
-    fig, ax = plt.subplots(figsize=(10, 10), subplot_kw={"projection": "polar"})
+    # Create a new figure - size depends on compressible mode
+    if hasattr(model, 'compressible') and model.compressible:
+        fig, ax = plt.subplots(figsize=(24, 8))
+    else:
+        fig, ax = plt.subplots(figsize=(10, 10), subplot_kw={"projection": "polar"})
     
     # Create the animation
     ani = FuncAnimation(fig, make_frame, frames=range(nframes), interval=interval)
@@ -535,6 +544,7 @@ def plot_compressible(model, time, save=False, tag='', fighandle=np.nan, minimal
 def plot_radial(model, time, lon, save=False, tag=''):
     """
     Plot the radial solar wind profile at model time closest to specified time.
+    For compressible models, shows velocity, density, and temperature.
     Args:
         model: An instance of the HUXt class with a completed solution.
         time: Time (in seconds) to find the closest model time step to.
@@ -543,7 +553,7 @@ def plot_radial(model, time, lon, save=False, tag=''):
         tag: String to append to the filename if saving the figure.
     Returns:
         fig: Figure handle
-        ax: Axes handle
+        ax: Axes handle (or array of axes for compressible models)
     """
 
     if (time < model.time_out.min()) | (time > (model.time_out.max())):
@@ -557,7 +567,15 @@ def plot_radial(model, time, lon, save=False, tag=''):
             id_lon = np.argmin(np.abs(model.lon - lon))
             lon = model.lon[id_lon]
 
-    fig, ax = plt.subplots(figsize=(14, 7))
+    # Create figure with multiple panels for compressible models
+    is_compressible = hasattr(model, 'compressible') and model.compressible
+    if is_compressible:
+        fig, axes = plt.subplots(3, 1, figsize=(14, 14), sharex=True)
+        ax = axes[0]  # Velocity axis
+    else:
+        fig, ax = plt.subplots(figsize=(14, 7))
+        axes = [ax]
+        
     # Get plotting data
     id_t = np.argmin(np.abs(model.time_out - time))
     time_out = model.time_out[id_t].to(u.day).value
@@ -599,9 +617,29 @@ def plot_radial(model, time, lon, save=False, tag=''):
         ax.plot(model.r[id_cme], model.v_grid[id_t, id_cme, id_lon], '.', color=cme_colors[cc], label=label)
 
     ax.set_ylim(ymin, ymax)
-    ax.set_ylabel(ylab)
+    ax.set_ylabel(ylab if not is_compressible else 'V (km/s)')
     ax.set_xlim(model.r.value.min(), model.r.value.max())
-    ax.set_xlabel('Radial distance ($R_{sun}$)')
+    if not is_compressible:
+        ax.set_xlabel('Radial distance ($R_{sun}$)')
+    
+    # Plot density if compressible
+    if is_compressible:
+        m_p = 1.6726e-27  # Proton mass in kg
+        n_profile = model.rho_grid[id_t, :, id_lon].value / m_p / 1e6  # Convert to protons/cm³
+        axes[1].semilogy(model.r, n_profile, 'b-')
+        axes[1].set_ylabel('n (protons/cm³)', color='b')
+        axes[1].tick_params(axis='y', labelcolor='b')
+        axes[1].set_xlim(model.r.value.min(), model.r.value.max())
+        axes[1].grid(True, alpha=0.3)
+        
+        # Plot temperature
+        T_profile = model.temp_grid[id_t, :, id_lon].value
+        axes[2].semilogy(model.r, T_profile, 'r-')
+        axes[2].set_ylabel('T (K)', color='r')
+        axes[2].tick_params(axis='y', labelcolor='r')
+        axes[2].set_xlabel('Radial distance ($R_{sun}$)')
+        axes[2].set_xlim(model.r.value.min(), model.r.value.max())
+        axes[2].grid(True, alpha=0.3)
 
     fig.subplots_adjust(left=0.1, bottom=0.1, right=0.95, top=0.95)
 
@@ -609,7 +647,10 @@ def plot_radial(model, time, lon, save=False, tag=''):
     time_label = " Time: {:3.2f} days".format(time_out)
     lon_label = " Lon: {:3.2f}$^\\circ$".format(lon_out)
     label = "HUXt" + time_label + lon_label
-    ax.set_title(label, fontsize=20)
+    if is_compressible:
+        axes[0].set_title(label, fontsize=20)
+    else:
+        ax.set_title(label, fontsize=20)
 
     if save:
         cr_num = np.int32(model.cr_num.value)
@@ -619,12 +660,13 @@ def plot_radial(model, time, lon, save=False, tag=''):
         filepath = figure_dir.joinpath(filename)
         fig.savefig(filepath)
 
-    return fig, ax
+    return fig, axes if is_compressible else ax
 
 
 def plot_timeseries(model, radius, lon, save=False, tag=''):
     """
     Plot the solar wind model timeseries at model radius and longitude closest to those specified.
+    For compressible models, shows velocity, density, and temperature.
     Args:
         model: An instance of the HUXt class with a completed solution.
         radius: Radius to find the closest model radius to.
@@ -633,7 +675,7 @@ def plot_timeseries(model, radius, lon, save=False, tag=''):
         tag: String to append to the filename if saving the figure.
     Returns:
         fig: Figure handle
-        ax: Axes handle
+        ax: Axes handle (or array of axes for compressible models)
     """
 
     if (radius < model.r.min()) | (radius > (model.r.max())):
@@ -645,7 +687,15 @@ def plot_timeseries(model, radius, lon, save=False, tag=''):
             id_lon = np.argmin(np.abs(model.lon - lon))
             lon = model.lon[id_lon]
 
-    fig, ax = plt.subplots(figsize=(14, 7))
+    # Create figure with multiple panels for compressible models
+    is_compressible = hasattr(model, 'compressible') and model.compressible
+    if is_compressible:
+        fig, axes = plt.subplots(3, 1, figsize=(14, 14), sharex=True)
+        ax = axes[0]  # Velocity axis
+    else:
+        fig, ax = plt.subplots(figsize=(14, 7))
+        axes = [ax]
+        
     # Get plotting data
     id_r = np.argmin(np.abs(model.r - radius))
     r_out = model.r[id_r].value
@@ -664,9 +714,30 @@ def plot_timeseries(model, radius, lon, save=False, tag=''):
     ymax = 1000
 
     ax.set_ylim(ymin, ymax)
-    ax.set_ylabel(ylab)
+    ax.set_ylabel(ylab if not is_compressible else 'V (km/s)')
     ax.set_xlim(t_day.value.min(), t_day.value.max())
-    ax.set_xlabel('Time (days)')
+    if not is_compressible:
+        ax.set_xlabel('Time (days)')
+    ax.grid(True, alpha=0.3)
+    
+    # Plot density if compressible
+    if is_compressible:
+        m_p = 1.6726e-27  # Proton mass in kg
+        n_timeseries = model.rho_grid[:, id_r, id_lon].value / m_p / 1e6  # Convert to protons/cm³
+        axes[1].semilogy(t_day, n_timeseries, 'b-')
+        axes[1].set_ylabel('n (protons/cm³)', color='b')
+        axes[1].tick_params(axis='y', labelcolor='b')
+        axes[1].set_xlim(t_day.value.min(), t_day.value.max())
+        axes[1].grid(True, alpha=0.3)
+        
+        # Plot temperature
+        T_timeseries = model.temp_grid[:, id_r, id_lon].value
+        axes[2].semilogy(t_day, T_timeseries, 'r-')
+        axes[2].set_ylabel('T (K)', color='r')
+        axes[2].tick_params(axis='y', labelcolor='r')
+        axes[2].set_xlabel('Time (days)')
+        axes[2].set_xlim(t_day.value.min(), t_day.value.max())
+        axes[2].grid(True, alpha=0.3)
 
     fig.subplots_adjust(left=0.1, bottom=0.1, right=0.95, top=0.95)
 
@@ -674,7 +745,10 @@ def plot_timeseries(model, radius, lon, save=False, tag=''):
     radius_label = " Radius: {:3.2f}".format(r_out) + "$R_{sun}$ "
     lon_label = " Longitude: {:3.2f}".format(lon_out) + "$^\\circ$"
     label = "HUXt" + radius_label + lon_label
-    ax.set_title(label, fontsize=20)
+    if is_compressible:
+        axes[0].set_title(label, fontsize=20)
+    else:
+        ax.set_title(label, fontsize=20)
 
     if save:
         cr_num = np.int32(model.cr_num.value)
@@ -686,7 +760,7 @@ def plot_timeseries(model, radius, lon, save=False, tag=''):
         filepath = figure_dir.joinpath(filename)
         fig.savefig(filepath)
 
-    return fig, ax
+    return fig, axes if is_compressible else ax
 
 
 def get_observer_timeseries(model, observer='Earth', suppress_warning=False):
@@ -694,13 +768,14 @@ def get_observer_timeseries(model, observer='Earth', suppress_warning=False):
     Compute the solar wind time series at an observer location. Returns a pandas dataframe with the 
     solar wind speed time series interpolated from the model solution using the
     observer ephemeris. Nearest neighbour interpolation in r, linear interpolation in longitude.
+    For compressible models, also includes density and temperature.
     Args:
         model: A HUXt instance with a solution generated by HUXt.solve().
         observer: String name of the observer. Can be any permitted by Observer class.
         suppress_warning: Bool for stopping a warning printing.
     Returns:
          time_series: A pandas dataframe giving time series of solar wind speed, and if it exists in the HUXt
-                            solution, the magnetic field polarity, at the observer.
+                            solution, the magnetic field polarity (and for compressible models, density and temperature), at the observer.
     """
     earth_pos = model.get_observer('Earth')
     obs_pos = model.get_observer(observer)
@@ -729,6 +804,13 @@ def get_observer_timeseries(model, observer='Earth', suppress_warning=False):
     rad = np.ones(model.nt_out) * np.nan
     speed = np.ones(model.nt_out) * np.nan
     bpol = np.ones(model.nt_out) * np.nan
+    
+    # Add density and temperature arrays for compressible models
+    is_compressible = hasattr(model, 'compressible') and model.compressible
+    if is_compressible:
+        density = np.ones(model.nt_out) * np.nan
+        temperature = np.ones(model.nt_out) * np.nan
+        m_p = 1.6726e-27  # Proton mass in kg
 
     for t in range(model.nt_out):
         time[t] = (model.time_init + model.time_out[t]).jd
@@ -758,23 +840,37 @@ def get_observer_timeseries(model, observer='Earth', suppress_warning=False):
                 speed[t] = model.v_grid[t, id_r, 0].value
                 if hasattr(model, 'b_grid'):
                     bpol[t] = model.b_grid[t, id_r, 0]
+                if is_compressible:
+                    density[t] = model.rho_grid[t, id_r, 0].value / m_p / 1e6  # Convert to protons/cm³
+                    temperature[t] = model.temp_grid[t, id_r, 0].value
             else:
                 speed[t] = np.interp(model_lon_obs[t], model.lon.value, model.v_grid[t, id_r, :].value,
                                      period=2 * np.pi)
                 if hasattr(model, 'b_grid'):
                     bpol[t] = np.interp(model_lon_obs[t], model.lon.value, model.b_grid[t, id_r, :], period=2 * np.pi)
+                if is_compressible:
+                    rho_interp = np.interp(model_lon_obs[t], model.lon.value, model.rho_grid[t, id_r, :].value,
+                                          period=2 * np.pi)
+                    density[t] = rho_interp / m_p / 1e6  # Convert to protons/cm³
+                    temperature[t] = np.interp(model_lon_obs[t], model.lon.value, model.temp_grid[t, id_r, :].value,
+                                              period=2 * np.pi)
 
     time = pd.to_datetime(time, unit='D', origin='julian')
 
-    time_series = pd.DataFrame(data={'time': time, 'r': rad, 'lon': lon, 
-                                     'vsw': speed, 'bpol': bpol, 'mjd': mjd})
+    data_dict = {'time': time, 'r': rad, 'lon': lon, 'vsw': speed, 'bpol': bpol, 'mjd': mjd}
+    if is_compressible:
+        data_dict['n'] = density  # protons/cm³
+        data_dict['T'] = temperature  # K
+    
+    time_series = pd.DataFrame(data=data_dict)
     return time_series
 
 
 def get_HUXt_at_position_HEEQ(model, target_mjd, target_r, target_lon_heeq):
     """
     Extract and return HUXt fields at a generic set of locations. Assumes the 
-    object is in the lat plane of the model
+    object is in the lat plane of the model. For compressible models, also includes
+    density and temperature.
     
     Args:
         model: The HUXt model class for the solved run.
@@ -784,7 +880,7 @@ def get_HUXt_at_position_HEEQ(model, target_mjd, target_r, target_lon_heeq):
         
     Returns:
        time_series: A pandas dataframe giving time series of solar wind speed, and if it exists in the HUXt
-                           solution, the magnetic field polarity, at the observer.
+                           solution, the magnetic field polarity (and for compressible models, density and temperature), at the observer.
     """
     
     tim_mjd = model.time_init.mjd + model.time_out.value/(24*60*60)
@@ -806,6 +902,13 @@ def get_HUXt_at_position_HEEQ(model, target_mjd, target_r, target_lon_heeq):
     rad = np.ones(nt) * np.nan
     speed = np.ones(nt) * np.nan
     bpol = np.ones(nt) * np.nan
+    
+    # Add density and temperature arrays for compressible models
+    is_compressible = hasattr(model, 'compressible') and model.compressible
+    if is_compressible:
+        density = np.ones(nt) * np.nan
+        temperature = np.ones(nt) * np.nan
+        m_p = 1.6726e-27  # Proton mass in kg
     
     for t in range(0, nt):
 
@@ -843,20 +946,33 @@ def get_HUXt_at_position_HEEQ(model, target_mjd, target_r, target_lon_heeq):
                     speed[t] = model.v_grid[id_t, id_r, 0].value
                     if hasattr(model, 'b_grid'):
                         bpol[t] = model.b_grid[id_t, id_r, 0]
+                    if is_compressible:
+                        density[t] = model.rho_grid[id_t, id_r, 0].value / m_p / 1e6  # Convert to protons/cm³
+                        temperature[t] = model.temp_grid[id_t, id_r, 0].value
                 else:
                     speed[t] = np.interp(model_lon_obs, model.lon.value, model.v_grid[id_t, id_r, :].value,
                                          period=2 * np.pi)
                     if hasattr(model, 'b_grid'):
                         bpol[t] = np.interp(model_lon_obs, model.lon.value, model.b_grid[id_t, id_r, :],
                                             period=2 * np.pi)
+                    if is_compressible:
+                        rho_interp = np.interp(model_lon_obs, model.lon.value, model.rho_grid[id_t, id_r, :].value,
+                                              period=2 * np.pi)
+                        density[t] = rho_interp / m_p / 1e6  # Convert to protons/cm³
+                        temperature[t] = np.interp(model_lon_obs, model.lon.value, model.temp_grid[id_t, id_r, :].value,
+                                                  period=2 * np.pi)
         else:
             print('time outside model domain')
 
     base = pd.Timestamp("1858-11-17 00:00:00")
     datetimes = base + pd.to_timedelta(target_mjd, unit='D')
 
-    time_series = pd.DataFrame(data={'time': datetimes, 'r': rad, 'lon': lon, 'vsw': speed, 'bpol': bpol,
-                                     'mjd': target_mjd})
+    data_dict = {'time': datetimes, 'r': rad, 'lon': lon, 'vsw': speed, 'bpol': bpol, 'mjd': target_mjd}
+    if is_compressible:
+        data_dict['n'] = density  # protons/cm³
+        data_dict['T'] = temperature  # K
+    
+    time_series = pd.DataFrame(data=data_dict)
     
     return time_series
 
@@ -864,6 +980,7 @@ def get_HUXt_at_position_HEEQ(model, target_mjd, target_r, target_lon_heeq):
 def plot_earth_timeseries(model, plot_omni=True, save=False, tag=''):
     """
     A function to plot the HUXt Earth time series. With option to download and plot OMNI data.
+    For compressible models, also plots density and temperature.
     Args:
         model : input model class
         plot_omni: Boolean, if True downloads and plots OMNI data
@@ -876,18 +993,47 @@ def plot_earth_timeseries(model, plot_omni=True, save=False, tag=''):
     """
 
     huxt_ts = get_observer_timeseries(model, observer='Earth')
+    
+    is_compressible = hasattr(model, 'compressible') and model.compressible
 
-    # 2-panel plot if the B polarity has been traced
+    # Determine number of panels
+    n_panels = 1
     if hasattr(model, 'b_grid'):
-        fig, axs = plt.subplots(2, 1, figsize=(14, 7))
-        axs[1].plot(huxt_ts['time'], np.sign(huxt_ts['bpol']), 'k.', label='HUXt')
-        axs[1].set_ylabel('B polarity')
-    else:
-        fig, axs = plt.subplots(1, 1, figsize=(14, 4))
+        n_panels += 1
+    if is_compressible:
+        n_panels += 2  # Add density and temperature panels
+        
+    fig, axs = plt.subplots(n_panels, 1, figsize=(14, 4 * n_panels))
+    if n_panels == 1:
         axs = np.array([axs])
-
-    axs[0].plot(huxt_ts['time'], huxt_ts['vsw'], 'k', label='HUXt')
-    axs[0].set_ylim(250, 1000)
+    
+    # Velocity panel (always first)
+    panel_idx = 0
+    axs[panel_idx].plot(huxt_ts['time'], huxt_ts['vsw'], 'k', label='HUXt')
+    axs[panel_idx].set_ylim(250, 1000)
+    axs[panel_idx].set_ylabel('Solar Wind Speed (km/s)')
+    
+    # B polarity panel (if available)
+    if hasattr(model, 'b_grid'):
+        panel_idx += 1
+        axs[panel_idx].plot(huxt_ts['time'], np.sign(huxt_ts['bpol']), 'k.', label='HUXt')
+        axs[panel_idx].set_ylabel('B polarity')
+    
+    # Density panel (if compressible)
+    if is_compressible and 'n' in huxt_ts.columns:
+        panel_idx += 1
+        axs[panel_idx].semilogy(huxt_ts['time'], huxt_ts['n'], 'b-', label='HUXt')
+        axs[panel_idx].set_ylabel('n (protons/cm³)', color='b')
+        axs[panel_idx].tick_params(axis='y', labelcolor='b')
+        axs[panel_idx].grid(True, alpha=0.3)
+    
+    # Temperature panel (if compressible)
+    if is_compressible and 'T' in huxt_ts.columns:
+        panel_idx += 1
+        axs[panel_idx].semilogy(huxt_ts['time'], huxt_ts['T'], 'r-', label='HUXt')
+        axs[panel_idx].set_ylabel('T (K)', color='r')
+        axs[panel_idx].tick_params(axis='y', labelcolor='r')
+        axs[panel_idx].grid(True, alpha=0.3)
 
     starttime = huxt_ts['time'][0]
     endtime = huxt_ts['time'][len(huxt_ts) - 1]
@@ -908,13 +1054,10 @@ def plot_earth_timeseries(model, plot_omni=True, save=False, tag=''):
         a.set_xlim(starttime, endtime)
         a.legend()
 
-    axs[0].set_ylabel('Solar Wind Speed (km/s)')
-
-    if axs.size == 1:
-        axs[0].set_xlabel('Date')
-    elif axs.size == 2:
-        axs[0].set_xticklabels([])
-        axs[1].set_xlabel('Date')
+    # Only last panel gets x-label
+    for i in range(len(axs) - 1):
+        axs[i].set_xticklabels([])
+    axs[-1].set_xlabel('Date')
 
     fig.subplots_adjust(left=0.07, bottom=0.08, right=0.99, top=0.97, hspace=0.05)
 
