@@ -509,42 +509,63 @@ def plot_compressible(model, time, save=False, tag='', fighandle=np.nan, minimal
             cbaxes = fig.add_axes([left, bottom, wid, cb_height])
             cbar = fig.colorbar(cnt, cax=cbaxes, orientation='horizontal')
             cbar.set_ticks(ticks)
-            cbar.ax.tick_params(labelsize=12)
+            cbar.ax.tick_params(labelsize=16)
             # Position label below colorbar with larger font
-            cbaxes.text(0.5, -1.6, label, fontsize=16, transform=cbaxes.transAxes, 
+            cbaxes.text(0.5, -2.2, label, fontsize=16, transform=cbaxes.transAxes, 
                        horizontalalignment='center', verticalalignment='top')
 
     # Add observer labels in a box below colorbars
     if annotateplot and not minimalplot and len(observers_list) > 0:
         # Position below the colorbar labels (closer to plots)
-        label_y = 0.08  # Moved up from 0.02
+        label_y = 0.08
         
-        # Calculate total width needed for all labels
-        spacing = 0.10  # Reduced spacing for more compact layout
-        total_width = spacing * (len(observers_list) - 1)
-        start_x = 0.5 - total_width / 2  # Center the labels
+        styles = observer_styles()
+        
+        # Calculate approximate width per observer item (marker + text)
+        # Each item: circle (0.015) + gap (0.008) + text (~0.007 per char)
+        item_widths = []
+        for body in observers_list:
+            text_width = len(body) * 0.007  # Approximate width per character
+            item_width = 0.015 + 0.008 + text_width  # marker + gap + text
+            item_widths.append(item_width)
+        
+        # Space between items
+        spacing = 0.02  # Small gap between items
+        
+        # Total width of all items plus spacing
+        content_width = sum(item_widths) + spacing * (len(observers_list) - 1)
+        
+        # Add minimal padding
+        box_padding = 0.015  # Small padding
+        box_width = content_width + 2 * box_padding
+        box_height = 0.025
+        
+        # Center everything
+        box_x = 0.5 - box_width / 2
+        content_start_x = box_x + box_padding
         
         # Draw a subtle box around the observer labels
         from matplotlib.patches import FancyBboxPatch
-        box_width = total_width + 0.08
-        box_height = 0.03
-        box = FancyBboxPatch((start_x - 0.04, label_y - 0.015), box_width, box_height,
-                            boxstyle="round,pad=0.005", 
+        box = FancyBboxPatch((box_x, label_y - 0.0125), box_width, box_height,
+                            boxstyle="round,pad=0.003", 
                             edgecolor='gray', facecolor='white', alpha=0.8,
                             linewidth=1, transform=fig.transFigure, zorder=10)
         fig.patches.append(box)
         
-        styles = observer_styles()
+        # Draw each observer label
+        current_x = content_start_x
         for i, body in enumerate(observers_list):
-            x_pos = start_x + i * spacing
             # Add colored circle marker
-            fig.text(x_pos - 0.012, label_y, '●', fontsize=18, 
+            fig.text(current_x + 0.0075, label_y, '●', fontsize=18, 
                     color=styles[body]['color'], 
                     horizontalalignment='center', verticalalignment='center', zorder=11)
             # Add body name - darker and bolder for visibility
-            fig.text(x_pos + 0.008, label_y, body.upper(), fontsize=13,
+            fig.text(current_x + 0.015 + 0.008, label_y, body.upper(), fontsize=13,
                     color='black', fontweight='bold',
                     horizontalalignment='left', verticalalignment='center', zorder=11)
+            
+            # Move to next position
+            current_x += item_widths[i] + spacing
             
     if annotateplot:
         # Get positions of left and right panels for alignment
