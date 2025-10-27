@@ -489,22 +489,23 @@ def plot_compressible(model, time, save=False, tag='', fighandle=np.nan, minimal
             axes[0].legend(ncol=len(observers_list), loc='lower center', frameon=False, fontsize=12,
                           handletextpad=0.1, columnspacing=0.5, bbox_to_anchor=(0.5, -0.18))
         
-        # Set background color
+        # Set background color and adjust position to make room for colorbars and legend
         for ax in axes:
             ax.patch.set_facecolor('slategrey')
             pos = ax.get_position()
-            new_pos = [pos.x0, pos.y0 + 0.08, pos.width, pos.height]
+            # Move plots up to make room for colorbar and legend below
+            new_pos = [pos.x0, pos.y0 + 0.12, pos.width, pos.height]
             ax.set_position(new_pos)
 
-        # Add colorbars
+        # Add colorbars below each plot
         for i, (ax, cnt, label, ticks) in enumerate([
             (axes[0], cnt_v, r"$V_{SW}$ [km/s]", np.arange(vmin, vmax, dv * 10)),
             (axes[1], cnt_n, r"$\log_{10}(n)$ [protons/cm³]", np.arange(nmin, nmax, 1.0)),
             (axes[2], cnt_T, r"$\log_{10}(T)$ [K]", np.arange(Tmin, Tmax, 0.5))
         ]):
             pos = ax.get_position()
-            dh = 0.03  # Vertical offset from plot
-            cb_height = 0.03  # Colorbar height
+            dh = 0.04  # Vertical offset from plot
+            cb_height = 0.02  # Colorbar height
             # Make colorbar same width as panel
             left = pos.x0
             bottom = pos.y0 - dh
@@ -512,21 +513,22 @@ def plot_compressible(model, time, save=False, tag='', fighandle=np.nan, minimal
             cbaxes = fig.add_axes([left, bottom, wid, cb_height])
             cbar = fig.colorbar(cnt, cax=cbaxes, orientation='horizontal')
             cbar.set_ticks(ticks)
-            cbaxes.text(0.5, -2.5, label, fontsize=14, transform=cbaxes.transAxes, 
+            cbar.ax.tick_params(labelsize=11)
+            # Position label below colorbar
+            cbaxes.text(0.5, -1.8, label, fontsize=13, transform=cbaxes.transAxes, 
                        horizontalalignment='center', verticalalignment='top')
 
         if annotateplot:
-            # Add time label at top right of figure, aligned with right panel
-            label = "{:3.2f} days".format(model.time_out[id_t].to(u.day).value)
-            label = label + ' | ' + (model.time_init + time).strftime('%Y-%m-%d %H:%M')
-            pos_right = axes[2].get_position()
-            fig.text(pos_right.x1, 0.96, label, fontsize=14, 
-                    horizontalalignment='right', verticalalignment='top')
+            # Add time label at top of figure (centered above middle panel)
+            time_label = "{:3.2f} days | ".format(model.time_out[id_t].to(u.day).value)
+            time_label = time_label + (model.time_init + time).strftime('%Y-%m-%d %H:%M')
+            fig.text(0.5, 0.98, time_label, fontsize=15, fontweight='bold',
+                    horizontalalignment='center', verticalalignment='top')
             
-            # Add model info at top left of figure, aligned with left panel
-            label = "HUXt2D Compressible | Lat: {:3.0f} deg".format(model.latitude.to(u.deg).value)
-            pos_left = axes[0].get_position()
-            fig.text(pos_left.x0, 0.96, label, fontsize=14, verticalalignment='top')
+            # Add model info at top left corner
+            model_label = "HUXt2D Compressible | Lat: {:3.0f}°".format(model.latitude.to(u.deg).value)
+            fig.text(0.02, 0.98, model_label, fontsize=12, 
+                    horizontalalignment='left', verticalalignment='top')
 
     if plot_rmax:
         for ax in axes:
