@@ -429,7 +429,7 @@ def plot_compressible(model, time, save=False, tag='', fighandle=np.nan, minimal
     axes[0].set_yticklabels([])
     axes[0].set_xticklabels([])
     axes[0].plot(0, 0, 'o', color=[1.0, 0.5, 0.25], markersize=16)
-    axes[0].set_title('Solar Wind Speed', fontsize=16, fontweight='bold', pad=20)
+    # Title removed - info in colorbars instead
     
     # Plot 2: Density
     cnt_n = axes[1].contourf(lon, rad, n_log, levels=levels_n, cmap=cmap_n, extend='both')
@@ -438,7 +438,7 @@ def plot_compressible(model, time, save=False, tag='', fighandle=np.nan, minimal
     axes[1].set_yticklabels([])
     axes[1].set_xticklabels([])
     axes[1].plot(0, 0, 'o', color=[1.0, 0.5, 0.25], markersize=16)
-    axes[1].set_title('Proton Density', fontsize=16, fontweight='bold', pad=20)
+    # Title removed - info in colorbars instead
     
     # Plot 3: Temperature
     cnt_T = axes[2].contourf(lon, rad, T_log, levels=levels_T, cmap=cmap_T, extend='both')
@@ -447,7 +447,7 @@ def plot_compressible(model, time, save=False, tag='', fighandle=np.nan, minimal
     axes[2].set_yticklabels([])
     axes[2].set_xticklabels([])
     axes[2].plot(0, 0, 'o', color=[1.0, 0.5, 0.25], markersize=16)
-    axes[2].set_title('Proton Temperature', fontsize=16, fontweight='bold', pad=20)
+    # Title removed - info in colorbars instead
 
     # Add CME boundaries to all plots
     if model.track_cmes:
@@ -484,12 +484,13 @@ def plot_compressible(model, time, save=False, tag='', fighandle=np.nan, minimal
                 ax.plot(obslon, obs.r[id_t], markersize=14, color=styles[body]['color'], 
                        marker=styles[body]['marker'], linestyle='', label=label)
         
-        # Set background color and adjust position to make room for text at top and legend at bottom
+        # Set background color and adjust position
+        # No titles now, so less space needed at top
         for ax in axes:
             ax.patch.set_facecolor('slategrey')
             pos = ax.get_position()
-            # Move plots down and shrink height to make room for text above and legend below
-            new_pos = [pos.x0, pos.y0 + 0.10, pos.width, pos.height * 0.85]
+            # Adjust positioning with titles removed - can make plots bigger
+            new_pos = [pos.x0, pos.y0 + 0.08, pos.width, pos.height * 0.90]
             ax.set_position(new_pos)
 
         # Add colorbars below each plot
@@ -513,26 +514,35 @@ def plot_compressible(model, time, save=False, tag='', fighandle=np.nan, minimal
             cbaxes.text(0.5, -1.6, label, fontsize=16, transform=cbaxes.transAxes, 
                        horizontalalignment='center', verticalalignment='top')
 
-    # Add observer labels below colorbars instead of using legend
+    # Add observer labels in a box below colorbars
     if annotateplot and not minimalplot and len(observers_list) > 0:
-        # Create a manual "legend" by placing text with colored markers
-        # Position it centered below the colorbars
-        label_y = 0.02  # Position near bottom of figure
+        # Position below the colorbar labels (closer to plots)
+        label_y = 0.08  # Moved up from 0.02
         
         # Calculate total width needed for all labels
-        spacing = 0.12  # Spacing between labels
+        spacing = 0.10  # Reduced spacing for more compact layout
         total_width = spacing * (len(observers_list) - 1)
         start_x = 0.5 - total_width / 2  # Center the labels
+        
+        # Draw a subtle box around the observer labels
+        from matplotlib.patches import FancyBboxPatch
+        box_width = total_width + 0.08
+        box_height = 0.03
+        box = FancyBboxPatch((start_x - 0.04, label_y - 0.015), box_width, box_height,
+                            boxstyle="round,pad=0.005", 
+                            edgecolor='gray', facecolor='white', alpha=0.8,
+                            linewidth=1, transform=fig.transFigure, zorder=10)
+        fig.patches.append(box)
         
         styles = observer_styles()
         for i, body in enumerate(observers_list):
             x_pos = start_x + i * spacing
             # Add colored circle marker
-            fig.text(x_pos - 0.015, label_y, '●', fontsize=20, 
+            fig.text(x_pos - 0.012, label_y, '●', fontsize=18, 
                     color=styles[body]['color'], 
-                    horizontalalignment='center', verticalalignment='center')
+                    horizontalalignment='center', verticalalignment='center', zorder=11)
             # Add body name
-            fig.text(x_pos + 0.01, label_y, body.upper(), fontsize=14,
+            fig.text(x_pos + 0.008, label_y, body.upper(), fontsize=13,
                     horizontalalignment='left', verticalalignment='center')
             
     if annotateplot:
