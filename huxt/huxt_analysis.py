@@ -513,12 +513,27 @@ def plot_compressible(model, time, save=False, tag='', fighandle=np.nan, minimal
             cbaxes.text(0.5, -1.6, label, fontsize=16, transform=cbaxes.transAxes, 
                        horizontalalignment='center', verticalalignment='top')
 
-        # Add legend below colorbars, centered on figure
-        if annotateplot and len(observers_list) > 0:
-            # Use axes[0] which has the labels, position relative to figure center
-            legend = axes[0].legend(ncol=len(observers_list), loc='center', frameon=False, fontsize=14,
-                          handletextpad=0.1, columnspacing=0.5, 
-                          bbox_to_anchor=(0.5, -0.23), bbox_transform=fig.transFigure)
+    # Add observer labels below colorbars instead of using legend
+    if annotateplot and not minimalplot and len(observers_list) > 0:
+        # Create a manual "legend" by placing text with colored markers
+        # Position it centered below the colorbars
+        label_y = 0.02  # Position near bottom of figure
+        
+        # Calculate total width needed for all labels
+        spacing = 0.12  # Spacing between labels
+        total_width = spacing * (len(observers_list) - 1)
+        start_x = 0.5 - total_width / 2  # Center the labels
+        
+        styles = observer_styles()
+        for i, body in enumerate(observers_list):
+            x_pos = start_x + i * spacing
+            # Add colored circle marker
+            fig.text(x_pos - 0.015, label_y, '●', fontsize=20, 
+                    color=styles[body]['color'], 
+                    horizontalalignment='center', verticalalignment='center')
+            # Add body name
+            fig.text(x_pos + 0.01, label_y, body.upper(), fontsize=14,
+                    horizontalalignment='left', verticalalignment='center')
             
     if annotateplot:
         # Get positions of left and right panels for alignment
@@ -529,13 +544,13 @@ def plot_compressible(model, time, save=False, tag='', fighandle=np.nan, minimal
         # Position well above plot to avoid overlap with titles
         time_label = "{:3.2f} days | ".format(model.time_out[id_t].to(u.day).value)
         time_label = time_label + (model.time_init + time).strftime('%Y-%m-%d %H:%M')
-        fig.text(pos_right.x1, pos_right.y1 + 0.06, time_label, fontsize=15, fontweight='bold',
+        fig.text(pos_right.x1, pos_right.y1 + 0.10, time_label, fontsize=15, fontweight='bold',
                 horizontalalignment='right', verticalalignment='bottom')
         
         # Add model info at top left, aligned with left edge of left panel
         # Position well above plot to avoid overlap with titles
         model_label = "HUXt2D Compressible | Lat: {:3.0f}°".format(model.latitude.to(u.deg).value)
-        fig.text(pos_left.x0, pos_left.y1 + 0.06, model_label, fontsize=16, fontweight='bold',
+        fig.text(pos_left.x0, pos_left.y1 + 0.10, model_label, fontsize=16, fontweight='bold',
                 horizontalalignment='left', verticalalignment='bottom')
 
     if plot_rmax:
