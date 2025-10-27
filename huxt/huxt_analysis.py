@@ -514,24 +514,27 @@ def plot_compressible(model, time, save=False, tag='', fighandle=np.nan, minimal
                        horizontalalignment='center', verticalalignment='top')
 
         # Add legend below colorbars, centered on middle panel
-        if annotateplot:
-            # Get position of middle panel for centering legend
-            pos_middle = axes[1].get_position()
+        if annotateplot and len(observers_list) > 0:
             # Use axes[0] which has the labels, but position relative to figure center
             legend = axes[0].legend(ncol=len(observers_list), loc='center', frameon=False, fontsize=14,
                           handletextpad=0.1, columnspacing=0.5, 
                           bbox_to_anchor=(0.5, -0.35), bbox_transform=fig.transFigure)
             
-            # Add time label at top right corner
+        if annotateplot:
+            # Get positions of left and right panels for alignment
+            pos_left = axes[0].get_position()
+            pos_right = axes[2].get_position()
+            
+            # Add time label at top right, aligned with right edge of right panel
             time_label = "{:3.2f} days | ".format(model.time_out[id_t].to(u.day).value)
             time_label = time_label + (model.time_init + time).strftime('%Y-%m-%d %H:%M')
-            fig.text(0.98, 0.98, time_label, fontsize=15, fontweight='bold',
-                    horizontalalignment='right', verticalalignment='top')
+            fig.text(pos_right.x1, pos_right.y1 + 0.02, time_label, fontsize=15, fontweight='bold',
+                    horizontalalignment='right', verticalalignment='bottom')
             
-            # Add model info at top left corner with larger font
+            # Add model info at top left, aligned with left edge of left panel
             model_label = "HUXt2D Compressible | Lat: {:3.0f}°".format(model.latitude.to(u.deg).value)
-            fig.text(0.02, 0.98, model_label, fontsize=16, fontweight='bold',
-                    horizontalalignment='left', verticalalignment='top')
+            fig.text(pos_left.x0, pos_left.y1 + 0.02, model_label, fontsize=16, fontweight='bold',
+                    horizontalalignment='left', verticalalignment='bottom')
 
     if plot_rmax:
         for ax in axes:
