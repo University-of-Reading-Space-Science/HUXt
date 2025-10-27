@@ -179,44 +179,43 @@ def plot(model, time, save=False, tag='', fighandle=np.nan, axhandle=np.nan, min
         # plot any tracked streaklines
         if model.track_streak:
             nstreak = len(model.streak_particles_r[0, :, 0, 0])
+            r_max = model.r[-1].to(u.solRad).value
+            dr = (model.r[1] - model.r[0]).to(u.solRad).value  # Grid spacing
+            
             for istreak in range(0, nstreak):
                 # construct the streakline from multiple rotations
                 nrot = len(model.streak_particles_r[0, 0, :, 0])
                 streak_r = []
                 streak_lon = []
+                
                 for irot in range(0, nrot):
                     streak_lon = streak_lon + model.lon.value.tolist()
                     streak_r = streak_r + (
                             model.streak_particles_r[id_t, istreak, irot, :] * u.km.to(u.solRad)).value.tolist()
                     
                 # get the real values for plotting
-                mask = np.isfinite(streak_r)
-                plotlon = np.array(streak_lon)[mask]
-                plotr = np.array(streak_r)[mask]
+                streak_lon = np.array(streak_lon)
+                streak_r = np.array(streak_r)
+                
+                # Filter: keep only finite values that are well within the domain
+                # Exclude particles within 2*dr of the outer boundary to avoid awkward connections
+                mask = np.isfinite(streak_r) & (streak_r < (r_max - 2*dr))
+                plotlon = streak_lon[mask]
+                plotr = streak_r[mask]
+                
                 if len(plotr) > 0:
                     # for plotting only, fix the inner most point on the inner bounday.
                     r_min = model.r[0].to(u.solRad).value
-                    dr = plotr[-1] - r_min
-                    # compute the long of the footpoint assuming a constant solar wind speed
-                    dt = (dr * u.solRad / (350 * u.km / u.s)).to(u.s)
-                    dlon_streak = (2*np.pi)*(dt/model.rotation_period).value 
-                    inner_lon = zerototwopi(plotlon[-1] + dlon_streak)
-                    # check that this new longitude was actually simulated
-                    if np.nanmin(abs(model.lon - inner_lon*u.rad)) < dlon:
-                        plotr = np.append(plotr, r_min)
-                        plotlon = np.append(plotlon, inner_lon)
-
-                    # for plotting only, fix the outermost point on the outer boundary
-                    r_max = model.r[-1].to(u.solRad).value
-                    dr = r_max - plotr[0]
-                    # compute the long of the outer footpoint assuming a constant solar wind speed
-                    dt = (dr * u.solRad / (450 * u.km / u.s)).to(u.s)
-                    dlon_streak = (2*np.pi)*(dt/model.rotation_period).value
-                    outer_lon = zerototwopi(plotlon[0] - dlon_streak)
-                    # check that this new longitude was actually simulated
-                    if np.nanmin(abs(model.lon - outer_lon*u.rad)) < dlon:
-                        plotr = np.append(r_max, plotr)
-                        plotlon = np.append(outer_lon, plotlon)
+                    if plotr[-1] > r_min:
+                        dr_inner = plotr[-1] - r_min
+                        # compute the long of the footpoint assuming a constant solar wind speed
+                        dt = (dr_inner * u.solRad / (350 * u.km / u.s)).to(u.s)
+                        dlon_streak = (2*np.pi)*(dt/model.rotation_period).value 
+                        inner_lon = zerototwopi(plotlon[-1] + dlon_streak)
+                        # check that this new longitude was actually simulated
+                        if np.nanmin(abs(model.lon - inner_lon*u.rad)) < dlon:
+                            plotr = np.append(plotr, r_min)
+                            plotlon = np.append(plotlon, inner_lon)
                     
                 # plot the streakline
                 ax.plot(plotlon, plotr, 'k')
@@ -465,48 +464,48 @@ def plot_compressible(model, time, save=False, tag='', fighandle=np.nan, minimal
     # Plot any tracked streaklines
     if model.track_streak:
         nstreak = len(model.streak_particles_r[0, :, 0, 0])
+        r_max = model.r[-1].to(u.solRad).value
+        dr = (model.r[1] - model.r[0]).to(u.solRad).value  # Grid spacing
+        
         for istreak in range(0, nstreak):
             # Construct the streakline from multiple rotations
             nrot = len(model.streak_particles_r[0, 0, :, 0])
             streak_r = []
             streak_lon = []
+            
             for irot in range(0, nrot):
                 streak_lon = streak_lon + model.lon.value.tolist()
                 streak_r = streak_r + (
                         model.streak_particles_r[id_t, istreak, irot, :] * u.km.to(u.solRad)).value.tolist()
                 
             # Get the real values for plotting
-            mask = np.isfinite(streak_r)
-            plotlon = np.array(streak_lon)[mask]
-            plotr = np.array(streak_r)[mask]
+            streak_lon = np.array(streak_lon)
+            streak_r = np.array(streak_r)
+            
+            # Filter: keep only finite values that are well within the domain
+            # Exclude particles within 2*dr of the outer boundary to avoid awkward connections
+            mask = np.isfinite(streak_r) & (streak_r < (r_max - 2*dr))
+            plotlon = streak_lon[mask]
+            plotr = streak_r[mask]
+            
             if len(plotr) > 0:
                 # For plotting only, fix the innermost point on the inner boundary
                 r_min = model.r[0].to(u.solRad).value
-                dr = plotr[-1] - r_min
-                # Compute the long of the footpoint assuming a constant solar wind speed
-                dt = (dr * u.solRad / (350 * u.km / u.s)).to(u.s)
-                dlon_streak = (2*np.pi)*(dt/model.rotation_period).value 
-                inner_lon = zerototwopi(plotlon[-1] + dlon_streak)
-                # Check that this new longitude was actually simulated
-                if np.nanmin(abs(model.lon - inner_lon*u.rad)) < dlon:
-                    plotr = np.append(plotr, r_min)
-                    plotlon = np.append(plotlon, inner_lon)
-
-                # For plotting only, fix the outermost point on the outer boundary
-                r_max = model.r[-1].to(u.solRad).value
-                dr = r_max - plotr[0]
-                # Compute the long of the outer footpoint assuming a constant solar wind speed
-                dt = (dr * u.solRad / (450 * u.km / u.s)).to(u.s)
-                dlon_streak = (2*np.pi)*(dt/model.rotation_period).value
-                outer_lon = zerototwopi(plotlon[0] - dlon_streak)
-                # Check that this new longitude was actually simulated
-                if np.nanmin(abs(model.lon - outer_lon*u.rad)) < dlon:
-                    plotr = np.append(r_max, plotr)
-                    plotlon = np.append(outer_lon, plotlon)
+                if plotr[-1] > r_min:
+                    dr_inner = plotr[-1] - r_min
+                    # Compute the long of the footpoint assuming a constant solar wind speed
+                    dt = (dr_inner * u.solRad / (350 * u.km / u.s)).to(u.s)
+                    dlon_streak = (2*np.pi)*(dt/model.rotation_period).value 
+                    inner_lon = zerototwopi(plotlon[-1] + dlon_streak)
+                    # Check that this new longitude was actually simulated
+                    if np.nanmin(abs(model.lon - inner_lon*u.rad)) < dlon:
+                        plotr = np.append(plotr, r_min)
+                        plotlon = np.append(plotlon, inner_lon)
                 
             # Plot the streakline on all axes
-            for ax in axes:
-                ax.plot(plotlon, plotr, 'k')
+            if len(plotr) > 0:
+                for ax in axes:
+                    ax.plot(plotlon, plotr, 'k')
 
     if not minimalplot:
         # Determine which bodies should be plotted
