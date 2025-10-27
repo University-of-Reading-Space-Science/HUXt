@@ -541,9 +541,10 @@ def plot_compressible(model, time, save=False, tag='', fighandle=np.nan, minimal
             fig.text(x_pos - 0.012, label_y, '●', fontsize=18, 
                     color=styles[body]['color'], 
                     horizontalalignment='center', verticalalignment='center', zorder=11)
-            # Add body name
+            # Add body name - darker and bolder for visibility
             fig.text(x_pos + 0.008, label_y, body.upper(), fontsize=13,
-                    horizontalalignment='left', verticalalignment='center')
+                    color='black', fontweight='bold',
+                    horizontalalignment='left', verticalalignment='center', zorder=11)
             
     if annotateplot:
         # Get positions of left and right panels for alignment
@@ -551,16 +552,16 @@ def plot_compressible(model, time, save=False, tag='', fighandle=np.nan, minimal
         pos_right = axes[2].get_position()
         
         # Add time label at top right, aligned with right edge of right panel
-        # Position well above plot to avoid overlap with titles
+        # Reduced spacing from +0.10 to +0.05 to reduce whitespace
         time_label = "{:3.2f} days | ".format(model.time_out[id_t].to(u.day).value)
         time_label = time_label + (model.time_init + time).strftime('%Y-%m-%d %H:%M')
-        fig.text(pos_right.x1, pos_right.y1 + 0.10, time_label, fontsize=15, fontweight='bold',
+        fig.text(pos_right.x1, pos_right.y1 + 0.05, time_label, fontsize=15, fontweight='bold',
                 horizontalalignment='right', verticalalignment='bottom')
         
         # Add model info at top left, aligned with left edge of left panel
-        # Position well above plot to avoid overlap with titles
+        # Reduced spacing from +0.10 to +0.05 to reduce whitespace
         model_label = "HUXt2D Compressible | Lat: {:3.0f}°".format(model.latitude.to(u.deg).value)
-        fig.text(pos_left.x0, pos_left.y1 + 0.10, model_label, fontsize=16, fontweight='bold',
+        fig.text(pos_left.x0, pos_left.y1 + 0.05, model_label, fontsize=16, fontweight='bold',
                 horizontalalignment='left', verticalalignment='bottom')
 
     if plot_rmax:
