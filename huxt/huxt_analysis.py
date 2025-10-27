@@ -484,17 +484,12 @@ def plot_compressible(model, time, save=False, tag='', fighandle=np.nan, minimal
                 ax.plot(obslon, obs.r[id_t], markersize=14, color=styles[body]['color'], 
                        marker=styles[body]['marker'], linestyle='', label=label)
         
-        # Add legend only to first plot
-        if annotateplot:
-            axes[0].legend(ncol=len(observers_list), loc='lower center', frameon=False, fontsize=12,
-                          handletextpad=0.1, columnspacing=0.5, bbox_to_anchor=(0.5, -0.18))
-        
         # Set background color and adjust position to make room for colorbars and legend
         for ax in axes:
             ax.patch.set_facecolor('slategrey')
             pos = ax.get_position()
             # Move plots up to make room for colorbar and legend below
-            new_pos = [pos.x0, pos.y0 + 0.12, pos.width, pos.height]
+            new_pos = [pos.x0, pos.y0 + 0.15, pos.width, pos.height]
             ax.set_position(new_pos)
 
         # Add colorbars below each plot
@@ -513,21 +508,29 @@ def plot_compressible(model, time, save=False, tag='', fighandle=np.nan, minimal
             cbaxes = fig.add_axes([left, bottom, wid, cb_height])
             cbar = fig.colorbar(cnt, cax=cbaxes, orientation='horizontal')
             cbar.set_ticks(ticks)
-            cbar.ax.tick_params(labelsize=11)
-            # Position label below colorbar
-            cbaxes.text(0.5, -1.8, label, fontsize=13, transform=cbaxes.transAxes, 
+            cbar.ax.tick_params(labelsize=12)
+            # Position label below colorbar with larger font
+            cbaxes.text(0.5, -1.8, label, fontsize=16, transform=cbaxes.transAxes, 
                        horizontalalignment='center', verticalalignment='top')
 
+        # Add legend below colorbars, centered on middle panel
         if annotateplot:
-            # Add time label at top of figure (centered above middle panel)
+            # Get position of middle panel for centering legend
+            pos_middle = axes[1].get_position()
+            # Use axes[0] which has the labels, but position relative to figure center
+            legend = axes[0].legend(ncol=len(observers_list), loc='center', frameon=False, fontsize=14,
+                          handletextpad=0.1, columnspacing=0.5, 
+                          bbox_to_anchor=(0.5, -0.35), bbox_transform=fig.transFigure)
+            
+            # Add time label at top right corner
             time_label = "{:3.2f} days | ".format(model.time_out[id_t].to(u.day).value)
             time_label = time_label + (model.time_init + time).strftime('%Y-%m-%d %H:%M')
-            fig.text(0.5, 0.98, time_label, fontsize=15, fontweight='bold',
-                    horizontalalignment='center', verticalalignment='top')
+            fig.text(0.98, 0.98, time_label, fontsize=15, fontweight='bold',
+                    horizontalalignment='right', verticalalignment='top')
             
-            # Add model info at top left corner
+            # Add model info at top left corner with larger font
             model_label = "HUXt2D Compressible | Lat: {:3.0f}°".format(model.latitude.to(u.deg).value)
-            fig.text(0.02, 0.98, model_label, fontsize=12, 
+            fig.text(0.02, 0.98, model_label, fontsize=16, fontweight='bold',
                     horizontalalignment='left', verticalalignment='top')
 
     if plot_rmax:
