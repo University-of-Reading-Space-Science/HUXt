@@ -89,8 +89,7 @@ widths = [60, 60]
 thickness = [8, 4]
 cme_list = []
 for t, l, w, v, thick in zip(times, lons, widths, speeds, thickness):
-    cme = H.ConeCME(t_launch=t*u.s, longitude=l*u.deg, width=w*u.deg, v=v*model_comp.kms, thickness=thick*u.solRad,
-                     cme_density=20e-18*(u.kg/u.m**3), cme_temperature=3e6*u.K)
+    cme = H.ConeCME(t_launch=t*u.s, longitude=l*u.deg, width=w*u.deg, v=v*model_comp.kms, thickness=thick*u.solRad)
     cme_list.append(cme)
 
 

@@ -14,9 +14,8 @@ from astropy.time import Time
 import httplib2
 import numpy as np
 from pathlib import Path
-from pyhdf.SD import SD, SDC
 import h5py
-from scipy.io import netcdf, readsav
+from scipy.io import netcdf_file, readsav
 from scipy import interpolate
 
 from sunpy.coordinates import sun
@@ -172,14 +171,10 @@ def read_MAS_vr_br(cr):
     filepath = boundary_dir.joinpath(vrfilename)
     assert filepath.exists()
 
-    file = SD(str(filepath), SDC.READ)
-
-    sds_obj = file.select('fakeDim0')  # select sds
-    MAS_vr_Xa = sds_obj.get()  # get sds data
-    sds_obj = file.select('fakeDim1')  # select sds
-    MAS_vr_Xm = sds_obj.get()  # get sds data
-    sds_obj = file.select('Data-Set-2')  # select sds
-    MAS_vr = sds_obj.get()  # get sds data
+    with netcdf_file(str(filepath), 'r', mmap=False) as file:
+        MAS_vr_Xa = file.variables['fakeDim0'][:].copy()
+        MAS_vr_Xm = file.variables['fakeDim1'][:].copy()
+        MAS_vr = file.variables['Data-Set-2'][:].copy()
 
     # Convert from model to physicsal units
     MAS_vr = MAS_vr * 481.0 * u.km / u.s
@@ -188,14 +183,11 @@ def read_MAS_vr_br(cr):
 
     filepath = boundary_dir.joinpath(brfilename)
     assert filepath.exists()
-    file = SD(str(filepath), SDC.READ)
-
-    sds_obj = file.select('fakeDim0')  # select sds
-    MAS_br_Xa = sds_obj.get()  # get sds data
-    sds_obj = file.select('fakeDim1')  # select sds
-    MAS_br_Xm = sds_obj.get()  # get sds data
-    sds_obj = file.select('Data-Set-2')  # select sds
-    MAS_br = sds_obj.get()  # get sds data
+    
+    with netcdf_file(str(filepath), 'r', mmap=False) as file:
+        MAS_br_Xa = file.variables['fakeDim0'][:].copy()
+        MAS_br_Xm = file.variables['fakeDim1'][:].copy()
+        MAS_br = file.variables['Data-Set-2'][:].copy()
 
     MAS_br_Xa = MAS_br_Xa * u.rad
     MAS_br_Xm = MAS_br_Xm * u.rad
@@ -505,7 +497,7 @@ def get_PFSS_maps(filepath):
     """
     filepath = Path(filepath)
     assert filepath.exists()
-    nc = netcdf.netcdf_file(filepath, 'r', mmap=False)
+    nc = netcdf_file(filepath, 'r', mmap=False)
     br_map = nc.variables['br'][:]
     vr_map = nc.variables['vr'][:] * u.km / u.s
     phi = nc.variables['ph'][:]
