@@ -559,7 +559,7 @@ class HUXt:
                  input_v_ts=np.nan * (u.km / u.s), input_b_ts=np.nan, 
                  input_rho_ts=np.nan * (u.kg / u.m**3), input_temp_ts=np.nan * u.K, 
                  input_iscme_ts=np.nan, input_t_ts=np.nan * u.s,
-                 track_cmes=True, accel_limit=True, compressible=False, solver='upwind', parallel=True):
+                 track_cmes=True, accel_limit=True, compressible=False, solver='upwind', parallel=False):
         """
         Initialise the HUXt model instance.
 
@@ -801,9 +801,13 @@ class HUXt:
         self.buffertime = 1.5 * (self.rrel[-1] / self.v_boundary.min()).to(u.day)
 
         # Preallocate space for the output for the solar wind fields for the cme and ambient solution.
-        self.v_grid = np.zeros((self.nt_out, self.nr, self.nlon)) * self.kms
+        # Use Fortran order (column-major) for better cache efficiency during solve:
+        # - We iterate over longitude (last dimension)
+        # - For each longitude, we fill the entire (time, radius) slice
+        # - Fortran order makes these slices contiguous in memory
+        self.v_grid = np.zeros((self.nt_out, self.nr, self.nlon), order='F') * self.kms
         if self.track_b:
-            self.b_grid = np.zeros((self.nt_out, self.nr, self.nlon))
+            self.b_grid = np.zeros((self.nt_out, self.nr, self.nlon), order='F')
 
             # Mesh the spatial coordinates.
         self.lon_grid, self.r_grid = np.meshgrid(self.lon, self.r)
@@ -817,31 +821,10 @@ class HUXt:
         
         # Initialize density and temperature grids for compressible solver
         if self.compressible:
-            self.rho_grid = np.zeros((self.nt_out, self.nr, self.nlon)) * (u.kg / u.m**3)
-            self.temp_grid = np.zeros((self.nt_out, self.nr, self.nlon)) * u.K
-            
-            # Initialize with radial scaling from inner boundary conditions
-            # rho ~ r^-2, temp ~ r^-0.67
-            r_inner = self.r[0]
-            for ilon in range(self.nlon):
-                # Get the boundary conditions at this longitude
-                rho_inner = self.rho_boundary[ilon]
-                temp_inner = self.temp_boundary[ilon]
-                v_inner = self.v_boundary[ilon]
-                
-                # Apply radial scaling to all radii
-                # Density scales as r^-2 from continuity
-                # Temperature scales with velocity via adiabatic expansion
-                for ir in range(self.nr):
-                    r_ratio = (r_inner / self.r[ir]).decompose().value
-                    self.rho_grid[0, ir, ilon] = rho_inner * r_ratio**2
-                    # For temperature, use adiabatic scaling with velocity
-                    # As plasma expands, v increases and T changes via T ∝ V^(2(gamma-1))
-                    # At r_min, we have T_inner from Lopez & Freeman relation
-                    # Velocity increases roughly as v ∝ r^(-0.5) in acceleration region
-                    # For now, maintain velocity at inner boundary value (conservative estimate)
-                    # Full velocity evolution handled in solve_radial
-                    self.temp_grid[0, ir, ilon] = temp_inner  # Will be updated by solver
+            # Use Fortran order for cache-efficient memory access during solve
+            self.rho_grid = np.zeros((self.nt_out, self.nr, self.nlon), order='F') * (u.kg / u.m**3)
+            self.temp_grid = np.zeros((self.nt_out, self.nr, self.nlon), order='F') * u.K
+            # Note: Grids are initialized to zero here and will be populated during solve()
 
         # Numpy array of model parameters for parsing to external functions that use numba
         # Select appropriate alpha based on solver type:
@@ -1276,6 +1259,8 @@ class HUXt:
         # ======================================================================
         # Solve the time series at each longitude
         # ======================================================================
+        # Note: Grids are already in Fortran order from initialization, which makes
+        # the [:, :, i] slices contiguous in memory for cache-efficient access
 
         if self.parallel:
             # Parallel execution using joblib
@@ -1340,6 +1325,13 @@ class HUXt:
                                          self.model_time.value,
                                          self.time_out.value,
                                          self.r.to(u.km).value, lons)
+
+        # Convert grids back to C order (row-major) for compatibility with rest of codebase
+        # This ensures all downstream analysis and plotting code works as expected
+        self.v_grid = np.ascontiguousarray(self.v_grid.value) * self.kms
+        if self.compressible:
+            self.rho_grid = np.ascontiguousarray(self.rho_grid.value) * (u.kg / u.m**3)
+            self.temp_grid = np.ascontiguousarray(self.temp_grid.value) * u.K
 
         if save:
             if tag == '':
@@ -2282,7 +2274,7 @@ def add_cmes_to_input_series(vinput, model_time, lon, r_boundary, cme_params, la
 
 
 
-@jit(nopython=True, parallel=True)
+@jit(nopython=True)
 def _upwind_step_(v_up, v_dn, dtdr, alpha, r_accel, rrel):
     """
     Compute the next step in the upwind scheme of Burgers equation with added acceleration of the solar wind.
@@ -2576,7 +2568,7 @@ def _hllc_flux_(rho_L, v_L, p_L, rho_R, v_R, p_R, gamma=5.0/3.0):
     return F_mass, F_mom, F_energy
 
 
-@jit(nopython=True, parallel=True)
+@jit(nopython=True)
 def _hll_step_compressible_(v_up, v_dn, rho_up, rho_dn, temp_up, temp_dn,
                             dtdr, alpha, r_accel, rrel, r_boundary, use_hllc=False, gamma=5.0/3.0):
     """
@@ -2890,7 +2882,7 @@ def _hll_step_fully_conservative_(v_up, v_dn, rho_up, rho_dn, temp_up, temp_dn,
 
 
 
-@jit(nopython=True, parallel=True)
+@jit(nopython=True)
 def _upwind_step_compressible_(v_up, v_dn, rho_up, rho_dn, temp_up, temp_dn, 
                                 dtdr, alpha, r_accel, rrel, r_boundary, gamma):
     """
