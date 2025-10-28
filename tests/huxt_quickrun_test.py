@@ -46,12 +46,36 @@ r = 1.0*u.AU
 HA.plot_timeseries(model2, r, lon=0.0)
  """
 
+
+
 # Set up HUXt over a limited longitude range.
 dirs = H._setup_dirs_()
 data_path=dirs['example_inputs']
 print(data_path)
 filepath = os.path.join(data_path, 'wsa_gong_2024050906.fits')
 vr_in = Hin.get_WSA_long_profile(filepath, lat=0.0 * u.deg)
+
+
+
+# Set up HUXt
+
+model = H.HUXt(v_boundary=vr_in, cr_lon_init = 50*u.deg, simtime=5*u.day, dt_scale=1, frame='sidereal', lon_start=300*u.deg, lon_stop=60*u.deg)
+# Add a CME
+cme = H.ConeCME(t_launch=2.5*u.day, longitude=0.0*u.deg, width=40*u.deg, v=1000*(u.km/u.s), thickness=5*u.solRad)
+cme_list = [cme]
+
+# Set up to trace a set of field lines from a range of evenly spaced Carrington longitudes
+dlon = (20*u.deg).to(u.rad).value
+lon_grid = np.arange(dlon/2, 2*np.pi-dlon/2 + 0.0001, dlon)*u.rad
+
+# Give the streakline footpoints (in Carr long) to the solve method
+model.solve(cme_list, streak_carr=lon_grid)
+
+# Plot these streaklines
+time = 4.5*u.day
+fig, ax = HA.plot(model,time, save = 'True', tag = 'CR2254_streaklines')
+
+
 model_comp = H.HUXt(v_boundary=vr_in, lon_start=300*u.deg, lon_stop=60*u.deg, simtime=5*u.day, dt_scale=4, 
                     compressible=True)
 
@@ -69,22 +93,27 @@ for t, l, w, v, thick in zip(times, lons, widths, speeds, thickness):
                      cme_density=20e-18*(u.kg/u.m**3), cme_temperature=3e6*u.K)
     cme_list.append(cme)
 
-model_comp.solve(cme_list)
 
-t_interest = 1.6*u.day
-#HA.plot(model_comp, t_interest)
+# Set up to trace a set of field lines from a range of evenly spaced Carrington longitudes
+dlon = (20*u.deg).to(u.rad).value
+lon_grid = np.arange(dlon/2, 2*np.pi-dlon/2 + 0.0001, dlon)*u.rad
+
+# Give the streakline footpoints (in Carr long) to the solve method
+model_comp.solve(cme_list, streak_carr=lon_grid)
+
+t_interest = 3*u.day
+HA.plot(model_comp, t_interest)
 HA.plot_compressible(model_comp, t_interest, tag = 'compressible_with_CME')
 
 HA.plot_earth_timeseries(model_comp)
 
-HA.animate(model_comp, tag = 
-           'compressible_with_CME')
+#HA.animate(model_comp, tag = 'compressible_with_CME')
 
-
-#Repeat with incompressible model
-model_incomp = H.HUXt(v_boundary=vr_in, lon_start=300*u.deg, lon_stop=60*u.deg, simtime=5*u.day, dt_scale=4,
-                        compressible=False)
-model_incomp.solve(cme_list)
+plt.show()
+# #Repeat with incompressible model
+# model_incomp = H.HUXt(v_boundary=vr_in, lon_start=300*u.deg, lon_stop=60*u.deg, simtime=5*u.day, dt_scale=4,
+#                         compressible=False)
+# model_incomp.solve(cme_list)
 
 #HA.plot(model_incomp, t_interest)
-
+#HA.animate(model_incomp, tag =  'incompressible_with_CME')

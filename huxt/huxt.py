@@ -592,9 +592,6 @@ class HUXt:
                    'upwind' (default): First-order upwind scheme (Godunov-type)
                    'hll': HLL (Harten-Lax-van Leer) Riemann solver with empirical acceleration
                    'hllc': HLLC (HLL-Contact) Riemann solver with empirical acceleration
-                   'pluto': PLUTO-style fully conservative HLL solver (requires compressible=True)
-                           Uses flux differencing with geometric source terms S = -(2/r)*F
-                           Designed for starting at inner boundaries (21.5 Rs recommended)
             parallel: Boolean flag to enable parallel computation across longitude slices (default True).
                      Uses joblib threading backend for parallelization. Set to False for debugging
                      or if running on a single-core system.
@@ -613,7 +610,7 @@ class HUXt:
         self.kms = constants['kms']
         self.alpha = constants['alpha']  # Scale parameter for residual SW acceleration (incompressible)
         self.alpha_hybrid = constants['alpha_hybrid']  # Scale parameter for HLL Hybrid solver
-        self.gamma_pluto = constants['gamma_pluto']  # Adiabatic index for PLUTO solver
+        self.gamma = constants['gamma']  # Adiabatic index for compressible solver
         self.r_accel = constants['r_accel']  # Spatial scale parameter for residual SW acceleration
         self.__version__ = get_version()
         
@@ -835,8 +832,7 @@ class HUXt:
 
         # Numpy array of model parameters for parsing to external functions that use numba
         # Select appropriate alpha based on solver type:
-        # - HLL/HLLC solvers: alpha_hybrid (0.0, pressure gradient only) if compressible
-        # - PLUTO solver: no acceleration (alpha = 0.0)
+        # - HLL/HLLC solvers: alpha_hybrid if compressible
         # - upwind/incompressible: alpha (0.15)
         if self.solver in ['hll', 'hllc'] and self.compressible:
             alpha_to_use = self.alpha_hybrid
@@ -847,7 +843,7 @@ class HUXt:
                                       self.dt_scale.value, self.nt_out, self.nr, self.nlon,
                                       self.r[0].to('km').value,
                                      self.rotation_period.to(u.s).value, int(self.accel_limit),
-                                     self.gamma_pluto])
+                                     self.gamma])
 
         # Process inputs for time dependent boundary conditions, e.g., from in-situ data
         self.input_b_ts = np.nan
@@ -1567,12 +1563,12 @@ def huxt_constants():
     alpha = 0.15 * u.dimensionless_unscaled  # Scale parameter for residual SW acceleration (for incompressible)
     alpha_hybrid = 0.1 * u.dimensionless_unscaled  # Scale parameter for HLL Hybrid (pressure gradient + some acceleration)
     r_accel = 50 * u.solRad  # Spatial scale parameter for residual SW acceleration
-    gamma_pluto = 1.5  # Adiabatic index for PLUTO solver (following sunRunner1D)
+    gamma = 5.0/3.0  # Adiabatic index for compressible solver
     synodic_period = 27.2753 * daysec  # Solar Synodic rotation period from Earth.
     sidereal_period = 25.38 * daysec  # Solar sidereal rotation period
 
     constants = {'twopi': twopi, 'daysec': daysec, 'kms': kms, 'alpha': alpha,
-                 'alpha_hybrid': alpha_hybrid, 'gamma_pluto': gamma_pluto,
+                 'alpha_hybrid': alpha_hybrid, 'gamma': gamma,
                  'r_accel': r_accel, 'synodic_period': synodic_period,
                  'sidereal_period': sidereal_period, 'v_max': v_max,
                  'dr': dr, 'nlong': nlong, 'nlat': nlat}
@@ -1823,7 +1819,7 @@ def solve_radial(vinput, binput, iscmeinput, model_time, rrel, params,
         rhoinput: Timeseries of inner boundary density (optional, for compressible solver). Plain array without units.
         tempinput: Timeseries of inner boundary temperature (optional, for compressible solver). Plain array without units.
         compressible: Boolean flag indicating if compressible solver is being used
-        solver: String specifying which numerical solver to use ('upwind', 'tvd', 'weno', 'muscl')
+        solver: String specifying which numerical solver to use
     Returns:
         v_grid: Array of radial solar wind speed profile as function of time.
         cme_particles_r: Array of CME tracer particle positions as function of time.
@@ -1841,7 +1837,7 @@ def solve_radial(vinput, binput, iscmeinput, model_time, rrel, params,
     nr = np.int32(params[5])
     r_boundary = params[7]
     accel_limit = bool(params[9])  # switch used to determine if speed limit is applied to acceleration.
-    gamma_pluto = params[10]  # Adiabatic index for PLUTO solver
+    gamma = params[10]  # Adiabatic index for compressible solver
     
     # Compute the radial grid for the test particles
     rgrid = (rrel - rrel[0]) * 695700.0 + r_boundary  # Can't use astropy.units because numba
@@ -1977,10 +1973,10 @@ def solve_radial(vinput, binput, iscmeinput, model_time, rrel, params,
                 
                 if accel_limit:
                     u_up_next, rho_up_next, temp_up_next = _upwind_step_compressible_accel_limit_(
-                        u_up, u_dn, rho_up, rho_dn, temp_up, temp_dn, dtdr, alpha, r_accel, rrel, r_boundary)
+                        u_up, u_dn, rho_up, rho_dn, temp_up, temp_dn, dtdr, alpha, r_accel, rrel, r_boundary, gamma)
                 else:
                     u_up_next, rho_up_next, temp_up_next = _upwind_step_compressible_(
-                        u_up, u_dn, rho_up, rho_dn, temp_up, temp_dn, dtdr, alpha, r_accel, rrel, r_boundary)
+                        u_up, u_dn, rho_up, rho_dn, temp_up, temp_dn, dtdr, alpha, r_accel, rrel, r_boundary, gamma)
                 
                 # Save the updated time steps (direct assignment, no copy needed)
                 v[1:] = u_up_next
@@ -2186,103 +2182,7 @@ def add_cmes_to_input_series(vinput, model_time, lon, r_boundary, cme_params, la
     return v, isincme, rho, temp
 
 
-# ============================================================================
-# MUSCL Slope Limiter Functions
-# ============================================================================
 
-@jit(nopython=True)
-def _minmod_(a, b):
-    """
-    Minmod slope limiter - most diffusive, most stable.
-    Returns the minimum magnitude value with sign preservation.
-    Args:
-        a: First value
-        b: Second value
-    Returns:
-        Limited slope
-    """
-    if a * b <= 0.0:
-        return 0.0
-    elif np.abs(a) < np.abs(b):
-        return a
-    else:
-        return b
-
-
-@jit(nopython=True)
-def _van_leer_(a, b):
-    """
-    Van Leer slope limiter - balanced between accuracy and stability.
-    Harmonic mean of the slopes.
-    Args:
-        a: First value
-        b: Second value
-    Returns:
-        Limited slope
-    """
-    if a * b <= 0.0:
-        return 0.0
-    else:
-        denom = a + b
-        if np.abs(denom) < 1e-20:  # Prevent division by zero
-            return 0.0
-        return 2.0 * a * b / denom
-
-
-@jit(nopython=True)
-def _superbee_(a, b):
-    """
-    Superbee slope limiter - least diffusive, may be unstable for smooth flows.
-    Maximum of minmod combinations.
-    Args:
-        a: First value
-        b: Second value
-    Returns:
-        Limited slope
-    """
-    s1 = _minmod_(a, 2.0 * b)
-    s2 = _minmod_(2.0 * a, b)
-    if np.abs(s1) > np.abs(s2):
-        return s1
-    else:
-        return s2
-
-
-@jit(nopython=True)
-def _muscl_reconstruct_(u_left, u_center, u_right, limiter='vanleer'):
-    """
-    MUSCL reconstruction to compute left and right states at cell interface.
-    Uses slope limiting to maintain monotonicity and prevent spurious oscillations.
-    
-    Args:
-        u_left: Value at left cell (i-1)
-        u_center: Value at center cell (i)
-        u_right: Value at right cell (i+1)
-        limiter: Choice of slope limiter ('minmod', 'vanleer', 'superbee')
-    
-    Returns:
-        u_L: Left state at interface (i+1/2)
-        u_R: Right state at interface (i+1/2)
-    """
-    # Compute backward and forward differences
-    delta_minus = u_center - u_left
-    delta_plus = u_right - u_center
-    
-    # Apply slope limiter
-    if limiter == 'minmod':
-        delta_limited = _minmod_(delta_minus, delta_plus)
-    elif limiter == 'superbee':
-        delta_limited = _superbee_(delta_minus, delta_plus)
-    else:  # default to vanleer
-        delta_limited = _van_leer_(delta_minus, delta_plus)
-    
-    # Reconstruct left and right states at interface
-    # u_L is the right state of cell i (extrapolated from center)
-    # u_R is the left state of cell i+1 (extrapolated from center)
-    u_L = u_center + 0.5 * delta_limited
-    u_R = u_right - 0.5 * delta_limited
-    
-    return u_L, u_R
 
 
 @jit(nopython=True, parallel=True)
@@ -2359,147 +2259,6 @@ def _upwind_step_accel_limit(v_up, v_dn, dtdr, alpha, r_accel, rrel):
         v_up_next[i] += v_dn[i] * dtdr * v_diff
 
     return v_up_next
-
-
-# ============================================================================
-# MUSCL Scheme Functions
-# ============================================================================
-
-@jit(nopython=True)
-def _muscl_step_(v_up, v_dn, dtdr, alpha, r_accel, rrel, limiter='vanleer'):
-    """
-    Compute the next step using MUSCL (Monotonic Upstream-centered Scheme for Conservation Laws).
-    Second-order accurate with TVD property through slope limiting.
-    
-    Args:
-        v_up: A numpy array of the upwind radial values. Units of km/s.
-        v_dn: A numpy array of the downwind radial values. Units of km/s.
-        dtdr: Ratio of HUXt's time step and radial grid step. Units of s/km.
-        alpha: Scale parameter for residual Solar wind acceleration.
-        r_accel: Spatial scale parameter of residual solar wind acceleration. Units of km.
-        rrel: A numpy array of the radial coordinates relative to inner boundary. Units of dimensionless.
-        limiter: Choice of slope limiter ('minmod', 'vanleer', 'superbee')
-    
-    Returns:
-        v_up_next: A numpy array of the updated upwind values at the next time step.
-    """
-    
-    nr = len(v_up)
-    v_up_next = np.zeros(nr)
-    
-    # Extend arrays to handle boundary conditions
-    # Use constant extrapolation at boundaries
-    v_extended = np.zeros(nr + 2)
-    v_extended[0] = v_dn[0]  # Inner boundary from downwind
-    v_extended[1:-1] = v_up  # Interior points
-    v_extended[-1] = v_up[-1]  # Outer boundary - constant extrapolation
-    
-    # Loop over interior points
-    for i in range(nr):
-        # Get three-point stencil for reconstruction
-        v_left = v_extended[i]      # i-1
-        v_center = v_extended[i+1]  # i
-        v_right = v_extended[i+2]   # i+1
-        
-        # MUSCL reconstruction to get left and right states at interface
-        v_L, v_R = _muscl_reconstruct_(v_left, v_center, v_right, limiter)
-        
-        # Use reconstructed values for upwind flux
-        # Since we're doing upwind, we use v_center to determine direction
-        if v_center >= 0:
-            v_interface = v_L  # Flow from left
-        else:
-            v_interface = v_R  # Flow from right
-        
-        # Compute spatial derivative using reconstructed interface value
-        # This is more accurate than simple first-order difference
-        dv_dr = v_center - v_dn[i]
-        
-        # Standard upwind step with MUSCL-reconstructed advection
-        v_up_next[i] = v_center - v_center * dtdr * dv_dr
-        
-        # Add residual acceleration
-        accel_arg = -rrel[i] / r_accel
-        v_diff = alpha * v_center * np.exp(accel_arg)
-        v_up_next[i] += v_center * dtdr * v_diff
-        
-        # Ensure velocity remains positive and physically reasonable
-        if v_up_next[i] < 100.0:  # Minimum 100 km/s
-            v_up_next[i] = 100.0
-        if v_up_next[i] > 3000.0:  # Maximum 3000 km/s
-            v_up_next[i] = 3000.0
-    
-    return v_up_next
-
-
-@jit(nopython=True)
-def _muscl_step_accel_limit_(v_up, v_dn, dtdr, alpha, r_accel, rrel, limiter='vanleer'):
-    """
-    MUSCL scheme with acceleration limiting for speeds above 650 km/s.
-    
-    Args:
-        v_up: A numpy array of the upwind radial values. Units of km/s.
-        v_dn: A numpy array of the downwind radial values. Units of km/s.
-        dtdr: Ratio of HUXt's time step and radial grid step. Units of s/km.
-        alpha: Scale parameter for residual Solar wind acceleration.
-        r_accel: Spatial scale parameter of residual solar wind acceleration. Units of km.
-        rrel: A numpy array of the radial coordinates relative to inner boundary. Units of dimensionless.
-        limiter: Choice of slope limiter ('minmod', 'vanleer', 'superbee')
-    
-    Returns:
-        v_up_next: A numpy array of the updated upwind values at the next time step.
-    """
-    
-    nr = len(v_up)
-    v_up_next = np.zeros(nr)
-    
-    # Extend arrays for boundary conditions
-    v_extended = np.zeros(nr + 2)
-    v_extended[0] = v_dn[0]
-    v_extended[1:-1] = v_up
-    v_extended[-1] = v_up[-1]
-    
-    for i in range(nr):
-        v_left = v_extended[i]
-        v_center = v_extended[i+1]
-        v_right = v_extended[i+2]
-        
-        # MUSCL reconstruction
-        v_L, v_R = _muscl_reconstruct_(v_left, v_center, v_right, limiter)
-        
-        # Upwind flux with reconstruction
-        if v_center >= 0:
-            v_interface = v_L
-        else:
-            v_interface = v_R
-        
-        dv_dr = v_center - v_dn[i]
-        v_up_next[i] = v_center - v_center * dtdr * dv_dr
-        
-        # Acceleration with limiting
-        accel_arg = -rrel[i] / r_accel
-        accel_arg_p = -(rrel[i] + 1.0) / r_accel
-        
-        denom = 1.0 - np.exp(accel_arg_p - accel_arg)
-        if np.abs(denom) < 1e-6:
-            v_source = v_dn[i]
-        else:
-            v_source = v_dn[i] / denom
-        
-        v_diff = 0.0
-        if v_source < 650.0:
-            v_diff = alpha * v_source * (np.exp(accel_arg) - np.exp(accel_arg_p))
-        
-        v_up_next[i] += v_dn[i] * dtdr * v_diff
-        
-        # Ensure velocity remains positive and physically reasonable
-        if v_up_next[i] < 100.0:
-            v_up_next[i] = 100.0
-        if v_up_next[i] > 3000.0:
-            v_up_next[i] = 3000.0
-    
-    return v_up_next
-
 
 # ============================================================================
 # HLL and HLLC Riemann Solver Functions
@@ -3132,7 +2891,7 @@ def _hll_step_compressible_accel_limit_(v_up, v_dn, rho_up, rho_dn, temp_up, tem
 
 @jit(nopython=True, parallel=True)
 def _upwind_step_compressible_(v_up, v_dn, rho_up, rho_dn, temp_up, temp_dn, 
-                                dtdr, alpha, r_accel, rrel, r_boundary):
+                                dtdr, alpha, r_accel, rrel, r_boundary, gamma):
     """
     Compute the next step in the upwind scheme for the compressible solver.
     This includes velocity, density, and temperature evolution with compression/heating physics.
@@ -3149,15 +2908,13 @@ def _upwind_step_compressible_(v_up, v_dn, rho_up, rho_dn, temp_up, temp_dn,
         r_accel: Spatial scale parameter of residual solar wind acceleration. Units of km.
         rrel: The model radial grid relative to the radial inner boundary coordinate. Units of km.
         r_boundary: The inner boundary radius in km.
+        gamma: Adiabatic index for compressible solver (typically 5/3 for monoatomic gas).
         
     Returns:
         v_up_next: The upwind velocity values at the next time step. Units of km/s.
         rho_up_next: The upwind density values at the next time step. Units of kg/m^3.
         temp_up_next: The upwind temperature values at the next time step. Units of K.
     """
-    
-    # Adiabatic index for monoatomic gas (solar wind plasma)
-    gamma = 5.0 / 3.0
 
     # Arguments for computing the acceleration factor
     accel_arg = -rrel[:-1] / r_accel
@@ -3269,7 +3026,7 @@ def _upwind_step_compressible_(v_up, v_dn, rho_up, rho_dn, temp_up, temp_dn,
 
 @jit(nopython=True)
 def _upwind_step_compressible_accel_limit_(v_up, v_dn, rho_up, rho_dn, temp_up, temp_dn,
-                                            dtdr, alpha, r_accel, rrel, r_boundary):
+                                            dtdr, alpha, r_accel, rrel, r_boundary, gamma):
     """
     Compute the next step in the upwind scheme for the compressible solver with acceleration limit.
     No acceleration is applied to speeds above 650km/s. Includes compression/heating physics.
@@ -3286,15 +3043,13 @@ def _upwind_step_compressible_accel_limit_(v_up, v_dn, rho_up, rho_dn, temp_up, 
         r_accel: Spatial scale parameter of residual solar wind acceleration. Units of km.
         rrel: The model radial grid relative to the radial inner boundary coordinate. Units of km.
         r_boundary: The inner boundary radius in km.
+        gamma: Adiabatic index for compressible solver (typically 5/3 for monoatomic gas).
         
     Returns:
         v_up_next: The upwind velocity values at the next time step. Units of km/s.
         rho_up_next: The upwind density values at the next time step. Units of kg/m^3.
         temp_up_next: The upwind temperature values at the next time step. Units of K.
     """
-    
-    # Adiabatic index for monoatomic gas (solar wind plasma)
-    gamma = 5.0 / 3.0
 
     n = len(v_dn)
     v_up_next = np.empty(n, dtype=np.float64)
@@ -3396,300 +3151,6 @@ def _upwind_step_compressible_accel_limit_(v_up, v_dn, rho_up, rho_dn, temp_up, 
         if temp_up_next[i] < 1e4:  # Lower floor to 10,000 K
             temp_up_next[i] = 1e4
 
-    return v_up_next, rho_up_next, temp_up_next
-
-
-@jit(nopython=True)
-def _muscl_step_compressible_(v_up, v_dn, rho_up, rho_dn, temp_up, temp_dn,
-                               dtdr, alpha, r_accel, rrel, r_boundary, limiter='vanleer'):
-    """
-    MUSCL scheme for compressible solver with velocity, density, and temperature evolution.
-    Second-order accurate in space with TVD property.
-    
-    Args:
-        v_up: Upwind velocity values (km/s)
-        v_dn: Downwind velocity values (km/s)
-        rho_up: Upwind density values (kg/m³)
-        rho_dn: Downwind density values (kg/m³)
-        temp_up: Upwind temperature values (K)
-        temp_dn: Downwind temperature values (K)
-        dtdr: Time step / radial step ratio (s/km)
-        alpha: Acceleration scale parameter
-        r_accel: Acceleration spatial scale (km)
-        rrel: Radial coordinates relative to inner boundary (dimensionless)
-        r_boundary: Inner boundary radius (km)
-        limiter: Slope limiter choice ('minmod', 'vanleer', 'superbee')
-    
-    Returns:
-        v_up_next: Updated velocity (km/s)
-        rho_up_next: Updated density (kg/m³)
-        temp_up_next: Updated temperature (K)
-    """
-    
-    nr = len(v_up)
-    v_up_next = np.zeros(nr)
-    rho_up_next = np.zeros(nr)
-    temp_up_next = np.zeros(nr)
-    
-    # Physical constants
-    gamma = 5.0 / 3.0  # Adiabatic index for monoatomic gas
-    
-    # Time step in seconds
-    dt = dtdr * 695700.0  # Convert from dtdr (s/km) to dt (s) using solar radius scaling
-    
-    # Extend arrays for boundary conditions
-    v_ext = np.zeros(nr + 2)
-    rho_ext = np.zeros(nr + 2)
-    temp_ext = np.zeros(nr + 2)
-    
-    v_ext[0] = v_dn[0]
-    rho_ext[0] = rho_dn[0]
-    temp_ext[0] = temp_dn[0]
-    
-    v_ext[1:-1] = v_up
-    rho_ext[1:-1] = rho_up
-    temp_ext[1:-1] = temp_up
-    
-    v_ext[-1] = v_up[-1]
-    rho_ext[-1] = rho_up[-1]
-    temp_ext[-1] = temp_up[-1]
-    
-    # Main evolution loop
-    for i in range(nr):
-        # ====================================================================
-        # 1. MUSCL reconstruction for all variables
-        # ====================================================================
-        
-        # Velocity reconstruction
-        v_left = v_ext[i]
-        v_center = v_ext[i+1]
-        v_right = v_ext[i+2]
-        v_L, v_R = _muscl_reconstruct_(v_left, v_center, v_right, limiter)
-        
-        # Density reconstruction
-        rho_left = rho_ext[i]
-        rho_center = rho_ext[i+1]
-        rho_right = rho_ext[i+2]
-        rho_L, rho_R = _muscl_reconstruct_(rho_left, rho_center, rho_right, limiter)
-        
-        # Ensure reconstructed density is positive (prevent unphysical values)
-        if rho_L < 1e-30:
-            rho_L = 1e-30
-        if rho_R < 1e-30:
-            rho_R = 1e-30
-        if rho_center < 1e-30:
-            rho_center = 1e-30
-        
-        # Temperature reconstruction
-        temp_left = temp_ext[i]
-        temp_center = temp_ext[i+1]
-        temp_right = temp_ext[i+2]
-        temp_L, temp_R = _muscl_reconstruct_(temp_left, temp_center, temp_right, limiter)
-        
-        # Ensure reconstructed temperature is positive (prevent unphysical values)
-        if temp_L < 1e4:  # Lower floor to 10,000 K
-            temp_L = 1e4
-        if temp_R < 1e4:  # Lower floor to 10,000 K
-            temp_R = 1e4
-        if temp_center < 1e4:  # Lower floor to 10,000 K
-            temp_center = 1e4
-        
-        # ====================================================================
-        # 2. Compute spatial derivatives using MUSCL reconstruction
-        # ====================================================================
-        
-        dv_dr = v_center - v_dn[i]
-        drho_dr = rho_center - rho_dn[i]
-        dtemp_dr = temp_center - temp_dn[i]
-        
-        # ====================================================================
-        # 3. Compute velocity divergence with spherical geometry
-        # ====================================================================
-        
-        # Radial distance in km
-        r_km = (rrel[i] * 695700.0) + r_boundary
-        div_v = dv_dr + (2.0 * v_dn[i] / r_km)  # ∂v/∂r + 2v/r
-        
-        # Limit divergence to prevent numerical instability
-        div_v_max = 1.0 / dt  # Maximum physical compression rate
-        if div_v > div_v_max:
-            div_v = div_v_max
-        elif div_v < -div_v_max:
-            div_v = -div_v_max
-        
-        # ====================================================================
-        # 4. Velocity evolution: advection + acceleration
-        # ====================================================================
-        
-        v_advection = - dtdr * v_center * dv_dr
-        
-        # Residual acceleration
-        accel_arg = -rrel[i] / r_accel
-        v_accel = alpha * v_center * np.exp(accel_arg)
-        
-        v_up_next[i] = v_center + v_advection + dtdr * v_center * v_accel
-        
-        # ====================================================================
-        # 5. Density evolution: advection + compression
-        # ====================================================================
-        
-        rho_advection = - dtdr * v_center * drho_dr
-        rho_compression = - rho_dn[i] * div_v * dt
-        
-        rho_up_next[i] = rho_center + rho_advection + rho_compression
-        
-        # Ensure density remains positive and physically reasonable
-        if rho_up_next[i] < 1e-30:
-            rho_up_next[i] = 1e-30
-        # Prevent exponential growth - limit to 1000x ambient solar wind density
-        if rho_up_next[i] > 1e-17:  # ~1000x typical ambient
-            rho_up_next[i] = 1e-17
-        
-        # ====================================================================
-        # 6. Temperature evolution: advection + adiabatic heating/cooling
-        # ====================================================================
-        
-        temp_advection = - dtdr * v_center * dtemp_dr
-        temp_compression = - (gamma - 1.0) * temp_dn[i] * div_v * dt
-        
-        temp_up_next[i] = temp_center + temp_advection + temp_compression
-        
-        # Ensure temperature remains positive and physically reasonable
-        if temp_up_next[i] < 1e4:  # Lower floor to 10,000 K
-            temp_up_next[i] = 1e4
-        # Prevent exponential growth - limit to 100x typical CME temperature
-        if temp_up_next[i] > 1e8:  # 100 MK upper limit
-            temp_up_next[i] = 1e8
-    
-    return v_up_next, rho_up_next, temp_up_next
-
-
-@jit(nopython=True)
-def _muscl_step_compressible_accel_limit_(v_up, v_dn, rho_up, rho_dn, temp_up, temp_dn,
-                                          dtdr, alpha, r_accel, rrel, r_boundary, limiter='vanleer'):
-    """
-    MUSCL scheme for compressible solver with acceleration limiting.
-    Limits acceleration for speeds above 650 km/s.
-    
-    Args:
-        v_up: Upwind velocity values (km/s)
-        v_dn: Downwind velocity values (km/s)
-        rho_up: Upwind density values (kg/m³)
-        rho_dn: Downwind density values (kg/m³)
-        temp_up: Upwind temperature values (K)
-        temp_dn: Downwind temperature values (K)
-        dtdr: Time step / radial step ratio (s/km)
-        alpha: Acceleration scale parameter
-        r_accel: Acceleration spatial scale (km)
-        rrel: Radial coordinates relative to inner boundary (dimensionless)
-        r_boundary: Inner boundary radius (km)
-        limiter: Slope limiter choice ('minmod', 'vanleer', 'superbee')
-    
-    Returns:
-        v_up_next: Updated velocity (km/s)
-        rho_up_next: Updated density (kg/m³)
-        temp_up_next: Updated temperature (K)
-    """
-    
-    nr = len(v_up)
-    v_up_next = np.zeros(nr)
-    rho_up_next = np.zeros(nr)
-    temp_up_next = np.zeros(nr)
-    
-    gamma = 5.0 / 3.0
-    dt = dtdr * 695700.0
-    
-    # Extend arrays
-    v_ext = np.zeros(nr + 2)
-    rho_ext = np.zeros(nr + 2)
-    temp_ext = np.zeros(nr + 2)
-    
-    v_ext[0] = v_dn[0]
-    rho_ext[0] = rho_dn[0]
-    temp_ext[0] = temp_dn[0]
-    
-    v_ext[1:-1] = v_up
-    rho_ext[1:-1] = rho_up
-    temp_ext[1:-1] = temp_up
-    
-    v_ext[-1] = v_up[-1]
-    rho_ext[-1] = rho_up[-1]
-    temp_ext[-1] = temp_up[-1]
-    
-    for i in range(nr):
-        # MUSCL reconstruction
-        v_L, v_R = _muscl_reconstruct_(v_ext[i], v_ext[i+1], v_ext[i+2], limiter)
-        rho_L, rho_R = _muscl_reconstruct_(rho_ext[i], rho_ext[i+1], rho_ext[i+2], limiter)
-        temp_L, temp_R = _muscl_reconstruct_(temp_ext[i], temp_ext[i+1], temp_ext[i+2], limiter)
-        
-        # Ensure positive definiteness for reconstructed values
-        if rho_L < 1e-30:
-            rho_L = 1e-30
-        if rho_R < 1e-30:
-            rho_R = 1e-30
-        if rho_ext[i+1] < 1e-30:
-            rho_ext[i+1] = 1e-30
-        if temp_L < 1e3:
-            temp_L = 1e3
-        if temp_R < 1e3:
-            temp_R = 1e3
-        if temp_ext[i+1] < 1e3:
-            temp_ext[i+1] = 1e3
-        
-        # Spatial derivatives
-        dv_dr = v_ext[i+1] - v_dn[i]
-        drho_dr = rho_ext[i+1] - rho_dn[i]
-        dtemp_dr = temp_ext[i+1] - temp_dn[i]
-        
-        # Velocity divergence
-        r_km = (rrel[i] * 695700.0) + r_boundary
-        div_v = dv_dr + (2.0 * v_dn[i] / r_km)
-        
-        # Limit divergence to prevent numerical instability
-        div_v_max = 1.0 / dt
-        if div_v > div_v_max:
-            div_v = div_v_max
-        elif div_v < -div_v_max:
-            div_v = -div_v_max
-        
-        # Velocity with acceleration limiting
-        v_advection = - dtdr * v_ext[i+1] * dv_dr
-        
-        accel_arg = -rrel[i] / r_accel
-        accel_arg_p = -(rrel[i] + 1.0) / r_accel
-        
-        denom = 1.0 - np.exp(accel_arg_p - accel_arg)
-        if np.abs(denom) < 1e-6:
-            v_source = v_dn[i]
-        else:
-            v_source = v_dn[i] / denom
-        
-        v_diff = 0.0
-        if v_source < 650.0:
-            v_diff = alpha * v_source * (np.exp(accel_arg) - np.exp(accel_arg_p))
-        
-        v_up_next[i] = v_ext[i+1] + v_advection + v_dn[i] * dtdr * v_diff
-        
-        # Density evolution
-        rho_advection = - dtdr * v_ext[i+1] * drho_dr
-        rho_compression = - rho_dn[i] * div_v * dt
-        rho_up_next[i] = rho_ext[i+1] + rho_advection + rho_compression
-        
-        if rho_up_next[i] < 1e-30:
-            rho_up_next[i] = 1e-30
-        if rho_up_next[i] > 1e-17:
-            rho_up_next[i] = 1e-17
-        
-        # Temperature evolution
-        temp_advection = - dtdr * v_ext[i+1] * dtemp_dr
-        temp_compression = - (gamma - 1.0) * temp_dn[i] * div_v * dt
-        temp_up_next[i] = temp_ext[i+1] + temp_advection + temp_compression
-        
-        if temp_up_next[i] < 1e4:  # Lower floor to 10,000 K
-            temp_up_next[i] = 1e4
-        if temp_up_next[i] > 1e8:
-            temp_up_next[i] = 1e8
-    
     return v_up_next, rho_up_next, temp_up_next
 
 
