@@ -3,9 +3,6 @@
 
 # But track specific documentation files
 !.gitignore
-!README.md
-!*.md
-!LICENSE.md
 
 # Ignore Python cache and outputs
 __pycache__/

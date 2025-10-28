@@ -12,6 +12,7 @@ from numba import jit
 from scipy.optimize import minimize
 import sunpy
 from sunpy.coordinates import get_horizons_coord
+from appdirs import user_data_dir
 
 from . import huxt as h
 from . import huxt_inputs as hin
@@ -24,13 +25,7 @@ mpl.rc("legend", fontsize=16)
 
 def get_figure_dir():
     """Get path to output directory for figures and animations"""
-    # Use platform-specific user data directory
-    if os.name == 'nt':  # Windows
-        base_dir = Path(os.environ.get('APPDATA', os.path.expanduser('~')), 'huxt')
-    else:  # Unix-like (Linux, macOS)
-        base_dir = Path(os.path.expanduser('~/.huxt'))
-    
-    figure_dir = base_dir / "figures"
+    figure_dir = Path(user_data_dir("huxt", "")) / "figures"
     figure_dir.mkdir(parents=True, exist_ok=True)
     return figure_dir
 

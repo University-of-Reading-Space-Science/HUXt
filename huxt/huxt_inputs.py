@@ -7,6 +7,7 @@ import ssl
 import copy
 import pickle
 
+from appdirs import user_data_dir
 import astropy.units as u
 from astropy.io import fits
 from astropy.time import Time
@@ -74,13 +75,7 @@ from . import huxt as h
 
 def get_data_dir():
     """Get path to output directory for figures and animations"""
-    # Use platform-specific user data directory
-    if os.name == 'nt':  # Windows
-        base_dir = Path(os.environ.get('APPDATA', os.path.expanduser('~')), 'huxt')
-    else:  # Unix-like (Linux, macOS)
-        base_dir = Path(os.path.expanduser('~/.huxt'))
-    
-    data_dir = base_dir / "data" / 'boundary_conditions'
+    data_dir = Path(user_data_dir("huxt", "")) / "data" / 'boundary_conditions'
     data_dir.mkdir(parents=True, exist_ok=True)
     return data_dir
 

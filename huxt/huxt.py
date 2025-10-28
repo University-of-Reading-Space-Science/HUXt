@@ -2,6 +2,7 @@ import copy
 import errno
 import os
 
+from appdirs import user_data_dir
 import astropy.units as u
 from astropy.time import Time, TimeDelta
 import h5py
@@ -1843,11 +1844,8 @@ def _setup_dirs_():
     dirs = {'ephemeris': os.path.join(cwd, 'data', 'ephemeris', 'ephemeris.hdf5'),
             'example_inputs': os.path.join(cwd, 'data', 'example_inputs')}
 
-    # Use platform-specific user data directory
-    if os.name == 'nt':  # Windows
-        base_dir = Path(os.environ.get('APPDATA', os.path.expanduser('~')), 'huxt')
-    else:  # Unix-like (Linux, macOS)
-        base_dir = Path(os.path.expanduser('~/.huxt'))
+    # Use appdirs to get platform-specific user data directory
+    base_dir = Path(user_data_dir("huxt", ""))
     
     bc_dir = base_dir / "data" / 'boundary_conditions'
     bc_dir.mkdir(parents=True, exist_ok=True)
