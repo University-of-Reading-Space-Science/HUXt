@@ -8,13 +8,13 @@ import huxt.huxt as H
 import huxt.huxt_analysis as HA
 import huxt.huxt_inputs as Hin
 
-
+"""
 # Form longitudinal boundary conditions - background wind of 400 km/s with two fast streams.
 v_boundary = np.ones(128) * 400 * (u.km/u.s)
 v_boundary[30:50] = 600 * (u.km/u.s)
 v_boundary[95:125] = 700 * (u.km/u.s)
 
-""" # This boundary condition looks like
+ # This boundary condition looks like
 fig, ax = plt.subplots(figsize=(10,5))
 ax.plot(v_boundary,'k-')
 ax.set_xlabel('Longitude bin')
@@ -61,7 +61,7 @@ HA.plot_timeseries(model2, r, lon=0.0)
 cr=2120
 vr_in = Hin.get_MAS_long_profile(cr, 0.0*u.deg)
 
-model = H.HUXt(v_boundary=vr_in, cr = cr, cr_lon_init = 50*u.deg, simtime=5*u.day, dt_scale=1, frame='sidereal', lon_start=300*u.deg, lon_stop=60*u.deg)
+model = H.HUXt(v_boundary=vr_in, cr_num = cr, cr_lon_init = 50*u.deg, simtime=5*u.day, dt_scale=1, frame='sidereal', lon_start=300*u.deg, lon_stop=60*u.deg)
 # Add a CME
 cme = H.ConeCME(t_launch=2.5*u.day, longitude=0.0*u.deg, width=40*u.deg, v=1000*(u.km/u.s), thickness=5*u.solRad)
 cme_list = [cme]

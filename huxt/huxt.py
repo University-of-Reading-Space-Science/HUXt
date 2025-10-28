@@ -148,8 +148,8 @@ class ConeCME:
         initial_height: Initiation height of the CME, in km. Defaults to HUXt inner boundary at 30 solar radii.
         radius: Initial radius of the CME, in km.
         thickness: Thickness of the CME cone, in km.
-        cme_density: Mass density of the CME in kg/m³. Defaults to twice the solar wind density at initial_height.
-        cme_temperature: Temperature of the CME in Kelvin. Defaults to twice the solar wind temperature at initial_height.
+        cme_density: Mass density of the CME in kg/m³. Defaults to 2x the solar wind density at initial_height.
+        cme_temperature: Temperature of the CME in Kelvin. Defaults to 2x the solar wind temperature at initial_height.
         coords: Dictionary containing the radial and longitudinal (for HUXT2D) coordinates of the of Cone CME for each
                 model time step.
     """
@@ -167,7 +167,9 @@ class ConeCME:
     def __init__(self, t_launch=0.0 * u.s, longitude=0.0 * u.deg, latitude=0.0 * u.deg, v=1000.0 * (u.km / u.s),
                  width=30.0 * u.deg, thickness=0.0 * u.solRad, initial_height=30 * u.solRad, cme_expansion=False,
                  cme_fixed_duration=True, fixed_duration=12 * 60 * 60 * u.s, 
-                 cme_density=np.nan * (u.kg / u.m**3), cme_temperature=np.nan * u.K, label=None):
+                 cme_density=np.nan * (u.kg / u.m**3), cme_temperature=np.nan * u.K, 
+                 density_fraction=2.0, temperature_fraction=2.0,
+                 label=None):
 
         """
         Set up a Cone CME with specified parameters.
@@ -182,10 +184,12 @@ class ConeCME:
             cme_expansion : Whether to insert a declining speed profile at the inner boundary
             cme_fixed_duration : Whether to fix the CME duration, or do a standard cone CME
             fixed_duration : If fixed duration, the value to use
-            cme_density: CME mass density in kg/m³. If not provided, defaults to twice the solar wind density 
-                        at initial_height.
-            cme_temperature: CME temperature in Kelvin. If not provided, defaults to twice the solar wind temperature
-                           at initial_height.
+            cme_density: CME mass density in kg/m³. If provided, density_fraction is ignored.
+            cme_temperature: CME temperature in Kelvin. If provided, temperature_fraction is ignored.
+            density_fraction: Fraction of ambient solar wind density. Default 2.0 means twice the ambient density.
+                            Only used if cme_density is not provided.
+            temperature_fraction: Fraction of ambient solar wind temperature. Default 2.0 means twice the ambient temperature.
+                                Only used if cme_temperature is not provided.
         Returns:
             None
         """
@@ -208,20 +212,22 @@ class ConeCME:
         
         # Set CME density and temperature
         if np.isnan(cme_density.value):
-            # Calculate default solar wind density at initial_height and multiply by 2
+            # Calculate default solar wind density at initial_height
             r_1au = 215.0 * u.solRad  # 1 AU in solar radii
             rho_1au = 8.35e-21 * (u.kg / u.m**3)  # Solar wind density at 1 AU
             sw_density_at_height = rho_1au * (r_1au / initial_height)**2
-            self.cme_density = 2.0 * sw_density_at_height
+            # Apply density_fraction to ambient solar wind density
+            self.cme_density = density_fraction * sw_density_at_height
         else:
             self.cme_density = cme_density
             
         if np.isnan(cme_temperature.value):
-            # Calculate default solar wind temperature at initial_height and multiply by 2
+            # Calculate default solar wind temperature at initial_height
             r_1au = 215.0 * u.solRad  # 1 AU in solar radii
             temp_1au = 1.0e5 * u.K  # Solar wind temperature at 1 AU
             sw_temp_at_height = temp_1au * (r_1au / initial_height)**0.67
-            self.cme_temperature = 2.0 * sw_temp_at_height
+            # Apply temperature_fraction to ambient solar wind temperature
+            self.cme_temperature = temperature_fraction * sw_temp_at_height
         else:
             self.cme_temperature = cme_temperature
             
