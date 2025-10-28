@@ -27,11 +27,6 @@ If you are developing features in HUXt, it can be easier to work with an editabl
 >>> pip install --no-deps -e .
 ```
 
-Alternatively, HUXt can be installed directly with pip, as all dependencies are now available on PyPI:
-```
->>> pip install -e .
-```
-
 Installation through either method produces two command line tools. The first, `huxt-open-examples` starts JupyterLab and opens our examples notebook in a browser. The second `huxt-make-ephemeris` runs a script that updates the HUXt ephemeris file using JPL Horizons. This is intermittently necessary to update the ephemeris data for the STEREO-A and ACE spacecraft, as JPL Horizons only provides ephemeris data for these missions a few months into the future. 
 
 

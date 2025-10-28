@@ -7,11 +7,9 @@ import ssl
 import copy
 import pickle
 
-from appdirs import user_data_dir
 import astropy.units as u
 from astropy.io import fits
 from astropy.time import Time
-import httplib2
 import numpy as np
 from pathlib import Path
 import h5py
@@ -76,7 +74,13 @@ from . import huxt as h
 
 def get_data_dir():
     """Get path to output directory for figures and animations"""
-    data_dir = Path(user_data_dir(appname='huxt', appauthor=False), "data", 'boundary_conditions')
+    # Use platform-specific user data directory
+    if os.name == 'nt':  # Windows
+        base_dir = Path(os.environ.get('APPDATA', os.path.expanduser('~')), 'huxt')
+    else:  # Unix-like (Linux, macOS)
+        base_dir = Path(os.path.expanduser('~/.huxt'))
+    
+    data_dir = base_dir / "data" / 'boundary_conditions'
     data_dir.mkdir(parents=True, exist_ok=True)
     return data_dir
 
@@ -162,7 +166,6 @@ def get_MAS_boundary_conditions(cr=np.nan, observatory='', runtype='', runnumber
     if brfilepath_h5.exists() is False or vrfilepath_h5.exists() is False or overwrite is True:
 
         # Search MHDweb for a HelioMAS run, in order of preference
-        browser = httplib2.Http(disable_ssl_certificate_validation=False)
         foundfile = False
         urlbase = None
         for res in masres_order:
@@ -174,10 +177,13 @@ def get_MAS_boundary_conditions(cr=np.nan, observatory='', runtype='', runnumber
                                    masrun + '_mas_std_' + masnum + '/helio/')
                         url = urlbase + 'br' + heliomas_url_end
 
-                        # See if this br file exists
-                        resp = browser.request(url, 'HEAD')
-                        if int(resp[0]['status']) < 400:
-                            foundfile = True
+                        # See if this br file exists using requests
+                        try:
+                            resp = requests.head(url, verify=False, timeout=10)
+                            if resp.status_code < 400:
+                                foundfile = True
+                        except requests.RequestException:
+                            pass
 
                         # Exit all the loops - clumsy, but works
                         if foundfile:

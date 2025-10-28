@@ -1,4 +1,3 @@
-from appdirs import user_data_dir
 import astropy.units as u
 from astropy.time import Time
 import matplotlib.pyplot as plt
@@ -6,6 +5,7 @@ import matplotlib as mpl
 import datetime
 from matplotlib.animation import FuncAnimation
 import numpy as np
+import os
 import pandas as pd
 from pathlib import Path
 from numba import jit
@@ -24,7 +24,13 @@ mpl.rc("legend", fontsize=16)
 
 def get_figure_dir():
     """Get path to output directory for figures and animations"""
-    figure_dir = Path(user_data_dir(appname='huxt', appauthor=False), "figures")
+    # Use platform-specific user data directory
+    if os.name == 'nt':  # Windows
+        base_dir = Path(os.environ.get('APPDATA', os.path.expanduser('~')), 'huxt')
+    else:  # Unix-like (Linux, macOS)
+        base_dir = Path(os.path.expanduser('~/.huxt'))
+    
+    figure_dir = base_dir / "figures"
     figure_dir.mkdir(parents=True, exist_ok=True)
     return figure_dir
 
