@@ -49,17 +49,19 @@ HA.plot_timeseries(model2, r, lon=0.0)
 
 
 # Set up HUXt over a limited longitude range.
-dirs = H._setup_dirs_()
-data_path=dirs['example_inputs']
-print(data_path)
-filepath = os.path.join(data_path, 'wsa_gong_2024050906.fits')
-vr_in = Hin.get_WSA_long_profile(filepath, lat=0.0 * u.deg)
+# dirs = H._setup_dirs_()
+# data_path=dirs['example_inputs']
+# print(data_path)
+# filepath = os.path.join(data_path, 'wsa_gong_2024050906.fits')
+# vr_in = Hin.get_WSA_long_profile(filepath, lat=0.0 * u.deg)
 
 
 
 # Set up HUXt
+cr=2120
+vr_in = Hin.get_MAS_long_profile(cr, 0.0*u.deg)
 
-model = H.HUXt(v_boundary=vr_in, cr_lon_init = 50*u.deg, simtime=5*u.day, dt_scale=1, frame='sidereal', lon_start=300*u.deg, lon_stop=60*u.deg)
+model = H.HUXt(v_boundary=vr_in, cr = cr, cr_lon_init = 50*u.deg, simtime=5*u.day, dt_scale=1, frame='sidereal', lon_start=300*u.deg, lon_stop=60*u.deg)
 # Add a CME
 cme = H.ConeCME(t_launch=2.5*u.day, longitude=0.0*u.deg, width=40*u.deg, v=1000*(u.km/u.s), thickness=5*u.solRad)
 cme_list = [cme]

@@ -28,6 +28,49 @@ import pandas as pd
 from dtaidistance import dtw
 import tqdm
 
+
+def convert_hdf4_to_hdf5(hdf4_path, hdf5_path):
+    """
+    Convert HDF4 file to HDF5 format using netCDF4 (with HDF4 support from conda) 
+    to read and h5py to write.
+    
+    Args:
+        hdf4_path: Path to input HDF4 file
+        hdf5_path: Path to output HDF5 file
+    """
+    try:
+        # Try using netCDF4 with HDF4 support (conda version)
+        from netCDF4 import Dataset as NC4Dataset
+        
+        with NC4Dataset(str(hdf4_path), 'r') as hdf4:
+            with h5py.File(str(hdf5_path), 'w') as hdf5:
+                # Copy all variables
+                for var_name in hdf4.variables:
+                    data = hdf4.variables[var_name][:]
+                    hdf5.create_dataset(var_name, data=data)
+        return True
+    except (ImportError, OSError):
+        # Fallback: try using pyhdf if available
+        try:
+            from pyhdf.SD import SD, SDC
+            
+            hdf4 = SD(str(hdf4_path), SDC.READ)
+            with h5py.File(str(hdf5_path), 'w') as hdf5:
+                # Get all datasets
+                datasets = hdf4.datasets()
+                for var_name, _ in datasets.items():
+                    sds = hdf4.select(var_name)
+                    data = sds.get()
+                    hdf5.create_dataset(var_name, data=data)
+                    sds.endaccess()
+            hdf4.end()
+            return True
+        except ImportError:
+            print("Warning: Neither netCDF4 (with HDF4 support) nor pyhdf available for conversion")
+            print("Please install via conda: conda install netcdf4")
+            return False
+
+
 from . import huxt as h
 
 
@@ -95,11 +138,28 @@ def get_MAS_boundary_conditions(cr=np.nan, observatory='', runtype='', runnumber
 
     vrfilename = 'HelioMAS_CR' + str(int(cr)) + '_vr' + heliomas_url_end
     brfilename = 'HelioMAS_CR' + str(int(cr)) + '_br' + heliomas_url_end
+    vrfilename_h5 = 'HelioMAS_CR' + str(int(cr)) + '_vr_r0.h5'
+    brfilename_h5 = 'HelioMAS_CR' + str(int(cr)) + '_br_r0.h5'
 
     brfilepath = boundary_dir.joinpath(brfilename)
     vrfilepath = boundary_dir.joinpath(vrfilename)
-    # Check if the files already exist
-    if brfilepath.exists() is False or vrfilepath.exists() is False or overwrite is True:
+    brfilepath_h5 = boundary_dir.joinpath(brfilename_h5)
+    vrfilepath_h5 = boundary_dir.joinpath(vrfilename_h5)
+    
+    # Check if HDF5 files already exist
+    if brfilepath_h5.exists() and vrfilepath_h5.exists() and not overwrite:
+        print('HDF5 files already exist for CR' + str(int(cr)))
+        return 0
+    
+    # Check if HDF4 files exist and convert them
+    if brfilepath.exists() and vrfilepath.exists() and not overwrite:
+        print('Converting existing HDF4 files to HDF5 for CR' + str(int(cr)))
+        convert_hdf4_to_hdf5(brfilepath, brfilepath_h5)
+        convert_hdf4_to_hdf5(vrfilepath, vrfilepath_h5)
+        return 0
+    
+    # Need to download files
+    if brfilepath_h5.exists() is False or vrfilepath_h5.exists() is False or overwrite is True:
 
         # Search MHDweb for a HelioMAS run, in order of preference
         browser = httplib2.Http(disable_ssl_certificate_validation=False)
@@ -140,6 +200,13 @@ def get_MAS_boundary_conditions(cr=np.nan, observatory='', runtype='', runnumber
         urllib.request.urlretrieve(urlbase + 'br' + heliomas_url_end, brfilepath)
         urllib.request.urlretrieve(urlbase + 'vr' + heliomas_url_end, vrfilepath)
 
+        # Convert HDF4 files to HDF5
+        print('Converting HDF4 files to HDF5...')
+        if convert_hdf4_to_hdf5(brfilepath, brfilepath_h5):
+            print(f'  Converted {brfilename} to {brfilename_h5}')
+        if convert_hdf4_to_hdf5(vrfilepath, vrfilepath_h5):
+            print(f'  Converted {vrfilename} to {vrfilename_h5}')
+
         return 1
     else:
         print('Files already exist for CR' + str(int(cr)))
@@ -163,18 +230,17 @@ def read_MAS_vr_br(cr):
     """
     # Get the boundary condition directory
     boundary_dir = get_data_dir()
-    # Create the filenames
-    heliomas_url_end = '_r0.hdf'
-    vrfilename = 'HelioMAS_CR' + str(int(cr)) + '_vr' + heliomas_url_end
-    brfilename = 'HelioMAS_CR' + str(int(cr)) + '_br' + heliomas_url_end
+    # Create the filenames (HDF5 format)
+    vrfilename = 'HelioMAS_CR' + str(int(cr)) + '_vr_r0.h5'
+    brfilename = 'HelioMAS_CR' + str(int(cr)) + '_br_r0.h5'
 
     filepath = boundary_dir.joinpath(vrfilename)
-    assert filepath.exists()
+    assert filepath.exists(), f"HDF5 file not found: {filepath}. Run get_MAS_boundary_conditions() first."
 
-    with netcdf_file(str(filepath), 'r', mmap=False) as file:
-        MAS_vr_Xa = file.variables['fakeDim0'][:].copy()
-        MAS_vr_Xm = file.variables['fakeDim1'][:].copy()
-        MAS_vr = file.variables['Data-Set-2'][:].copy()
+    with h5py.File(str(filepath), 'r') as file:
+        MAS_vr_Xa = file['fakeDim0'][:].copy()
+        MAS_vr_Xm = file['fakeDim1'][:].copy()
+        MAS_vr = file['Data-Set-2'][:].copy()
 
     # Convert from model to physicsal units
     MAS_vr = MAS_vr * 481.0 * u.km / u.s
@@ -182,12 +248,12 @@ def read_MAS_vr_br(cr):
     MAS_vr_Xm = MAS_vr_Xm * u.rad
 
     filepath = boundary_dir.joinpath(brfilename)
-    assert filepath.exists()
+    assert filepath.exists(), f"HDF5 file not found: {filepath}. Run get_MAS_boundary_conditions() first."
     
-    with netcdf_file(str(filepath), 'r', mmap=False) as file:
-        MAS_br_Xa = file.variables['fakeDim0'][:].copy()
-        MAS_br_Xm = file.variables['fakeDim1'][:].copy()
-        MAS_br = file.variables['Data-Set-2'][:].copy()
+    with h5py.File(str(filepath), 'r') as file:
+        MAS_br_Xa = file['fakeDim0'][:].copy()
+        MAS_br_Xm = file['fakeDim1'][:].copy()
+        MAS_br = file['Data-Set-2'][:].copy()
 
     MAS_br_Xa = MAS_br_Xa * u.rad
     MAS_br_Xm = MAS_br_Xm * u.rad
@@ -497,13 +563,11 @@ def get_PFSS_maps(filepath):
     """
     filepath = Path(filepath)
     assert filepath.exists()
-    nc = netcdf_file(filepath, 'r', mmap=False)
-    br_map = nc.variables['br'][:]
-    vr_map = nc.variables['vr'][:] * u.km / u.s
-    phi = nc.variables['ph'][:]
-    cotheta = nc.variables['cos(th)'][:]
-
-    nc.close()
+    with netcdf_file(str(filepath), 'r', mmap=False) as nc:
+        br_map = nc.variables['br'][:].copy()
+        vr_map = nc.variables['vr'][:].copy() * u.km / u.s
+        phi = nc.variables['ph'][:].copy()
+        cotheta = nc.variables['cos(th)'][:].copy()
 
     phi = phi * u.rad
     theta = (np.pi / 2 - np.arccos(cotheta)) * u.rad
