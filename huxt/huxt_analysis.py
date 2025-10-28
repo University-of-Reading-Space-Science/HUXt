@@ -1112,30 +1112,30 @@ def plot_earth_timeseries(model, plot_omni=True, save=False, tag=''):
     
     # Velocity panel (always first)
     panel_idx = 0
-    axs[panel_idx].plot(huxt_ts['time'], huxt_ts['vsw'], 'k', label='HUXt')
+    axs[panel_idx].plot(huxt_ts['time'], huxt_ts['vsw'], 'r', label='HUXt')
     axs[panel_idx].set_ylim(250, 1000)
     axs[panel_idx].set_ylabel('Solar Wind Speed (km/s)')
     
     # B polarity panel (if available)
     if hasattr(model, 'b_grid'):
         panel_idx += 1
-        axs[panel_idx].plot(huxt_ts['time'], np.sign(huxt_ts['bpol']), 'k.', label='HUXt')
+        axs[panel_idx].plot(huxt_ts['time'], np.sign(huxt_ts['bpol']), 'r.', label='HUXt')
         axs[panel_idx].set_ylabel('B polarity')
     
     # Density panel (if compressible)
     if is_compressible and 'n' in huxt_ts.columns:
         panel_idx += 1
-        axs[panel_idx].semilogy(huxt_ts['time'], huxt_ts['n'], 'b-', label='HUXt')
-        axs[panel_idx].set_ylabel('n (protons/cm³)', color='b')
-        axs[panel_idx].tick_params(axis='y', labelcolor='b')
+        axs[panel_idx].semilogy(huxt_ts['time'], huxt_ts['n'], 'r-', label='HUXt')
+        axs[panel_idx].set_ylabel('n (protons/cm³)')
+        axs[panel_idx].set_ylim(0.1, 1000)
         axs[panel_idx].grid(True, alpha=0.3)
     
     # Temperature panel (if compressible)
     if is_compressible and 'T' in huxt_ts.columns:
         panel_idx += 1
         axs[panel_idx].semilogy(huxt_ts['time'], huxt_ts['T'], 'r-', label='HUXt')
-        axs[panel_idx].set_ylabel('T (K)', color='r')
-        axs[panel_idx].tick_params(axis='y', labelcolor='r')
+        axs[panel_idx].set_ylabel('T (K)')
+        axs[panel_idx].set_ylim(1e4, 1e7)
         axs[panel_idx].grid(True, alpha=0.3)
 
     starttime = huxt_ts['time'][0]
@@ -1147,10 +1147,10 @@ def plot_earth_timeseries(model, plot_omni=True, save=False, tag=''):
         # plot the period of interest
         mask = (data['datetime'] >= starttime) & (data['datetime'] <= endtime)
         plotdata = data[mask]
-        axs[0].plot(plotdata['datetime'], plotdata['V'], 'r', label='OMNI')
+        axs[0].plot(plotdata['datetime'], plotdata['V'], 'k', label='OMNI')
 
         if hasattr(model, 'b_grid'):
-            axs[1].plot(plotdata['datetime'], -np.sign(plotdata['BX_GSE']) * 0.92, 'r.', label='OMNI')
+            axs[1].plot(plotdata['datetime'], -np.sign(plotdata['BX_GSE']) * 0.92, 'k.', label='OMNI')
             axs[1].set_ylim(-1.1, 1.1)
         
         # Plot OMNI density if compressible model
@@ -1164,7 +1164,7 @@ def plot_earth_timeseries(model, plot_omni=True, save=False, tag=''):
                 omni_n = plotdata['N'].copy()
                 omni_n[omni_n == 999.9] = np.nan
                 omni_n[omni_n == 9999.0] = np.nan
-                axs[density_panel].semilogy(plotdata['datetime'], omni_n, 'r-', label='OMNI', alpha=0.7)
+                axs[density_panel].semilogy(plotdata['datetime'], omni_n, 'k-', label='OMNI')
         
         # Plot OMNI temperature if compressible model
         if is_compressible and 'T' in huxt_ts.columns:
@@ -1177,7 +1177,7 @@ def plot_earth_timeseries(model, plot_omni=True, save=False, tag=''):
                 omni_t = plotdata['T'].copy()
                 omni_t[omni_t == 9999999.0] = np.nan
                 omni_t[omni_t == 999999.0] = np.nan
-                axs[temp_panel].semilogy(plotdata['datetime'], omni_t, 'r-', label='OMNI', alpha=0.7)
+                axs[temp_panel].semilogy(plotdata['datetime'], omni_t, 'k-', label='OMNI')
 
     for a in axs:
         a.set_xlim(starttime, endtime)
