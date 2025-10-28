@@ -1152,6 +1152,32 @@ def plot_earth_timeseries(model, plot_omni=True, save=False, tag=''):
         if hasattr(model, 'b_grid'):
             axs[1].plot(plotdata['datetime'], -np.sign(plotdata['BX_GSE']) * 0.92, 'r.', label='OMNI')
             axs[1].set_ylim(-1.1, 1.1)
+        
+        # Plot OMNI density if compressible model
+        if is_compressible and 'n' in huxt_ts.columns:
+            # Find the density panel index
+            density_panel = 1 if hasattr(model, 'b_grid') else 0
+            density_panel += 1
+            # OMNI density field is typically 'N' (protons/cm³)
+            if 'N' in plotdata.columns:
+                # Set invalid data points to NaN
+                omni_n = plotdata['N'].copy()
+                omni_n[omni_n == 999.9] = np.nan
+                omni_n[omni_n == 9999.0] = np.nan
+                axs[density_panel].semilogy(plotdata['datetime'], omni_n, 'r-', label='OMNI', alpha=0.7)
+        
+        # Plot OMNI temperature if compressible model
+        if is_compressible and 'T' in huxt_ts.columns:
+            # Find the temperature panel index
+            temp_panel = 1 if hasattr(model, 'b_grid') else 0
+            temp_panel += 2
+            # OMNI temperature field is typically 'T' (K)
+            if 'T' in plotdata.columns:
+                # Set invalid data points to NaN
+                omni_t = plotdata['T'].copy()
+                omni_t[omni_t == 9999999.0] = np.nan
+                omni_t[omni_t == 999999.0] = np.nan
+                axs[temp_panel].semilogy(plotdata['datetime'], omni_t, 'r-', label='OMNI', alpha=0.7)
 
     for a in axs:
         a.set_xlim(starttime, endtime)
