@@ -2005,10 +2005,10 @@ def solve_radial(vinput, binput, iscmeinput, model_time, rrel, params,
                 
                 if accel_limit:
                     u_up_next, rho_up_next, temp_up_next = _hll_step_compressible_accel_limit_(
-                        u_up, u_dn, rho_up, rho_dn, temp_up, temp_dn, dtdr, alpha, r_accel, rrel, r_boundary, use_hllc)
+                        u_up, u_dn, rho_up, rho_dn, temp_up, temp_dn, dtdr, alpha, r_accel, rrel, r_boundary, use_hllc, gamma)
                 else:
                     u_up_next, rho_up_next, temp_up_next = _hll_step_compressible_(
-                        u_up, u_dn, rho_up, rho_dn, temp_up, temp_dn, dtdr, alpha, r_accel, rrel, r_boundary, use_hllc)
+                        u_up, u_dn, rho_up, rho_dn, temp_up, temp_dn, dtdr, alpha, r_accel, rrel, r_boundary, use_hllc, gamma)
                 
                 # Save the updated time steps (direct assignment, no copy needed)
                 v[1:] = u_up_next
@@ -2481,7 +2481,7 @@ def _hllc_flux_(rho_L, v_L, p_L, rho_R, v_R, p_R, gamma=5.0/3.0):
 
 @jit(nopython=True, parallel=True)
 def _hll_step_compressible_(v_up, v_dn, rho_up, rho_dn, temp_up, temp_dn,
-                            dtdr, alpha, r_accel, rrel, r_boundary, use_hllc=False):
+                            dtdr, alpha, r_accel, rrel, r_boundary, use_hllc=False, gamma=5.0/3.0):
     """
     HLL/HLLC-enhanced compressible solver.
     Uses standard upwind scheme as base, enhanced with Riemann solver for better shock capturing.
@@ -2499,12 +2499,12 @@ def _hll_step_compressible_(v_up, v_dn, rho_up, rho_dn, temp_up, temp_dn,
         rrel: Relative radial coordinate
         r_boundary: Inner boundary radius (km)
         use_hllc: Use HLLC (True) or HLL (False) for shock detection
+        gamma: Adiabatic index for compressible solver (typically 5/3 for monoatomic gas)
     
     Returns:
         v_up_next, rho_up_next, temp_up_next: Updated state
     """
-    # Start with standard upwind compressible scheme
-    gamma = 5.0 / 3.0
+    # Physical constants
     k_B = 1.38064852e-23
     m_p = 1.67262192e-27
     
@@ -2793,7 +2793,7 @@ def _hll_step_fully_conservative_(v_up, v_dn, rho_up, rho_dn, temp_up, temp_dn,
 
 @jit(nopython=True, parallel=True)
 def _hll_step_compressible_accel_limit_(v_up, v_dn, rho_up, rho_dn, temp_up, temp_dn,
-                                        dtdr, alpha, r_accel, rrel, r_boundary, use_hllc=False):
+                                        dtdr, alpha, r_accel, rrel, r_boundary, use_hllc=False, gamma=5.0/3.0):
     """
     HLL/HLLC-enhanced compressible solver with acceleration limiting.
     Same as _hll_step_compressible_ but limits acceleration to speeds < 650 km/s.
@@ -2804,7 +2804,7 @@ def _hll_step_compressible_accel_limit_(v_up, v_dn, rho_up, rho_dn, temp_up, tem
     Returns:
         v_up_next, rho_up_next, temp_up_next: Updated state
     """
-    gamma = 5.0 / 3.0
+    # Physical constants
     k_B = 1.38064852e-23
     m_p = 1.67262192e-27
     
