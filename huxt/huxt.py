@@ -1021,6 +1021,15 @@ class HUXt:
         Returns:
             None
         """
+        
+        # Update model_params with current alpha and gamma values
+        # (in case user changed them after initialization)
+        alpha_to_use = self.alpha if not self.compressible else self.alpha_hybrid
+        self.model_params = np.array([self.dtdr.value, alpha_to_use.value, self.r_accel.value,
+                                      self.dt_scale.value, self.nt_out, self.nr, self.nlon,
+                                      self.r[0].to('km').value,
+                                      self.rotation_period.to(u.s).value, int(self.accel_limit),
+                                      self.gamma])
 
         # ======================================================================
         # Generate ambient solar wind time series
@@ -1563,7 +1572,7 @@ def huxt_constants():
     alpha = 0.15 * u.dimensionless_unscaled  # Scale parameter for residual SW acceleration (for incompressible)
     alpha_hybrid = 0.1 * u.dimensionless_unscaled  # Scale parameter for HLL Hybrid (pressure gradient + some acceleration)
     r_accel = 50 * u.solRad  # Spatial scale parameter for residual SW acceleration
-    gamma = 5.0/3.0  # Adiabatic index for compressible solver
+    gamma = 1.5  # Adiabatic index for compressible solver (polytropic index for solar wind)
     synodic_period = 27.2753 * daysec  # Solar Synodic rotation period from Earth.
     sidereal_period = 25.38 * daysec  # Solar sidereal rotation period
 
@@ -1966,17 +1975,14 @@ def solve_radial(vinput, binput, iscmeinput, model_time, rrel, params,
             # First-order upwind scheme (Godunov-type)
             if compressible:
                 # Use compressible upwind step that evolves velocity, density, and temperature together
+                # NOTE: accel_limit is ignored for compressible solver (no residual acceleration)
                 rho_up = rho[1:].copy()
                 rho_dn = rho[:-1].copy()
                 temp_up = temp[1:].copy()
                 temp_dn = temp[:-1].copy()
                 
-                if accel_limit:
-                    u_up_next, rho_up_next, temp_up_next = _upwind_step_compressible_accel_limit_(
-                        u_up, u_dn, rho_up, rho_dn, temp_up, temp_dn, dtdr, alpha, r_accel, rrel, r_boundary, gamma)
-                else:
-                    u_up_next, rho_up_next, temp_up_next = _upwind_step_compressible_(
-                        u_up, u_dn, rho_up, rho_dn, temp_up, temp_dn, dtdr, alpha, r_accel, rrel, r_boundary, gamma)
+                u_up_next, rho_up_next, temp_up_next = _upwind_step_compressible_(
+                    u_up, u_dn, rho_up, rho_dn, temp_up, temp_dn, dtdr, alpha, r_accel, rrel, r_boundary, gamma)
                 
                 # Save the updated time steps (direct assignment, no copy needed)
                 v[1:] = u_up_next
@@ -1998,17 +2004,14 @@ def solve_radial(vinput, binput, iscmeinput, model_time, rrel, params,
             
             if compressible:
                 # Use HLL/HLLC for compressible flow
+                # NOTE: accel_limit is ignored for compressible solver (no residual acceleration)
                 rho_up = rho[1:].copy()
                 rho_dn = rho[:-1].copy()
                 temp_up = temp[1:].copy()
                 temp_dn = temp[:-1].copy()
                 
-                if accel_limit:
-                    u_up_next, rho_up_next, temp_up_next = _hll_step_compressible_accel_limit_(
-                        u_up, u_dn, rho_up, rho_dn, temp_up, temp_dn, dtdr, alpha, r_accel, rrel, r_boundary, use_hllc, gamma)
-                else:
-                    u_up_next, rho_up_next, temp_up_next = _hll_step_compressible_(
-                        u_up, u_dn, rho_up, rho_dn, temp_up, temp_dn, dtdr, alpha, r_accel, rrel, r_boundary, use_hllc, gamma)
+                u_up_next, rho_up_next, temp_up_next = _hll_step_compressible_(
+                    u_up, u_dn, rho_up, rho_dn, temp_up, temp_dn, dtdr, alpha, r_accel, rrel, r_boundary, use_hllc, gamma)
                 
                 # Save the updated time steps (direct assignment, no copy needed)
                 v[1:] = u_up_next
@@ -2895,6 +2898,7 @@ def _upwind_step_compressible_(v_up, v_dn, rho_up, rho_dn, temp_up, temp_dn,
     """
     Compute the next step in the upwind scheme for the compressible solver.
     This includes velocity, density, and temperature evolution with compression/heating physics.
+    Residual acceleration is NOT included - pressure gradient drives the flow.
     
     Args:
         v_up: A numpy array of the upwind velocity values. Units of km/s.
@@ -2904,11 +2908,11 @@ def _upwind_step_compressible_(v_up, v_dn, rho_up, rho_dn, temp_up, temp_dn,
         temp_up: A numpy array of the upwind temperature values. Units of K.
         temp_dn: A numpy array of the downwind temperature values. Units of K.
         dtdr: Ratio of HUXt time step and radial grid step. Units of s/km.
-        alpha: Scale parameter for residual Solar wind acceleration.
-        r_accel: Spatial scale parameter of residual solar wind acceleration. Units of km.
+        alpha: Scale parameter for residual Solar wind acceleration (NOT USED in compressible solver).
+        r_accel: Spatial scale parameter of residual solar wind acceleration (NOT USED in compressible solver).
         rrel: The model radial grid relative to the radial inner boundary coordinate. Units of km.
         r_boundary: The inner boundary radius in km.
-        gamma: Adiabatic index for compressible solver (typically 5/3 for monoatomic gas).
+        gamma: Adiabatic index for compressible solver (typically 1.5 for solar wind).
         
     Returns:
         v_up_next: The upwind velocity values at the next time step. Units of km/s.
@@ -2916,18 +2920,12 @@ def _upwind_step_compressible_(v_up, v_dn, rho_up, rho_dn, temp_up, temp_dn,
         temp_up_next: The upwind temperature values at the next time step. Units of K.
     """
 
-    # Arguments for computing the acceleration factor
-    accel_arg = -rrel[:-1] / r_accel
-    accel_arg_p = -rrel[1:] / r_accel
-
     # ====================================================================
     # Velocity evolution with pressure gradient force
-    # Momentum equation: ∂v/∂t + v·∂v/∂r = -(1/ρ)·∂P/∂r + source
+    # Momentum equation: ∂v/∂t + v·∂v/∂r = -(1/ρ)·∂P/∂r
+    # NO residual acceleration term for compressible solver!
     # ====================================================================
-    # Advection term
-    v_up_next = v_up - dtdr * v_up * (v_up - v_dn)
     
-    # Pressure gradient force: -(1/ρ)·∂P/∂r
     # Compute pressure from ideal gas law: P = (ρ/m_p) * k_B * T
     k_B = 1.38064852e-23  # J/K
     m_p = 1.67262192e-27  # kg
@@ -2944,32 +2942,22 @@ def _upwind_step_compressible_(v_up, v_dn, rho_up, rho_dn, temp_up, temp_dn,
     # Pressure gradient: ∂P/∂r (Pa/km)
     dp_dr = (p_up - p_dn) / dr_km
     
-    # Pressure force per unit mass: -(1/ρ)·∂P/∂r (Pa/km / kg/m³)
-    # Need to convert: Pa/km = (N/m²)/km = N/(m²·km) = N/(1000·m³) = (kg·m/s²)/(1000·m³)
-    # (1/ρ)·∂P/∂r has units: (m³/kg) · (Pa/km) = (m³/kg) · (N/m²/km) 
-    # = (m³/kg) · (kg·m/s²)/(m²·km) = m²/s² / km = (1000 m)²/s² / km = 10⁶ m²/s²/km
-    # Convert to (km/s)/s by dividing by 1000: m/s² / km · (1 km/1000 m) = (m/s²)/(1000 m) = (1/1000) (1/s²)
-    # Actually: (Pa/m) / (kg/m³) = (N/m³)/(kg/m³) = N/kg = m/s²
-    # And (Pa/km) / (kg/m³) = (Pa/m)·(m/km) / (kg/m³) = (m/s²) · (1/1000) = m/s² / 1000
-    # To get km/s² from m/s²: divide by 1000
-    # So: pressure_accel = -(1/ρ) · dp_dr · (1/1000000) to get km/s²
-    # Then multiply by dt to get velocity change
-    
     # Use average density for pressure gradient force
     rho_avg = 0.5 * (rho_up + rho_dn)
     
-    # Pressure acceleration in km/s² (Pa/km / (kg/m³) / 1e6)
-    pressure_accel = -(dp_dr / rho_avg) / 1.0e6  # km/s²
+    # Pressure acceleration: -(1/ρ)·∂P/∂r
+    # Units: (Pa/km) / (kg/m³) = (kg/(m·s²·km)) / (kg/m³) = m²/(s²·km) = m²/(s²·1000m) = m/(1000·s²) = 0.001 m/s²
+    # Convert to km/s²: 0.001 m/s² = 0.000001 km/s², so multiply by 1e-6 (or divide by 1e6)
+    pressure_accel = -(dp_dr / rho_avg) * 1.0e-6  # km/s²
     
-    # Add pressure force (multiply by dtdr to get velocity change)
-    # dtdr has units s/km, so dtdr * km/s² * km = s/km * km/s² * km = s * km/s² = km/s
-    dt_s = dtdr * dr_km  # time step in seconds
+    # Time step for this grid cell (units: seconds)
+    dt_s = dtdr * dr_km
+    
+    # Advection term: v_new = v - dt * v * ∂v/∂r
+    v_up_next = v_up - dtdr * v_up * (v_up - v_dn)
+    
+    # Add pressure force: Δv = -(1/ρ)·∂P/∂r · dt
     v_up_next = v_up_next + pressure_accel * dt_s
-    
-    # Residual solar wind acceleration (as before)
-    v_source = v_dn / (1.0 + alpha * (1.0 - np.exp(accel_arg)))
-    v_diff = alpha * v_source * (np.exp(accel_arg) - np.exp(accel_arg_p))
-    v_up_next = v_up_next + (v_dn * dtdr * v_diff)
 
     # ====================================================================
     # Compute velocity divergence for compression/expansion
@@ -3088,8 +3076,8 @@ def _upwind_step_compressible_accel_limit_(v_up, v_dn, rho_up, rho_dn, temp_up, 
         # Average density for pressure force
         rho_avg = 0.5 * (rho_up[i] + rho_dn[i])
         
-        # Pressure acceleration (km/s²)
-        pressure_accel = -(dp_dr / rho_avg) / 1.0e6
+        # Pressure acceleration: -(1/ρ)·∂P/∂r (km/s²)
+        pressure_accel = -(dp_dr / rho_avg) * 1.0e-6
         
         # Time step
         dt = dtdr * dr
