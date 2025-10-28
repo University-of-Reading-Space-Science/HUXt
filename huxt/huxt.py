@@ -615,9 +615,8 @@ class HUXt:
         self.daysec = constants['daysec']
         self.kms = constants['kms']
         self.alpha = constants['alpha']  # Scale parameter for residual SW acceleration (incompressible)
-        self.alpha_hybrid = constants['alpha_hybrid']  # Scale parameter for HLL Hybrid solver
+        self.r_accel = constants['r_accel']  # Spatial scale parameter for residual SW acceleration (incompressible)
         self.gamma = constants['gamma']  # Adiabatic index for compressible solver
-        self.r_accel = constants['r_accel']  # Spatial scale parameter for residual SW acceleration
         self.__version__ = get_version()
         
         # Validate and store solver choice
@@ -630,7 +629,7 @@ class HUXt:
         # Store parallel computation flag
         self.parallel = parallel
 
-        # set the frame fo reference. Synodic keeps ES line at 0 longitude.
+        # set the frame of reference. Synodic keeps ES line at 0 longitude.
         # sidereal means Earth moves to increasing longitude with time
         assert (frame == 'synodic' or frame == 'sidereal')
         self.frame = frame
@@ -828,15 +827,8 @@ class HUXt:
             # Note: Grids are initialized to zero here and will be populated during solve()
 
         # Numpy array of model parameters for parsing to external functions that use numba
-        # Select appropriate alpha based on solver type:
-        # - HLL/HLLC solvers: alpha_hybrid if compressible
-        # - upwind/incompressible: alpha (0.15)
-        if self.solver in ['hll', 'hllc'] and self.compressible:
-            alpha_to_use = self.alpha_hybrid
-        else:
-            alpha_to_use = self.alpha
         
-        self.model_params = np.array([self.dtdr.value, alpha_to_use.value, self.r_accel.value,
+        self.model_params = np.array([self.dtdr.value, self.alpha, self.r_accel.value,
                                       self.dt_scale.value, self.nt_out, self.nr, self.nlon,
                                       self.r[0].to('km').value,
                                      self.rotation_period.to(u.s).value, int(self.accel_limit),
@@ -1046,8 +1038,7 @@ class HUXt:
         
         # Update model_params with current alpha and gamma values
         # (in case user changed them after initialization)
-        alpha_to_use = self.alpha if not self.compressible else self.alpha_hybrid
-        self.model_params = np.array([self.dtdr.value, alpha_to_use.value, self.r_accel.value,
+        self.model_params = np.array([self.dtdr.value, self.alpha, self.r_accel.value,
                                       self.dt_scale.value, self.nt_out, self.nr, self.nlon,
                                       self.r[0].to('km').value,
                                       self.rotation_period.to(u.s).value, int(self.accel_limit),
@@ -1601,14 +1592,13 @@ def huxt_constants():
     daysec = 24 * 60 * 60 * u.s
     kms = u.km / u.s
     alpha = 0.15 * u.dimensionless_unscaled  # Scale parameter for residual SW acceleration (for incompressible)
-    alpha_hybrid = 0.1 * u.dimensionless_unscaled  # Scale parameter for HLL Hybrid (pressure gradient + some acceleration)
     r_accel = 50 * u.solRad  # Spatial scale parameter for residual SW acceleration
-    gamma = 5.0/3.0  # Adiabatic index for compressible solver (monoatomic ideal gas)
+    gamma = 1.5 # Adiabatic index for compressible solver (1.5 for solar wind?)
     synodic_period = 27.2753 * daysec  # Solar Synodic rotation period from Earth.
     sidereal_period = 25.38 * daysec  # Solar sidereal rotation period
 
     constants = {'twopi': twopi, 'daysec': daysec, 'kms': kms, 'alpha': alpha,
-                 'alpha_hybrid': alpha_hybrid, 'gamma': gamma,
+                 'gamma': gamma,
                  'r_accel': r_accel, 'synodic_period': synodic_period,
                  'sidereal_period': sidereal_period, 'v_max': v_max,
                  'dr': dr, 'nlong': nlong, 'nlat': nlat}
@@ -1616,7 +1606,7 @@ def huxt_constants():
     return constants
 
 
-def lopez_temperature_from_velocity(v_boundary, gamma=5.0/3.0):
+def lopez_temperature_from_velocity(v_boundary, gamma=1.5):
     """
     Compute realistic coronal temperature at inner boundary (r_min ≈ 30 Rs).
     
@@ -1636,7 +1626,7 @@ def lopez_temperature_from_velocity(v_boundary, gamma=5.0/3.0):
     
     Args:
         v_boundary: Solar wind velocity at inner boundary (r_min) in km/s (scalar or array)
-        gamma: Adiabatic index (default 5/3 for monoatomic gas)
+        gamma: Adiabatic index (default 1.5 for solar wind)
     
     Returns:
         Temperature at inner boundary (r_min) in Kelvin
@@ -1655,7 +1645,7 @@ def lopez_temperature_from_velocity(v_boundary, gamma=5.0/3.0):
     # Assume T_coronal ∝ V^1.5 (intermediate between T ∝ V and T ∝ V²)
     # Calibrated so that 400 km/s gives ~1.5 MK at 30 Rs
     # This gives reasonable temperatures that cool to ~100,000 K at 1 AU after adiabatic expansion
-    T_rmin = (v_rmin_value / 400.0)**1.5 * 1.5e6  # K
+    T_rmin = (v_rmin_value / 400.0)**1.5 * 1.0e6  # K
     
     if hasattr(v_boundary, 'unit'):
         return T_rmin * u.K
