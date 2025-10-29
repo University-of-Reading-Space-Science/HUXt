@@ -596,8 +596,8 @@ class HUXt:
             compressible: Boolean flag to use compressible solver instead of incompressible (default False).
             solver: String specifying the numerical solver to use. Options:
                    'upwind' (default): First-order upwind scheme (Godunov-type)
-                   'hll': HLL (Harten-Lax-van Leer) Riemann solver with empirical acceleration
-                   'hllc': HLLC (HLL-Contact) Riemann solver with empirical acceleration
+                   'upwind_opsplit': Upwind with operator splitting for temperature and limiters
+                   'hll': HLL (Harten-Lax-van Leer) Riemann solver for shock capturing
             parallel: Boolean flag to enable parallel computation across longitude slices (default True).
                      Uses joblib threading backend for parallelization. Set to False for debugging
                      or if running on a single-core system.
@@ -620,7 +620,7 @@ class HUXt:
         self.__version__ = get_version()
         
         # Validate and store solver choice
-        valid_solvers = ['upwind', 'hll', 'hllc']
+        valid_solvers = ['upwind', 'upwind_opsplit', 'hll', 'hll_fv', 'mol']
         if solver not in valid_solvers:
             raise ValueError(f"Invalid solver '{solver}'. Must be one of: {valid_solvers}")
         
@@ -1645,7 +1645,7 @@ def lopez_temperature_from_velocity(v_boundary, gamma=1.5):
     # Assume T_coronal ∝ V^1.5 (intermediate between T ∝ V and T ∝ V²)
     # Calibrated so that 400 km/s gives ~1.5 MK at 30 Rs
     # This gives reasonable temperatures that cool to ~100,000 K at 1 AU after adiabatic expansion
-    T_rmin = (v_rmin_value / 400.0)**1.5 * 1.0e6  # K
+    T_rmin = (v_rmin_value / 400.0)**1.5 * 1e6  # K
     
     if hasattr(v_boundary, 'unit'):
         return T_rmin * u.K
@@ -1880,6 +1880,163 @@ def zerototwopi(angles):
 
 
 @jit(nopython=True)
+def _compute_rhs_mol_(rho, v, temp, r_full, gamma):
+    """
+    Compute RHS of PDEs using Method of Lines for conservative equations.
+    
+    Conservative form in spherical coordinates:
+    ∂ρ/∂t = -∂(ρv)/∂r - (2/r)·ρv
+    ∂(ρv)/∂t = -∂(ρv² + P)/∂r - (2/r)·ρv²  
+    
+    For temperature, use primitive form:
+    ∂T/∂t = -v·∂T/∂r - (γ-1)·T·∇·v
+    
+    Returns time derivatives of density, velocity, and temperature.
+    """
+    k_B = 1.38064852e-23
+    m_p = 1.67262192e-27
+    
+    nr = len(rho)
+    v_SI = v * 1000.0  # Convert km/s to m/s
+    r_m = r_full * 1000.0  # Convert km to m
+    
+    # Pressure (Pa)
+    P = (rho / m_p) * k_B * temp
+    
+    # Fluxes
+    F_mass = rho * v_SI
+    F_mom = rho * v_SI**2 + P
+    
+    # Initialize outputs
+    drho_dt = np.zeros(nr)
+    dv_dt = np.zeros(nr)
+    dtemp_dt = np.zeros(nr)
+    
+    # Interior points: use central differences
+    for i in range(1, nr-1):
+        dr_left = r_m[i] - r_m[i-1]
+        dr_right = r_m[i+1] - r_m[i]
+        dr_center = 0.5 * (dr_left + dr_right)
+        
+        # Spatial derivatives
+        dF_mass_dr = (F_mass[i+1] - F_mass[i-1]) / (dr_left + dr_right)
+        dF_mom_dr = (F_mom[i+1] - F_mom[i-1]) / (dr_left + dr_right)
+        
+        # Geometric source terms
+        geom_mass = (2.0 / r_m[i]) * F_mass[i]
+        geom_mom = (2.0 / r_m[i]) * (rho[i] * v_SI[i]**2)  # Only advective part
+        
+        # Mass equation RHS
+        drho_dt[i] = -dF_mass_dr - geom_mass
+        
+        # Momentum equation: d(ρv)/dt = -∂(ρv² + P)/∂r - (2/r)·ρv²
+        # Convert to velocity: dv/dt = (1/ρ)[d(ρv)/dt - v·dρ/dt]
+        d_rhov_dt = -dF_mom_dr - geom_mom
+        dv_dt[i] = (d_rhov_dt - v_SI[i] * drho_dt[i]) / rho[i] / 1000.0  # km/s/s
+        
+        # Temperature: primitive form
+        dT_dr = (temp[i+1] - temp[i-1]) / (dr_left + dr_right)
+        dv_dr = (v[i+1] - v[i-1]) / (dr_left + dr_right) / 1000.0  # Convert to 1/s
+        div_v = dv_dr + 2.0 * v_SI[i] / r_m[i]
+        
+        dtemp_dt[i] = -v_SI[i] * dT_dr - (gamma - 1.0) * temp[i] * div_v
+    
+    # Boundary conditions: keep boundaries fixed (zero time derivative)
+    drho_dt[0] = 0.0
+    drho_dt[-1] = 0.0
+    dv_dt[0] = 0.0
+    dv_dt[-1] = 0.0
+    dtemp_dt[0] = 0.0
+    dtemp_dt[-1] = 0.0
+    
+    return drho_dt, dv_dt, dtemp_dt
+
+
+@jit(nopython=True)
+def _upwind_step_mol_(v_up, v_dn, rho_up, rho_dn, temp_up, temp_dn,
+                      dtdr, alpha, r_accel, rrel, r_boundary, gamma):
+    """
+    Method of Lines with RK4 time integration for compressible solver.
+    
+    This implements a higher-order time integration scheme that better
+    preserves conservation properties compared to operator splitting.
+    """
+    # Build full state including boundary
+    nr_full = len(v_up) + 1
+    rho_full = np.empty(nr_full)
+    v_full = np.empty(nr_full)
+    temp_full = np.empty(nr_full)
+    r_full = np.empty(nr_full)
+    
+    # Boundary (index 0)
+    rho_full[0] = rho_dn[0]
+    v_full[0] = v_dn[0]
+    temp_full[0] = temp_dn[0]
+    r_full[0] = rrel[0] * 695700.0 + r_boundary
+    
+    # Interior
+    rho_full[1:] = rho_up
+    v_full[1:] = v_up
+    temp_full[1:] = temp_up
+    r_full[1:] = rrel[1:] * 695700.0 + r_boundary
+    
+    # Time step
+    dr = r_full[1] - r_full[0]
+    dt = dtdr * dr
+    
+    # RK4 integration
+    # Stage 1
+    k1_rho, k1_v, k1_temp = _compute_rhs_mol_(rho_full, v_full, temp_full, r_full, gamma)
+    
+    # Stage 2
+    rho2 = rho_full + 0.5 * dt * k1_rho
+    rho2[0] = rho_full[0]  # Keep boundary fixed
+    v2 = v_full + 0.5 * dt * k1_v
+    v2[0] = v_full[0]
+    temp2 = temp_full + 0.5 * dt * k1_temp
+    temp2[0] = temp_full[0]
+    k2_rho, k2_v, k2_temp = _compute_rhs_mol_(rho2, v2, temp2, r_full, gamma)
+    
+    # Stage 3
+    rho3 = rho_full + 0.5 * dt * k2_rho
+    rho3[0] = rho_full[0]
+    v3 = v_full + 0.5 * dt * k2_v
+    v3[0] = v_full[0]
+    temp3 = temp_full + 0.5 * dt * k2_temp
+    temp3[0] = temp_full[0]
+    k3_rho, k3_v, k3_temp = _compute_rhs_mol_(rho3, v3, temp3, r_full, gamma)
+    
+    # Stage 4
+    rho4 = rho_full + dt * k3_rho
+    rho4[0] = rho_full[0]
+    v4 = v_full + dt * k3_v
+    v4[0] = v_full[0]
+    temp4 = temp_full + dt * k3_temp
+    temp4[0] = temp_full[0]
+    k4_rho, k4_v, k4_temp = _compute_rhs_mol_(rho4, v4, temp4, r_full, gamma)
+    
+    # Combine
+    rho_next = rho_full + (dt / 6.0) * (k1_rho + 2*k2_rho + 2*k3_rho + k4_rho)
+    v_next = v_full + (dt / 6.0) * (k1_v + 2*k2_v + 2*k3_v + k4_v)
+    temp_next = temp_full + (dt / 6.0) * (k1_temp + 2*k2_temp + 2*k3_temp + k4_temp)
+    
+    # Keep boundary fixed
+    rho_next[0] = rho_full[0]
+    v_next[0] = v_full[0]
+    temp_next[0] = temp_full[0]
+    
+    # Apply bounds
+    rho_next = np.maximum(rho_next, 1e-30)
+    v_next = np.maximum(v_next, 100.0)
+    v_next = np.minimum(v_next, 3000.0)
+    temp_next = np.maximum(temp_next, 1e3)
+    temp_next = np.minimum(temp_next, 1e8)
+    
+    # Extract interior points
+    return v_next[1:], rho_next[1:], temp_next[1:]
+
+
+@jit(nopython=True)
 def solve_radial(vinput, binput, iscmeinput, model_time, rrel, params,
                  n_cme, n_hcs_max, streak_times, rhoinput=None, tempinput=None, compressible=False, solver='upwind'):
     """
@@ -1973,18 +2130,21 @@ def solve_radial(vinput, binput, iscmeinput, model_time, rrel, params,
             
             # Initialize density and temperature arrays for compressible solver
             if compressible:
-                # Initialize with radial scaling from inner boundary, not uniform!
-                # This creates the initial pressure gradient needed for flow evolution
+                # Initialize with proper continuity relation: ρ·v·r² = const
+                # This accounts for velocity evolution and gives better initial guess
                 r_inner = rrel[0] * 695700.0 + r_boundary  # km
                 rho_inner = rhoinput[0]
                 temp_inner = tempinput[0]
+                v_inner = vinput[0]
                 
                 rho = np.zeros(nr)
                 temp = np.zeros(nr)
                 for ir in range(nr):
                     r_this = rrel[ir] * 695700.0 + r_boundary  # km
                     r_ratio = r_inner / r_this
-                    rho[ir] = rho_inner * r_ratio**2  # ρ ~ r^-2 from continuity
+                    v_this = vinput[ir] if ir < len(vinput) else v_inner
+                    # Continuity: ρ·v·r² = const → ρ(r) = ρ₀·(v₀/v)·(r₀/r)²
+                    rho[ir] = rho_inner * (v_inner / v_this) * r_ratio**2
                     # Temperature initialization: use constant value from boundary
                     # Full temperature evolution handled by compressible solver
                     # which accounts for adiabatic expansion and velocity changes
@@ -2072,20 +2232,19 @@ def solve_radial(vinput, binput, iscmeinput, model_time, rrel, params,
                 # Save the updated time step (direct assignment, no copy needed)
                 v[1:] = u_up_next
         
-        elif solver == 'hll' or solver == 'hllc':
-            # HLL/HLLC Riemann solver with empirical acceleration
-            use_hllc = (solver == 'hllc')
+        elif solver == 'upwind_opsplit':
+            # Upwind solver with operator splitting and limiters
             
             if compressible:
-                # Use HLL/HLLC for compressible flow
+                # Use upwind_opsplit for compressible flow
                 # NOTE: accel_limit is ignored for compressible solver (no residual acceleration)
                 rho_up = rho[1:].copy()
                 rho_dn = rho[:-1].copy()
                 temp_up = temp[1:].copy()
                 temp_dn = temp[:-1].copy()
                 
-                u_up_next, rho_up_next, temp_up_next = _hll_step_compressible_(
-                    u_up, u_dn, rho_up, rho_dn, temp_up, temp_dn, dtdr, alpha, r_accel, rrel, r_boundary, use_hllc, gamma)
+                u_up_next, rho_up_next, temp_up_next = _upwind_opsplit_step_compressible_(
+                    u_up, u_dn, rho_up, rho_dn, temp_up, temp_dn, dtdr, alpha, r_accel, rrel, r_boundary, gamma)
                 
                 # Save the updated time steps (direct assignment, no copy needed)
                 v[1:] = u_up_next
@@ -2101,8 +2260,89 @@ def solve_radial(vinput, binput, iscmeinput, model_time, rrel, params,
                 # Save the updated time step (direct assignment, no copy needed)
                 v[1:] = u_up_next
         
+        elif solver == 'hll':
+            # HLL Riemann solver for shock capturing
+            
+            if compressible:
+                # Use HLL Riemann solver for compressible flow
+                # NOTE: accel_limit is ignored for compressible solver (no residual acceleration)
+                rho_up = rho[1:].copy()
+                rho_dn = rho[:-1].copy()
+                temp_up = temp[1:].copy()
+                temp_dn = temp[:-1].copy()
+                
+                u_up_next, rho_up_next, temp_up_next = _hll_step_compressible_(
+                    u_up, u_dn, rho_up, rho_dn, temp_up, temp_dn, dtdr, alpha, r_accel, rrel, r_boundary, gamma)
+                
+                # Save the updated time steps (direct assignment, no copy needed)
+                v[1:] = u_up_next
+                rho[1:] = rho_up_next
+                temp[1:] = temp_up_next
+            else:
+                # For incompressible, fall back to upwind (Riemann solver requires full conservation)
+                if accel_limit:
+                    u_up_next = _upwind_step_accel_limit(u_up, u_dn, dtdr, alpha, r_accel, rrel)
+                else:
+                    u_up_next = _upwind_step_(u_up, u_dn, dtdr, alpha, r_accel, rrel)
+                
+                # Save the updated time step (direct assignment, no copy needed)
+                v[1:] = u_up_next
+        
+        elif solver == 'hll_fv':
+            # Finite-volume HLL solver with area-weighted fluxes (clean spherical geometry)
+            
+            if compressible:
+                # Use finite-volume HLL Riemann solver
+                rho_up = rho[1:].copy()
+                rho_dn = rho[:-1].copy()
+                temp_up = temp[1:].copy()
+                temp_dn = temp[:-1].copy()
+                
+                u_up_next, rho_up_next, temp_up_next = _hll_fv_step_compressible_(
+                    u_up, u_dn, rho_up, rho_dn, temp_up, temp_dn, dtdr, alpha, r_accel, rrel, r_boundary, gamma)
+                
+                # Save the updated time steps (direct assignment, no copy needed)
+                v[1:] = u_up_next
+                rho[1:] = rho_up_next
+                temp[1:] = temp_up_next
+            else:
+                # For incompressible, fall back to upwind
+                if accel_limit:
+                    u_up_next = _upwind_step_accel_limit(u_up, u_dn, dtdr, alpha, r_accel, rrel)
+                else:
+                    u_up_next = _upwind_step_(u_up, u_dn, dtdr, alpha, r_accel, rrel)
+                
+                # Save the updated time step (direct assignment, no copy needed)
+                v[1:] = u_up_next
+        
+        elif solver == 'mol':
+            # Method of Lines with RK4 time integration
+            
+            if compressible:
+                # Use MOL/RK4 for compressible flow
+                rho_up = rho[1:].copy()
+                rho_dn = rho[:-1].copy()
+                temp_up = temp[1:].copy()
+                temp_dn = temp[:-1].copy()
+                
+                u_up_next, rho_up_next, temp_up_next = _upwind_step_mol_(
+                    u_up, u_dn, rho_up, rho_dn, temp_up, temp_dn, dtdr, alpha, r_accel, rrel, r_boundary, gamma)
+                
+                # Save the updated time steps
+                v[1:] = u_up_next
+                rho[1:] = rho_up_next
+                temp[1:] = temp_up_next
+            else:
+                # For incompressible, fall back to upwind
+                if accel_limit:
+                    u_up_next = _upwind_step_accel_limit(u_up, u_dn, dtdr, alpha, r_accel, rrel)
+                else:
+                    u_up_next = _upwind_step_(u_up, u_dn, dtdr, alpha, r_accel, rrel)
+                
+                v[1:] = u_up_next
+        
         else:
-            raise ValueError(f"Unknown solver: {solver}. Supported solvers: 'upwind', 'hll', 'hllc'")
+            raise ValueError(f"Unknown solver: {solver}. Supported solvers: 'upwind', 'upwind_opsplit', 'hll', 'hll_fv', 'mol'")
 
         # Move the CME test particles forward
         if t > 0 and do_cme:
@@ -2337,231 +2577,145 @@ def _upwind_step_accel_limit(v_up, v_dn, dtdr, alpha, r_accel, rrel):
 
     return v_up_next
 
-# ============================================================================
-# HLL and HLLC Riemann Solver Functions
-# ============================================================================
-
 @jit(nopython=True)
-def _estimate_wave_speeds_(v_L, v_R, rho_L, rho_R, p_L, p_R, gamma=5.0/3.0):
+def _upwind_step_compressible_(v_up, v_dn, rho_up, rho_dn, temp_up, temp_dn, 
+                                dtdr, alpha, r_accel, rrel, r_boundary, gamma):
     """
-    Estimate minimum and maximum wave speeds for HLL Riemann solver.
-    Uses Davis direct wave speed estimates.
+    Compute the next step in the upwind scheme for the compressible solver.
+    This includes velocity, density, and temperature evolution with compression/heating physics.
+    Residual acceleration is NOT included - pressure gradient drives the flow.
     
     Args:
-        v_L: Left state velocity (km/s)
-        v_R: Right state velocity (km/s)
-        rho_L: Left state density (kg/m³)
-        rho_R: Right state density (kg/m³)
-        p_L: Left state pressure (Pa)
-        p_R: Right state pressure (Pa)
-        gamma: Adiabatic index (default 5/3 for monoatomic gas)
-    
+        v_up: A numpy array of the upwind velocity values. Units of km/s.
+        v_dn: A numpy array of the downwind velocity values. Units of km/s.
+        rho_up: A numpy array of the upwind density values. Units of kg/m^3.
+        rho_dn: A numpy array of the downwind density values. Units of kg/m^3.
+        temp_up: A numpy array of the upwind temperature values. Units of K.
+        temp_dn: A numpy array of the downwind temperature values. Units of K.
+        dtdr: Ratio of HUXt time step and radial grid step. Units of s/km.
+        alpha: Scale parameter for residual Solar wind acceleration (NOT USED in compressible solver).
+        r_accel: Spatial scale parameter of residual solar wind acceleration (NOT USED in compressible solver).
+        rrel: The model radial grid relative to the radial inner boundary coordinate. Units of km.
+        r_boundary: The inner boundary radius in km.
+        gamma: Adiabatic index for compressible solver (typically 1.5 for solar wind).
+        
     Returns:
-        S_L: Minimum wave speed (km/s)
-        S_R: Maximum wave speed (km/s)
+        v_up_next: The upwind velocity values at the next time step. Units of km/s.
+        rho_up_next: The upwind density values at the next time step. Units of kg/m^3.
+        temp_up_next: The upwind temperature values at the next time step. Units of K.
     """
-    # Sound speeds (in km/s, since pressure in Pa and density in kg/m³)
-    # c² = γP/ρ, need to convert: Pa/(kg/m³) = (N/m²)/(kg/m³) = (kg⋅m/s²/m²)/(kg/m³) = m²/s²
-    # Convert m²/s² to km²/s²: divide by 1e6
-    c_L = np.sqrt(gamma * p_L / rho_L) / 1000.0  # Convert m/s to km/s
-    c_R = np.sqrt(gamma * p_R / rho_R) / 1000.0
+
+    # ====================================================================
+    # Velocity evolution with pressure gradient force
+    # Momentum equation: ∂v/∂t + v·∂v/∂r = -(1/ρ)·∂P/∂r
+    # NO residual acceleration term for compressible solver!
+    # ====================================================================
     
-    # Davis estimates: min/max of (v - c) and (v + c)
-    S_L = min(v_L - c_L, v_R - c_R)
-    S_R = max(v_L + c_L, v_R + c_R)
+    # Compute pressure from ideal gas law: P = (ρ/m_p) * k_B * T
+    k_B = 1.38064852e-23  # J/K
+    m_p = 1.67262192e-27  # kg
     
-    return S_L, S_R
+    # Convert radial spacing to proper SI units
+    r_dn_km = rrel[:-1] * 695700.0 + r_boundary  # km
+    r_up_km = rrel[1:] * 695700.0 + r_boundary   # km
+    dr_km = r_up_km - r_dn_km  # km
+    dr_m = dr_km * 1000.0  # Convert to meters for SI calculations
+    
+    # Pressure at grid points (Pa)
+    p_up = (rho_up / m_p) * k_B * temp_up
+    p_dn = (rho_dn / m_p) * k_B * temp_dn
+    
+    # Pressure gradient: ∂P/∂r in SI units (Pa/m)
+    dp_dr = (p_up - p_dn) / dr_m
+    
+    # Use average density for pressure gradient force
+    rho_avg = 0.5 * (rho_up + rho_dn)
+    
+    # Pressure acceleration: -(1/ρ)·∂P/∂r
+    # Units: (Pa/m) / (kg/m³) = [N/m³] / [kg/m³] = N/kg = (kg·m/s²)/kg = m/s²
+    pressure_accel = -(dp_dr / rho_avg)  # m/s²
+    
+    # Time step for this grid cell (units: seconds)
+    dt_s = dtdr * dr_km
+    
+    # Advection term: v_new = v - dt * v * ∂v/∂r
+    v_up_next = v_up - dtdr * v_up * (v_up - v_dn)
+    
+    # Add pressure force: Δv = -(1/ρ)·∂P/∂r · dt (convert m/s to km/s)
+    v_up_next = v_up_next + (pressure_accel * dt_s) / 1000.0
+
+    # ====================================================================
+    # Density evolution using conservative flux formulation
+    # 
+    # Continuity in conservative form: ∂ρ/∂t + ∂F/∂r + (2/r)·F = 0
+    # where F = ρv is the mass flux
+    #
+    # This formulation with geometric source term naturally conserves ρvr²
+    #
+    # CRITICAL: Must use UPDATED velocity (v_up_next) for consistency!
+    # ====================================================================
+    
+    # Radial positions in km
+    r_dn = rrel[:-1] * 695700.0 + r_boundary  # Position i
+    r_up = rrel[1:] * 695700.0 + r_boundary   # Position i+1
+    dr = r_up - r_dn  # Grid spacing
+    dt = dtdr * dr  # Time step
+    
+    # Compute mass fluxes F = ρv
+    # Use time-averaged velocities for better conservation
+    # Average between old and new velocity (trapezoidal rule)
+    v_up_avg = 0.5 * (v_up + v_up_next)
+    
+    F_dn = rho_dn * v_dn  # Flux at position i (boundary)
+    F_up = rho_up * v_up_avg  # Flux at position i+1 (time-averaged)
+    
+    # Flux derivative: ∂F/∂r ≈ (F_up - F_dn)/dr
+    dF_dr = (F_up - F_dn) / dr
+    
+    # Geometric source term: (2/r)·F
+    # Use flux at current cell position
+    geom_source = (2.0 / r_up) * F_up
+    
+    # Total rate of change: ∂ρ/∂t = -∂F/∂r - (2/r)·F
+    drho_dt = -dF_dr - geom_source
+    
+    # Update density
+    rho_up_next = rho_up + drho_dt * dt
+    
+    # Ensure density remains positive (numerical safety)
+    rho_up_next = np.maximum(rho_up_next, 1e-30)
+
+    # ====================================================================
+    # Temperature evolution with adiabatic heating/cooling
+    # Equation: ∂T/∂t + v·∂T/∂r + (γ-1)·T·∇·v = 0
+    # ====================================================================
+    # Advection term: -v·∂T/∂r
+    dT_dr = (temp_up - temp_dn) / dr
+    temp_advection = -v_up * dT_dr * dt
+    
+    # Compute velocity divergence: ∇·v = ∂v/∂r + 2v/r
+    dv_dr = (v_up - v_dn) / dr
+    div_v = dv_dr + 2.0 * v_up / r_up
+    
+    # Adiabatic heating/cooling term: -(γ-1)·T·∇·v
+    temp_compression = -(gamma - 1.0) * temp_up * div_v * dt
+    
+    temp_up_next = temp_up + temp_advection + temp_compression
+    
+    # Ensure temperature remains positive (numerical safety)
+    temp_up_next = np.maximum(temp_up_next, 1e3)
+
+    return v_up_next, rho_up_next, temp_up_next
+
+
 
 
 @jit(nopython=True)
-def _hll_flux_(rho_L, v_L, p_L, rho_R, v_R, p_R, gamma=5.0/3.0):
+def _upwind_opsplit_step_compressible_(v_up, v_dn, rho_up, rho_dn, temp_up, temp_dn,
+                            dtdr, alpha, r_accel, rrel, r_boundary, gamma=5.0/3.0):
     """
-    Compute HLL (Harten-Lax-van Leer) Riemann solver flux.
-    
-    UNIT CONSISTENCY: Accepts velocity in km/s (HUXt convention) but converts internally
-    to m/s for energy calculations to maintain SI unit consistency.
-    
-    Args:
-        rho_L, v_L, p_L: Left state (density kg/m³, velocity km/s, pressure Pa)
-        rho_R, v_R, p_R: Right state
-        gamma: Adiabatic index
-    
-    Returns:
-        F_rho: Mass flux (kg/(m²·s))
-        F_mom: Momentum flux (Pa = kg/(m·s²))
-        F_energy: Energy flux (W/m² = J/(m²·s))
-    """
-    # Convert velocity from km/s to m/s for SI consistency
-    v_L_SI = v_L * 1000.0  # m/s
-    v_R_SI = v_R * 1000.0  # m/s
-    
-    # Estimate wave speeds (still in km/s for interface)
-    S_L, S_R = _estimate_wave_speeds_(v_L, v_R, rho_L, rho_R, p_L, p_R, gamma)
-    
-    # Convert wave speeds to m/s for consistent flux calculation
-    S_L_SI = S_L * 1000.0  # m/s
-    S_R_SI = S_R * 1000.0  # m/s
-    
-    # Conservative variables in SI units
-    # Mass: ρ (kg/m³)
-    U_L_mass = rho_L
-    U_R_mass = rho_R
-    
-    # Momentum: ρv in kg/(m²·s) - using v in m/s
-    U_L_mom = rho_L * v_L_SI  # kg/m³ * m/s = kg/(m²·s)
-    U_R_mom = rho_R * v_R_SI
-    
-    # Total energy per volume in Pa (= J/m³)
-    # Kinetic: 0.5*ρ*v² with v in m/s: kg/m³ * (m/s)² = kg/(m·s²) = Pa ✓
-    # Internal: P/(γ-1) in Pa ✓
-    U_L_energy = 0.5 * rho_L * v_L_SI**2 + p_L / (gamma - 1.0)  # Pa
-    U_R_energy = 0.5 * rho_R * v_R_SI**2 + p_R / (gamma - 1.0)  # Pa
-    
-    # Physical fluxes F(U) = (ρv, ρv²+P, v(E+P)) in SI units
-    F_L_mass = rho_L * v_L_SI  # kg/(m²·s)
-    F_R_mass = rho_R * v_R_SI
-    
-    F_L_mom = rho_L * v_L_SI**2 + p_L  # Pa (using v in m/s)
-    F_R_mom = rho_R * v_R_SI**2 + p_R
-    
-    F_L_energy = v_L_SI * (U_L_energy + p_L)  # W/m² (using v in m/s)
-    F_R_energy = v_R_SI * (U_R_energy + p_R)
-    
-    # HLL flux formula (use SI wave speeds)
-    if S_L_SI >= 0.0:
-        # Supersonic right-moving: use left state
-        F_mass = F_L_mass
-        F_mom = F_L_mom
-        F_energy = F_L_energy
-    elif S_R_SI <= 0.0:
-        # Supersonic left-moving: use right state
-        F_mass = F_R_mass
-        F_mom = F_R_mom
-        F_energy = F_R_energy
-    else:
-        # Subsonic: HLL average
-        # F_HLL = (S_R*F_L - S_L*F_R + S_L*S_R*(U_R - U_L)) / (S_R - S_L)
-        denom = S_R_SI - S_L_SI
-        
-        # Handle case where wave speeds are nearly equal (stationary case)
-        if np.abs(denom) < 1e-10:
-            # States are identical or nearly so - use either flux
-            F_mass = F_L_mass
-            F_mom = F_L_mom
-            F_energy = F_L_energy
-        else:
-            F_mass = (S_R_SI * F_L_mass - S_L_SI * F_R_mass + S_L_SI * S_R_SI * (U_R_mass - U_L_mass)) / denom
-            F_mom = (S_R_SI * F_L_mom - S_L_SI * F_R_mom + S_L_SI * S_R_SI * (U_R_mom - U_L_mom)) / denom
-            F_energy = (S_R_SI * F_L_energy - S_L_SI * F_R_energy + S_L_SI * S_R_SI * (U_R_energy - U_L_energy)) / denom
-    
-    return F_mass, F_mom, F_energy
-
-
-@jit(nopython=True)
-def _hllc_flux_(rho_L, v_L, p_L, rho_R, v_R, p_R, gamma=5.0/3.0):
-    """
-    Compute HLLC (HLL-Contact) Riemann solver flux.
-    Resolves contact discontinuities better than HLL.
-    
-    UNIT CONSISTENCY: Accepts velocity in km/s (HUXt convention) but converts internally
-    to m/s for energy calculations to maintain SI unit consistency.
-    
-    Args:
-        rho_L, v_L, p_L: Left state (density kg/m³, velocity km/s, pressure Pa)
-        rho_R, v_R, p_R: Right state
-        gamma: Adiabatic index
-    
-    Returns:
-        F_rho: Mass flux (kg/(m²·s))
-        F_mom: Momentum flux (Pa)
-        F_energy: Energy flux (W/m²)
-    """
-    # Convert velocity from km/s to m/s for SI consistency
-    v_L_SI = v_L * 1000.0  # m/s
-    v_R_SI = v_R * 1000.0  # m/s
-    
-    # Estimate outer wave speeds (in km/s)
-    S_L, S_R = _estimate_wave_speeds_(v_L, v_R, rho_L, rho_R, p_L, p_R, gamma)
-    
-    # Convert wave speeds to m/s
-    S_L_SI = S_L * 1000.0  # m/s
-    S_R_SI = S_R * 1000.0  # m/s
-    
-    # Conservative variables in SI units
-    U_L_mass = rho_L
-    U_R_mass = rho_R
-    U_L_mom = rho_L * v_L_SI  # kg/(m²·s)
-    U_R_mom = rho_R * v_R_SI
-    U_L_energy = 0.5 * rho_L * v_L_SI**2 + p_L / (gamma - 1.0)  # Pa
-    U_R_energy = 0.5 * rho_R * v_R_SI**2 + p_R / (gamma - 1.0)  # Pa
-    
-    # Physical fluxes in SI units
-    F_L_mass = rho_L * v_L_SI  # kg/(m²·s)
-    F_R_mass = rho_R * v_R_SI
-    F_L_mom = rho_L * v_L_SI**2 + p_L  # Pa
-    F_R_mom = rho_R * v_R_SI**2 + p_R
-    F_L_energy = v_L_SI * (U_L_energy + p_L)  # W/m²
-    F_R_energy = v_R_SI * (U_R_energy + p_R)
-    
-    # Estimate contact wave speed S_star (in m/s)
-    # S_star = (p_R - p_L + ρ_L*v_L*(S_L - v_L) - ρ_R*v_R*(S_R - v_R)) / (ρ_L*(S_L - v_L) - ρ_R*(S_R - v_R))
-    numer = p_R - p_L + rho_L * v_L_SI * (S_L_SI - v_L_SI) - rho_R * v_R_SI * (S_R_SI - v_R_SI)
-    denom = rho_L * (S_L_SI - v_L_SI) - rho_R * (S_R_SI - v_R_SI)
-    
-    if np.abs(denom) < 1e-10:
-        # Denominator too small, fall back to HLL
-        return _hll_flux_(rho_L, v_L, p_L, rho_R, v_R, p_R, gamma)
-    
-    S_star = numer / denom  # m/s
-    
-    # HLLC flux selection (using SI wave speeds)
-    if S_L_SI >= 0.0:
-        # Right-moving: use left state
-        F_mass = F_L_mass
-        F_mom = F_L_mom
-        F_energy = F_L_energy
-    elif S_R_SI <= 0.0:
-        # Left-moving: use right state
-        F_mass = F_R_mass
-        F_mom = F_R_mom
-        F_energy = F_R_energy
-    elif S_star >= 0.0:
-        # Contact wave on right: use left star state
-        # U_L_star = ρ_L * (S_L - v_L)/(S_L - S_star) * [1, S_star, E_L/ρ_L + (S_star - v_L)*(S_star + p_L/(ρ_L*(S_L-v_L)))]
-        factor = rho_L * (S_L_SI - v_L_SI) / (S_L_SI - S_star)
-        U_Lstar_mass = factor
-        U_Lstar_mom = factor * S_star
-        U_Lstar_energy = factor * (U_L_energy / rho_L + (S_star - v_L_SI) * (S_star + p_L / (rho_L * (S_L_SI - v_L_SI))))
-        
-        # F_L_star = F_L + S_L * (U_L_star - U_L)
-        F_mass = F_L_mass + S_L * (U_Lstar_mass - U_L_mass)
-        F_mom = F_L_mom + S_L * (U_Lstar_mom - U_L_mom)
-        
-        # F_L_star = F_L + S_L * (U_L_star - U_L)
-        F_mass = F_L_mass + S_L_SI * (U_Lstar_mass - U_L_mass)
-        F_mom = F_L_mom + S_L_SI * (U_Lstar_mom - U_L_mom)
-        F_energy = F_L_energy + S_L_SI * (U_Lstar_energy - U_L_energy)
-    else:
-        # Contact wave on left: use right star state
-        factor = rho_R * (S_R_SI - v_R_SI) / (S_R_SI - S_star)
-        U_Rstar_mass = factor
-        U_Rstar_mom = factor * S_star
-        U_Rstar_energy = factor * (U_R_energy / rho_R + (S_star - v_R_SI) * (S_star + p_R / (rho_R * (S_R_SI - v_R_SI))))
-        
-        # F_R_star = F_R + S_R * (U_R_star - U_R)
-        F_mass = F_R_mass + S_R_SI * (U_Rstar_mass - U_R_mass)
-        F_mom = F_R_mom + S_R_SI * (U_Rstar_mom - U_R_mom)
-        F_energy = F_R_energy + S_R_SI * (U_Rstar_energy - U_R_energy)
-    
-    return F_mass, F_mom, F_energy
-
-
-@jit(nopython=True)
-def _hll_step_compressible_(v_up, v_dn, rho_up, rho_dn, temp_up, temp_dn,
-                            dtdr, alpha, r_accel, rrel, r_boundary, use_hllc=False, gamma=5.0/3.0):
-    """
-    HLL/HLLC-enhanced compressible solver.
-    Uses standard upwind scheme as base, enhanced with Riemann solver for better shock capturing.
+    Compressible solver using operator splitting for temperature and divergence limiters.
+    Uses pure physics-based pressure gradient acceleration (no empirical terms).
     
     Args:
         v_up: Upwind velocity (km/s)
@@ -2571,11 +2725,10 @@ def _hll_step_compressible_(v_up, v_dn, rho_up, rho_dn, temp_up, temp_dn,
         temp_up: Upwind temperature (K)
         temp_dn: Downwind temperature (K)
         dtdr: Time/space ratio (s/km)
-        alpha: Acceleration parameter
-        r_accel: Acceleration scale (km)
+        alpha: Acceleration parameter (NOT USED - kept for interface compatibility)
+        r_accel: Acceleration scale (NOT USED - kept for interface compatibility)
         rrel: Relative radial coordinate
         r_boundary: Inner boundary radius (km)
-        use_hllc: Use HLLC (True) or HLL (False) for shock detection
         gamma: Adiabatic index for compressible solver (typically 5/3 for monoatomic gas)
     
     Returns:
@@ -2600,15 +2753,9 @@ def _hll_step_compressible_(v_up, v_dn, rho_up, rho_dn, temp_up, temp_dn,
     pressure_accel = - dt * dP_dr / rho_up  # m/s
     pressure_accel_km = pressure_accel / 1000.0  # km/s
     
-    # Velocity evolution with advection + pressure gradient + empirical acceleration
-    accel_arg = -rrel[:-1] / r_accel
-    accel_arg_p = -rrel[1:] / r_accel
-    
+    # Velocity evolution with advection + pressure gradient ONLY (no empirical acceleration)
     v_up_next = v_up - dtdr * v_up * (v_up - v_dn)
     v_up_next = v_up_next + pressure_accel_km  # Add pressure gradient force
-    v_source = v_dn / (1.0 + alpha * (1.0 - np.exp(accel_arg)))
-    v_diff = alpha * v_source * (np.exp(accel_arg) - np.exp(accel_arg_p))
-    v_up_next = v_up_next + (v_dn * dtdr * v_diff)
     
     # Compute divergence for compressible effects (already have r_dn, r_up, dr, dt)
     dv_dr = (v_up - v_dn) / dr
@@ -2663,17 +2810,379 @@ def _hll_step_compressible_(v_up, v_dn, rho_up, rho_dn, temp_up, temp_dn,
     return v_up_next, rho_up_next, temp_up_next
 
 
-def _hll_step_fully_conservative_(v_up, v_dn, rho_up, rho_dn, temp_up, temp_dn,
-                                   dtdr, alpha, r_accel, rrel, r_boundary, use_hllc=False, gamma=1.5):
+# ============================================================================
+# HLL Riemann Solver Functions
+# ============================================================================
+
+@jit(nopython=True)
+def _estimate_wave_speeds_(v_L, v_R, rho_L, rho_R, p_L, p_R, gamma=5.0/3.0):
     """
-    Fully conservative HLL/HLLC solver using conservative variables and flux differencing.
+    Estimate minimum and maximum wave speeds for HLL Riemann solver.
+    Uses Davis direct wave speed estimates based on sound speeds.
     
-    This is the "textbook" implementation that:
-    1. Converts primitives to conservative variables U = [ρ, ρv, E]
-    2. Computes HLL/HLLC fluxes at cell interfaces
-    3. Updates via flux differencing: U^{n+1} = U^n - (Δt/Δr)(F_{i+1/2} - F_{i-1/2}) + Δt*S
-    4. Includes geometric source terms for spherical coordinates
-    5. Converts back to primitive variables
+    Args:
+        v_L: Left state velocity (km/s)
+        rho_up, rho_dn: Upwind/downwind density (kg/m³)
+        temp_up, temp_dn: Upwind/downwind temperature (K)
+        dtdr: Time/space ratio (s/km)
+        alpha, r_accel: Acceleration parameters (not used in compressible)
+        rrel: Relative radial coordinate (km)
+        r_boundary: Inner boundary radius (km)
+        gamma: Adiabatic index
+        limiter: 'minmod', 'vanleer', or 'superbee'
+    
+    Returns:
+        v_up_next, rho_up_next, temp_up_next: Updated state
+    """
+    k_B = 1.38064852e-23  # Boltzmann constant
+    m_p = 1.67262192e-27  # Proton mass
+    
+    nr = len(v_up)
+    
+    # Build full state arrays including boundary
+    v_full = np.zeros(nr + 1)
+    rho_full = np.zeros(nr + 1)
+    temp_full = np.zeros(nr + 1)
+    
+    v_full[0] = v_dn[0]
+    v_full[1:] = v_up
+    rho_full[0] = rho_dn[0]
+    rho_full[1:] = rho_up
+    temp_full[0] = temp_dn[0]
+    temp_full[1:] = temp_up
+    
+    # Initialize outputs
+    v_up_next = np.zeros(nr)
+    rho_up_next = np.zeros(nr)
+    temp_up_next = np.zeros(nr)
+    
+    # Compute radial grid
+    r_dn_km = rrel[:-1] * 695700.0 + r_boundary
+    r_up_km = rrel[1:] * 695700.0 + r_boundary
+    dr_km = r_up_km - r_dn_km
+    dt = dtdr * dr_km
+    
+    # Loop over interior cells
+    for i in range(nr):
+        # Cell indices: i+1 is current cell, i is left neighbor, i+2 is right neighbor
+        
+        # Compute slopes with limiting for interface i (between cells i and i+1)
+        # Left state (extrapolation from cell i)
+        if i > 0:
+            dv_L = v_full[i] - v_full[i-1]
+            dv_C = v_full[i+1] - v_full[i]
+            if limiter == 'minmod':
+                slope_v_L = _minmod_limiter_(dv_L, dv_C)
+            elif limiter == 'superbee':
+                slope_v_L = _superbee_limiter_(dv_L, dv_C)
+            else:  # vanleer
+                slope_v_L = _vanleer_limiter_(dv_L, dv_C)
+            v_L = v_full[i] + 0.5 * slope_v_L
+            
+            drho_L = rho_full[i] - rho_full[i-1]
+            drho_C = rho_full[i+1] - rho_full[i]
+            if limiter == 'minmod':
+                slope_rho_L = _minmod_limiter_(drho_L, drho_C)
+            elif limiter == 'superbee':
+                slope_rho_L = _superbee_limiter_(drho_L, drho_C)
+            else:
+                slope_rho_L = _vanleer_limiter_(drho_L, drho_C)
+            rho_L = rho_full[i] + 0.5 * slope_rho_L
+            
+            dtemp_L = temp_full[i] - temp_full[i-1]
+            dtemp_C = temp_full[i+1] - temp_full[i]
+            if limiter == 'minmod':
+                slope_temp_L = _minmod_limiter_(dtemp_L, dtemp_C)
+            elif limiter == 'superbee':
+                slope_temp_L = _superbee_limiter_(dtemp_L, dtemp_C)
+            else:
+                slope_temp_L = _vanleer_limiter_(dtemp_L, dtemp_C)
+            temp_L = temp_full[i] + 0.5 * slope_temp_L
+        else:
+            # At boundary, use boundary value
+            v_L = v_full[0]
+            rho_L = rho_full[0]
+            temp_L = temp_full[0]
+        
+        # Right state (extrapolation from cell i+1)
+        dv_C = v_full[i+1] - v_full[i]
+        if i < nr - 1:
+            dv_R = v_full[i+2] - v_full[i+1]
+        else:
+            dv_R = 0.0  # No right neighbor
+        if limiter == 'minmod':
+            slope_v_R = _minmod_limiter_(dv_C, dv_R)
+        elif limiter == 'superbee':
+            slope_v_R = _superbee_limiter_(dv_C, dv_R)
+        else:
+            slope_v_R = _vanleer_limiter_(dv_C, dv_R)
+        v_R = v_full[i+1] - 0.5 * slope_v_R
+        
+        drho_C = rho_full[i+1] - rho_full[i]
+        if i < nr - 1:
+            drho_R = rho_full[i+2] - rho_full[i+1]
+        else:
+            drho_R = 0.0
+        if limiter == 'minmod':
+            slope_rho_R = _minmod_limiter_(drho_C, drho_R)
+        elif limiter == 'superbee':
+            slope_rho_R = _superbee_limiter_(drho_C, drho_R)
+        else:
+            slope_rho_R = _vanleer_limiter_(drho_C, drho_R)
+        rho_R = rho_full[i+1] - 0.5 * slope_rho_R
+        
+        dtemp_C = temp_full[i+1] - temp_full[i]
+        if i < nr - 1:
+            dtemp_R = temp_full[i+2] - temp_full[i+1]
+        else:
+            dtemp_R = 0.0
+        if limiter == 'minmod':
+            slope_temp_R = _minmod_limiter_(dtemp_C, dtemp_R)
+        elif limiter == 'superbee':
+            slope_temp_R = _superbee_limiter_(dtemp_C, dtemp_R)
+        else:
+            slope_temp_R = _vanleer_limiter_(dtemp_C, dtemp_R)
+        temp_R = temp_full[i+1] - 0.5 * slope_temp_R
+        
+        # Compute pressures
+        p_L = (rho_L / m_p) * k_B * temp_L
+        p_R = (rho_R / m_p) * k_B * temp_R
+        
+        # Compute HLL flux at interface i
+        F_left_mass, F_left_mom, F_left_energy = _hll_flux_(
+            rho_L, v_L, p_L, rho_R, v_R, p_R, gamma)
+        
+        # Now compute for interface i+1 (right side of cell i+1)
+        v_L_right = v_R  # This becomes the left state of the next interface
+        rho_L_right = rho_R
+        temp_L_right = temp_R
+        p_L_right = p_R
+        
+        # Right state from cell i+2
+        if i < nr - 1:
+            dv_C2 = v_full[i+2] - v_full[i+1]
+            if i < nr - 2:
+                dv_R2 = v_full[i+3] - v_full[i+2]
+            else:
+                dv_R2 = 0.0
+            if limiter == 'minmod':
+                slope_v_R2 = _minmod_limiter_(dv_C2, dv_R2)
+            elif limiter == 'superbee':
+                slope_v_R2 = _superbee_limiter_(dv_C2, dv_R2)
+            else:
+                slope_v_R2 = _vanleer_limiter_(dv_C2, dv_R2)
+            v_R_right = v_full[i+2] - 0.5 * slope_v_R2
+            
+            drho_C2 = rho_full[i+2] - rho_full[i+1]
+            if i < nr - 2:
+                drho_R2 = rho_full[i+3] - rho_full[i+2]
+            else:
+                drho_R2 = 0.0
+            if limiter == 'minmod':
+                slope_rho_R2 = _minmod_limiter_(drho_C2, drho_R2)
+            elif limiter == 'superbee':
+                slope_rho_R2 = _superbee_limiter_(drho_C2, drho_R2)
+            else:
+                slope_rho_R2 = _vanleer_limiter_(drho_C2, drho_R2)
+            rho_R_right = rho_full[i+2] - 0.5 * slope_rho_R2
+            
+            dtemp_C2 = temp_full[i+2] - temp_full[i+1]
+            if i < nr - 2:
+                dtemp_R2 = temp_full[i+3] - temp_full[i+2]
+            else:
+                dtemp_R2 = 0.0
+            if limiter == 'minmod':
+                slope_temp_R2 = _minmod_limiter_(dtemp_C2, dtemp_R2)
+            elif limiter == 'superbee':
+                slope_temp_R2 = _superbee_limiter_(dtemp_C2, dtemp_R2)
+            else:
+                slope_temp_R2 = _vanleer_limiter_(dtemp_C2, dtemp_R2)
+            temp_R_right = temp_full[i+2] - 0.5 * slope_temp_R2
+            
+            p_R_right = (rho_R_right / m_p) * k_B * temp_R_right
+        else:
+            # At right boundary, use cell value
+            v_R_right = v_full[i+1]
+            rho_R_right = rho_full[i+1]
+            temp_R_right = temp_full[i+1]
+            p_R_right = (rho_R_right / m_p) * k_B * temp_R_right
+        
+        F_right_mass, F_right_mom, F_right_energy = _hll_flux_(
+            rho_L_right, v_L_right, p_L_right, rho_R_right, v_R_right, p_R_right, gamma)
+        
+        # Convert to conservative variables
+        v_SI = v_full[i+1] * 1000.0  # km/s to m/s
+        U_mass = rho_full[i+1]
+        U_mom = rho_full[i+1] * v_SI
+        p_cell = (rho_full[i+1] / m_p) * k_B * temp_full[i+1]
+        U_energy = 0.5 * rho_full[i+1] * v_SI**2 + p_cell / (gamma - 1.0)
+        
+        # Flux differencing (conservative update)
+        dr_m = dr_km[i] * 1000.0  # km to m
+        dU_mass = -(dt[i] / dr_m) * (F_right_mass - F_left_mass)
+        dU_mom = -(dt[i] / dr_m) * (F_right_mom - F_left_mom)
+        dU_energy = -(dt[i] / dr_m) * (F_right_energy - F_left_energy)
+        
+        # Add geometric source terms for spherical coordinates
+        # S = -(2/r) * F
+        r_center_m = (r_dn_km[i] + r_up_km[i]) * 500000.0  # km to m
+        F_avg_mass = 0.5 * (F_left_mass + F_right_mass)
+        F_avg_mom = 0.5 * (F_left_mom + F_right_mom)
+        F_avg_energy = 0.5 * (F_left_energy + F_right_energy)
+        
+        dU_mass += -(dt[i] * 2.0 / r_center_m) * F_avg_mass
+        dU_mom += -(dt[i] * 2.0 / r_center_m) * F_avg_mom
+        dU_energy += -(dt[i] * 2.0 / r_center_m) * F_avg_energy
+        
+        # Update conservative variables
+        U_mass_new = U_mass + dU_mass
+        U_mom_new = U_mom + dU_mom
+        U_energy_new = U_energy + dU_energy
+        
+        # Convert back to primitives
+        rho_up_next[i] = max(U_mass_new, 1e-30)
+        v_up_next[i] = (U_mom_new / rho_up_next[i]) / 1000.0  # m/s to km/s
+        
+        # Recover temperature from energy
+        p_new = (gamma - 1.0) * (U_energy_new - 0.5 * U_mom_new**2 / rho_up_next[i])
+        p_new = max(p_new, 1e-10)
+        temp_up_next[i] = (p_new * m_p) / (rho_up_next[i] * k_B)
+        
+        # Apply physical bounds
+        v_up_next[i] = max(100.0, min(v_up_next[i], 3000.0))
+        temp_up_next[i] = max(1e3, min(temp_up_next[i], 1e8))
+    
+    return v_up_next, rho_up_next, temp_up_next
+
+
+# ============================================================================
+# HLL Riemann Solver Functions
+# ============================================================================
+
+@jit(nopython=True)
+def _estimate_wave_speeds_(v_L, v_R, rho_L, rho_R, p_L, p_R, gamma=5.0/3.0):
+    """
+    Estimate minimum and maximum wave speeds for HLL Riemann solver.
+    Uses Davis direct wave speed estimates based on sound speeds.
+    
+    Args:
+        v_L: Left state velocity (km/s)
+        v_R: Right state velocity (km/s)
+        rho_L: Left state density (kg/m³)
+        rho_R: Right state density (kg/m³)
+        p_L: Left state pressure (Pa)
+        p_R: Right state pressure (Pa)
+        gamma: Adiabatic index
+    
+    Returns:
+        S_L: Minimum wave speed (km/s)
+        S_R: Maximum wave speed (km/s)
+    """
+    # Compute sound speeds (in m/s first)
+    c_L_SI = np.sqrt(gamma * p_L / rho_L)  # m/s
+    c_R_SI = np.sqrt(gamma * p_R / rho_R)  # m/s
+    
+    # Convert to km/s
+    c_L = c_L_SI / 1000.0
+    c_R = c_R_SI / 1000.0
+    
+    # Davis estimates: use min/max of characteristic speeds
+    S_L = min(v_L - c_L, v_R - c_R)
+    S_R = max(v_L + c_L, v_R + c_R)
+    
+    return S_L, S_R
+
+
+@jit(nopython=True)
+def _hll_flux_(rho_L, v_L, p_L, rho_R, v_R, p_R, gamma=5.0/3.0):
+    """
+    Compute HLL (Harten-Lax-van Leer) Riemann solver flux.
+    
+    The HLL flux is:
+    - F_L if S_L >= 0 (supersonic left-going)
+    - F_R if S_R <= 0 (supersonic right-going)  
+    - F_HLL = (S_R*F_L - S_L*F_R + S_L*S_R*(U_R - U_L))/(S_R - S_L) otherwise
+    
+    UNIT CONSISTENCY: Accepts velocity in km/s (HUXt convention) but converts internally
+    to m/s for energy calculations to maintain SI unit consistency.
+    
+    Args:
+        rho_L, v_L, p_L: Left state (density kg/m³, velocity km/s, pressure Pa)
+        rho_R, v_R, p_R: Right state
+        gamma: Adiabatic index
+    
+    Returns:
+        F_rho: Mass flux (kg/(m²·s))
+        F_mom: Momentum flux (Pa = kg/(m·s²))
+        F_energy: Energy flux (W/m² = J/(m²·s))
+    """
+    # Convert velocity from km/s to m/s for SI consistency
+    v_L_SI = v_L * 1000.0  # m/s
+    v_R_SI = v_R * 1000.0  # m/s
+    
+    # Estimate wave speeds (in km/s)
+    S_L, S_R = _estimate_wave_speeds_(v_L, v_R, rho_L, rho_R, p_L, p_R, gamma)
+    
+    # Convert wave speeds to m/s for flux calculations
+    S_L_SI = S_L * 1000.0  # m/s
+    S_R_SI = S_R * 1000.0  # m/s
+    
+    # Conservative variables in SI units
+    U_L_mass = rho_L
+    U_R_mass = rho_R
+    U_L_mom = rho_L * v_L_SI  # kg/(m²·s)
+    U_R_mom = rho_R * v_R_SI
+    U_L_energy = 0.5 * rho_L * v_L_SI**2 + p_L / (gamma - 1.0)  # Pa = J/m³
+    U_R_energy = 0.5 * rho_R * v_R_SI**2 + p_R / (gamma - 1.0)
+    
+    # Physical fluxes in SI units
+    F_L_mass = rho_L * v_L_SI  # kg/(m²·s)
+    F_R_mass = rho_R * v_R_SI
+    F_L_mom = rho_L * v_L_SI**2 + p_L  # Pa
+    F_R_mom = rho_R * v_R_SI**2 + p_R
+    F_L_energy = v_L_SI * (U_L_energy + p_L)  # W/m²
+    F_R_energy = v_R_SI * (U_R_energy + p_R)
+    
+    # HLL flux selection
+    if S_L_SI >= 0.0:
+        # Supersonic right-going: use left state
+        F_mass = F_L_mass
+        F_mom = F_L_mom
+        F_energy = F_L_energy
+    elif S_R_SI <= 0.0:
+        # Supersonic left-going: use right state
+        F_mass = F_R_mass
+        F_mom = F_R_mom
+        F_energy = F_R_energy
+    else:
+        # Subsonic: use HLL average flux
+        # F_HLL = (S_R*F_L - S_L*F_R + S_L*S_R*(U_R - U_L))/(S_R - S_L)
+        denom = S_R_SI - S_L_SI
+        
+        F_mass = (S_R_SI * F_L_mass - S_L_SI * F_R_mass + S_L_SI * S_R_SI * (U_R_mass - U_L_mass)) / denom
+        F_mom = (S_R_SI * F_L_mom - S_L_SI * F_R_mom + S_L_SI * S_R_SI * (U_R_mom - U_L_mom)) / denom
+        F_energy = (S_R_SI * F_L_energy - S_L_SI * F_R_energy + S_L_SI * S_R_SI * (U_R_energy - U_L_energy)) / denom
+    
+    return F_mass, F_mom, F_energy
+
+
+@jit(nopython=True)
+def _hll_step_compressible_(v_up, v_dn, rho_up, rho_dn, temp_up, temp_dn,
+                            dtdr, alpha, r_accel, rrel, r_boundary, gamma=5.0/3.0):
+    """
+    Pure HLL Riemann solver for compressible flow in spherical geometry.
+    
+    Implements the HLL (Harten-Lax-van Leer) Riemann solver with correct geometric
+    source terms for spherical coordinates. Mass and momentum are evolved conservatively,
+    while temperature uses the primitive equation (dual-energy formulation) to avoid
+    numerical precision issues when kinetic energy >> internal energy.
+    
+    Key implementation details:
+    - Mass equation: ∂ρ/∂t + ∂(ρv)/∂r + (2/r)·ρv = 0
+    - Momentum equation: ∂(ρv)/∂t + ∂(ρv² + p)/∂r + (2/r)·ρv² = 0
+      (NOTE: geometric source acts on ρv² only, NOT on pressure term!)
+    - Temperature equation: ∂T/∂t + v·∂T/∂r + (γ-1)·T·div(v) = 0
+      (primitive form to avoid KE >> IE numerical issues)
     
     Args:
         v_up: Upwind velocity (km/s)
@@ -2683,175 +3192,161 @@ def _hll_step_fully_conservative_(v_up, v_dn, rho_up, rho_dn, temp_up, temp_dn,
         temp_up: Upwind temperature (K)
         temp_dn: Downwind temperature (K)
         dtdr: Time/space ratio (s/km)
-        alpha: Acceleration parameter
-        r_accel: Acceleration scale (km)
+        alpha: Acceleration parameter (NOT USED - kept for interface compatibility)
+        r_accel: Acceleration scale (NOT USED - kept for interface compatibility)
         rrel: Relative radial coordinate
         r_boundary: Inner boundary radius (km)
-        use_hllc: Use HLLC (True) or HLL (False) flux
+        gamma: Adiabatic index
     
     Returns:
         v_up_next, rho_up_next, temp_up_next: Updated state
     """
-    # gamma is now passed as parameter (default 1.4 for T ~ r^-0.8)
+    # Physical constants
     k_B = 1.38064852e-23
     m_p = 1.67262192e-27
-    nr = len(v_up)
     
     # Compute radial grid
     r_dn = rrel[:-1] * 695700.0 + r_boundary  # km
-    r_up = rrel[1:] * 695700.0 + r_boundary  # km
-    dr_km = r_up - r_dn  # km
-    dr = dr_km * 1000.0  # Convert to meters for SI consistency
-    dt = dtdr * dr_km  # s (dtdr is s/km, so dtdr * km = s)
-    r_center = 0.5 * (r_dn + r_up)  # km
+    r_up = rrel[1:] * 695700.0 + r_boundary   # km
+    dr = r_up - r_dn  # km
+    dt = dtdr * dr  # s
     
-    # Initialize output arrays
-    v_up_next = np.zeros(nr)
-    rho_up_next = np.zeros(nr)
-    temp_up_next = np.zeros(nr)
+    # Convert dr to meters for flux differencing
+    dr_m = dr * 1000.0  # m
     
-    # Compute pressure arrays
-    p_up = (rho_up / m_p) * k_B * temp_up
-    p_dn = (rho_dn / m_p) * k_B * temp_dn
+    # Compute pressure from equation of state
+    p_up = (rho_up / m_p) * k_B * temp_up  # Pa
+    p_dn = (rho_dn / m_p) * k_B * temp_dn  # Pa
     
-    # Step 1: Build initial conservative variables (in SI units for consistency)
-    # The HLL/HLLC flux functions will return fluxes in SI units:
-    # - F_mass: kg/(m²·s)
-    # - F_mom: Pa = kg/(m·s²)
-    # - F_energy: W/m² = J/(m²·s)
-    #
-    # For spherical geometry in conservative form:
-    # ∂U/∂t + ∂F/∂r = S_geom where S_geom = -(2/r)*F
-    # This is equivalent to: ∂U/∂t + (1/r²)∂(r²F)/∂r = 0
-    v_up_SI = v_up * 1000.0  # Convert km/s to m/s
+    # Initialize conservative variables (SI units)
+    v_up_SI = v_up * 1000.0  # m/s
+    v_dn_SI = v_dn * 1000.0  # m/s
     
-    U_mass = rho_up.copy()  # kg/m³
-    U_momentum = rho_up * v_up_SI  # kg/(m²·s)
-    U_energy = 0.5 * rho_up * v_up_SI**2 + p_up / (gamma - 1.0)  # Pa (J/m³)
+    U_mass = rho_up
+    U_mom = rho_up * v_up_SI  # kg/(m²·s)
+    U_energy = 0.5 * rho_up * v_up_SI**2 + p_up / (gamma - 1.0)  # Pa = J/m³
     
-    # Step 2: Loop over cells and update via flux differencing
+    nr = len(v_up)
+    U_mass_next = np.empty(nr, dtype=np.float64)
+    U_mom_next = np.empty(nr, dtype=np.float64)
+    U_energy_next = np.empty(nr, dtype=np.float64)
+    
+    # Flux differencing for mass, momentum, and energy
     for i in range(nr):
-        # ============================================================
-        # Compute flux at right interface (i+1/2)
-        # ============================================================
+        # Right interface (i+1/2)
         if i < nr - 1:
-            # Interior: use upwind cell i and upwind cell i+1
             rho_L = rho_up[i]
             v_L = v_up[i]
             p_L = p_up[i]
-            
             rho_R = rho_up[i+1]
             v_R = v_up[i+1]
             p_R = p_up[i+1]
         else:
-            # Right boundary: extrapolate (use cell i twice)
             rho_L = rho_up[i]
             v_L = v_up[i]
             p_L = p_up[i]
-            
             rho_R = rho_up[i]
             v_R = v_up[i]
             p_R = p_up[i]
         
-        # Compute flux at right interface
-        if use_hllc:
-            F_mass_R, F_mom_R, F_energy_R = _hllc_flux_(rho_L, v_L, p_L, 
-                                                         rho_R, v_R, p_R, gamma)
-        else:
-            F_mass_R, F_mom_R, F_energy_R = _hll_flux_(rho_L, v_L, p_L, 
-                                                        rho_R, v_R, p_R, gamma)
+        F_mass_R, F_mom_R, F_energy_R = _hll_flux_(rho_L, v_L, p_L, rho_R, v_R, p_R, gamma)
         
-        # ============================================================
-        # Compute flux at left interface (i-1/2)
-        # ============================================================
+        # Left interface (i-1/2)
         if i > 0:
-            # Interior: use upwind cell i-1 and upwind cell i
             rho_L = rho_up[i-1]
             v_L = v_up[i-1]
             p_L = p_up[i-1]
-            
             rho_R = rho_up[i]
             v_R = v_up[i]
             p_R = p_up[i]
         else:
-            # Left boundary: use downwind state as left state
             rho_L = rho_dn[i]
             v_L = v_dn[i]
             p_L = p_dn[i]
-            
             rho_R = rho_up[i]
             v_R = v_up[i]
             p_R = p_up[i]
         
-        # Compute flux at left interface
-        if use_hllc:
-            F_mass_L, F_mom_L, F_energy_L = _hllc_flux_(rho_L, v_L, p_L,
-                                                         rho_R, v_R, p_R, gamma)
-        else:
-            F_mass_L, F_mom_L, F_energy_L = _hll_flux_(rho_L, v_L, p_L,
-                                                        rho_R, v_R, p_R, gamma)
+        F_mass_L, F_mom_L, F_energy_L = _hll_flux_(rho_L, v_L, p_L, rho_R, v_R, p_R, gamma)
         
-        # ============================================================
-        # Flux differencing update with spherical geometry source term
-        # ============================================================
-        # In spherical coords: dU/dt = -dF/dr + S_geom
-        # where S_geom = -(2/r)*F accounts for spherical divergence
-        
-        # Standard flux differencing (1D Cartesian form)
-        U_mass_new = U_mass[i] - (dt[i] / dr[i]) * (F_mass_R - F_mass_L)
-        U_momentum_new = U_momentum[i] - (dt[i] / dr[i]) * (F_mom_R - F_mom_L)
-        U_energy_new = U_energy[i] - (dt[i] / dr[i]) * (F_energy_R - F_energy_L)
-        
-        # Add geometric source term: S = -(2/r)*F  (use cell center value)
-        r_center_m = r_center[i] * 1000.0  # Convert km to m
+        # Geometric source term for spherical coordinates
+        # For mass: -(2/r)*F_mass
+        # For momentum: -(2/r)*ρv²  (NOT the full flux! Only advective part, not pressure)
+        # For energy: -(2/r)*F_energy
+        r_cell = r_up[i] * 1000.0  # m
         F_mass_avg = 0.5 * (F_mass_L + F_mass_R)
-        F_mom_avg = 0.5 * (F_mom_L + F_mom_R)
+        
+        # For momentum, geometric source only acts on advective flux ρv², not on pressure
+        # F_mom = ρv² + p, so advective part is F_mom - p
+        # Compute pressure at interfaces
+        if i < nr - 1:
+            p_R_interface = 0.5 * (p_up[i] + p_up[i+1])
+        else:
+            p_R_interface = p_up[i]
+        
+        if i > 0:
+            p_L_interface = 0.5 * (p_up[i-1] + p_up[i])
+        else:
+            p_L_interface = 0.5 * (p_dn[i] + p_up[i])
+        
+        F_mom_advective_L = F_mom_L - p_L_interface
+        F_mom_advective_R = F_mom_R - p_R_interface
+        F_mom_advective_avg = 0.5 * (F_mom_advective_L + F_mom_advective_R)
+        
         F_energy_avg = 0.5 * (F_energy_L + F_energy_R)
         
-        geom_source_mass = -(2.0 / r_center_m) * F_mass_avg
-        geom_source_mom = -(2.0 / r_center_m) * F_mom_avg
-        geom_source_energy = -(2.0 / r_center_m) * F_energy_avg
+        # Update conservative variables
+        dU_mass = -(F_mass_R - F_mass_L) / dr_m[i] - (2.0 / r_cell) * F_mass_avg
+        dU_mom = -(F_mom_R - F_mom_L) / dr_m[i] - (2.0 / r_cell) * F_mom_advective_avg
+        dU_energy = -(F_energy_R - F_energy_L) / dr_m[i] - (2.0 / r_cell) * F_energy_avg
         
-        U_mass_new += dt[i] * geom_source_mass
-        U_momentum_new += dt[i] * geom_source_mom
-        U_energy_new += dt[i] * geom_source_energy
-        
-        # ============================================================
-        # Convert back to primitives
-        # ============================================================
-        
-        # Density (direct)
-        rho_up_next[i] = U_mass_new
-        
-        # Velocity (extract in m/s, then convert back to km/s for HUXt)
-        if U_mass_new > 1e-30:
-            v_mps = U_momentum_new / U_mass_new  # m/s
-            v_up_next[i] = v_mps / 1000.0  # Convert back to km/s for HUXt
+        U_mass_next[i] = U_mass[i] + dt[i] * dU_mass
+        U_mom_next[i] = U_mom[i] + dt[i] * dU_mom
+        U_energy_next[i] = U_energy[i] + dt[i] * dU_energy
+    
+    # Convert conservative variables back to primitives
+    rho_up_next = U_mass_next
+    v_up_next = U_mom_next / U_mass_next / 1000.0  # Convert m/s to km/s
+    
+    # Extract pressure from total energy
+    # For temperature, we need to account for PdV work explicitly in spherical geometry
+    # The conservative energy equation includes geometric terms, but when KE >> IE,
+    # the effect on internal energy is numerically invisible.
+    # 
+    # Instead, use the internal energy equation directly:
+    # ∂(p/(γ-1))/∂t + v·∂(p/(γ-1))/∂r + γ·p/(γ-1)·div(v) = 0
+    # Which is equivalent to: ∂p/∂t + v·∂p/∂r + γ·p·div(v) = 0
+    # And from p = (ρ/m_p)·k_B·T, this gives the temperature equation:
+    # ∂T/∂t + v·∂T/∂r + (γ-1)·T·div(v) = 0
+    
+    temp_up_next = np.empty(nr, dtype=np.float64)
+    for i in range(nr):
+        # Compute velocity divergence: div(v) = ∂v/∂r + 2v/r
+        if i < nr - 1:
+            dv_dr = (v_up_next[i+1] - v_up_next[i]) / dr[i]
+        elif i > 0:
+            dv_dr = (v_up_next[i] - v_up_next[i-1]) / dr[i]
         else:
-            v_up_next[i] = 100.0  # Floor in km/s
+            dv_dr = 0.0
         
-        # Pressure from energy equation (use m/s for consistency)
-        v_mps = v_up_next[i] * 1000.0  # km/s to m/s
-        kinetic_energy = 0.5 * U_mass_new * v_mps**2  # Pa
-        internal_energy = U_energy_new - kinetic_energy  # Pa
-        p_new = (gamma - 1.0) * internal_energy  # Pa
+        geom_term = 2.0 * v_up_next[i] / r_up[i]
+        div_v = dv_dr + geom_term
         
-        # Check for negative pressure (can happen with strong shocks)
-        if p_new < 0.0:
-            # Apply pressure floor and recompute energy for consistency
-            p_new = 1e-10  # Minimum pressure in Pa
-            U_energy_new = kinetic_energy + p_new / (gamma - 1.0)
-        
-        # Temperature from ideal gas law
-        if rho_up_next[i] > 1e-30:
-            temp_up_next[i] = p_new * m_p / (rho_up_next[i] * k_B)
+        # Advection term: -v·∂T/∂r
+        if i > 0:
+            dT_dr = (temp_up[i] - temp_up[i-1]) / dr[i]
         else:
-            temp_up_next[i] = 1e4
+            dT_dr = (temp_up[i] - temp_dn[i]) / dr[i]
         
-        # ============================================================
-        # Apply physical bounds
-        # ============================================================
+        temp_advection = -v_up_next[i] * dT_dr * dt[i]
         
+        # Compression/expansion term: -(γ-1)·T·div(v)
+        temp_compression = -(gamma - 1.0) * temp_up[i] * div_v * dt[i]
+        
+        temp_up_next[i] = temp_up[i] + temp_advection + temp_compression
+    
+    # Apply bounds
+    for i in range(nr):
         if v_up_next[i] < 100.0:
             v_up_next[i] = 100.0
         if v_up_next[i] > 3000.0:
@@ -2862,132 +3357,178 @@ def _hll_step_fully_conservative_(v_up, v_dn, rho_up, rho_dn, temp_up, temp_dn,
             rho_up_next[i] = 1e-30
         if temp_up_next[i] > 1e8:
             temp_up_next[i] = 1e8
-        if temp_up_next[i] < 1e4:  # Lower floor to 10,000 K
+        if temp_up_next[i] < 1e4:
             temp_up_next[i] = 1e4
     
     return v_up_next, rho_up_next, temp_up_next
 
 
-
-
 @jit(nopython=True)
-def _upwind_step_compressible_(v_up, v_dn, rho_up, rho_dn, temp_up, temp_dn, 
-                                dtdr, alpha, r_accel, rrel, r_boundary, gamma):
+def _hll_fv_step_compressible_(v_up, v_dn, rho_up, rho_dn, temp_up, temp_dn,
+                                dtdr, alpha, r_accel, rrel, r_boundary, gamma=5.0/3.0):
     """
-    Compute the next step in the upwind scheme for the compressible solver.
-    This includes velocity, density, and temperature evolution with compression/heating physics.
-    Residual acceleration is NOT included - pressure gradient drives the flow.
+    Finite-volume HLL Riemann solver using area-weighted fluxes for spherical geometry.
+    
+    This is an alternative formulation that naturally handles geometric effects through
+    proper area weighting at cell interfaces, avoiding explicit source terms.
+    
+    The conservative update is:
+        dU/dt = -(1/V_i) * (A_{i+1/2}·F_{i+1/2} - A_{i-1/2}·F_{i-1/2})
+    
+    where:
+        - V_i = (1/3) * (r_{i+1/2}³ - r_{i-1/2}³) is the cell volume
+        - A_i = r_i² is the interface area (4π factor drops out in 1D)
+        - F is the HLL Riemann flux
+    
+    This approach is mathematically elegant and commonly used in spherical codes.
+    The geometric divergence is automatically captured through (A_R - A_L) ∝ (r_R² - r_L²).
+    
+    Note: This gives slightly different results than the explicit source term approach
+    due to how geometric effects are discretized. Both are valid approximations to
+    the continuous equations.
+    
+    Temperature uses primitive equation (dual-energy) to avoid KE >> IE numerical issues.
     
     Args:
-        v_up: A numpy array of the upwind velocity values. Units of km/s.
-        v_dn: A numpy array of the downwind velocity values. Units of km/s.
-        rho_up: A numpy array of the upwind density values. Units of kg/m^3.
-        rho_dn: A numpy array of the downwind density values. Units of kg/m^3.
-        temp_up: A numpy array of the upwind temperature values. Units of K.
-        temp_dn: A numpy array of the downwind temperature values. Units of K.
-        dtdr: Ratio of HUXt time step and radial grid step. Units of s/km.
-        alpha: Scale parameter for residual Solar wind acceleration (NOT USED in compressible solver).
-        r_accel: Spatial scale parameter of residual solar wind acceleration (NOT USED in compressible solver).
-        rrel: The model radial grid relative to the radial inner boundary coordinate. Units of km.
-        r_boundary: The inner boundary radius in km.
-        gamma: Adiabatic index for compressible solver (typically 1.5 for solar wind).
-        
+        v_up: Upwind velocity (km/s)
+        v_dn: Downwind velocity (km/s)
+        rho_up: Upwind density (kg/m³)
+        rho_dn: Downwind density (kg/m³)
+        temp_up: Upwind temperature (K)
+        temp_dn: Downwind temperature (K)
+        dtdr: Time/space ratio (s/km)
+        alpha: Acceleration parameter (NOT USED)
+        r_accel: Acceleration scale (NOT USED)
+        rrel: Relative radial coordinate
+        r_boundary: Inner boundary radius (km)
+        gamma: Adiabatic index
+    
     Returns:
-        v_up_next: The upwind velocity values at the next time step. Units of km/s.
-        rho_up_next: The upwind density values at the next time step. Units of kg/m^3.
-        temp_up_next: The upwind temperature values at the next time step. Units of K.
+        v_up_next, rho_up_next, temp_up_next: Updated state
     """
-
-    # ====================================================================
-    # Velocity evolution with pressure gradient force
-    # Momentum equation: ∂v/∂t + v·∂v/∂r = -(1/ρ)·∂P/∂r
-    # NO residual acceleration term for compressible solver!
-    # ====================================================================
+    # Physical constants
+    k_B = 1.38064852e-23
+    m_p = 1.67262192e-27
     
-    # Compute pressure from ideal gas law: P = (ρ/m_p) * k_B * T
-    k_B = 1.38064852e-23  # J/K
-    m_p = 1.67262192e-27  # kg
-    
-    # Convert radial spacing to km for pressure gradient
-    r_dn_km = rrel[:-1] * 695700.0 + r_boundary  # km
-    r_up_km = rrel[1:] * 695700.0 + r_boundary   # km
-    dr_km = r_up_km - r_dn_km  # km
-    
-    # Pressure at grid points (Pa)
-    p_up = (rho_up / m_p) * k_B * temp_up
-    p_dn = (rho_dn / m_p) * k_B * temp_dn
-    
-    # Pressure gradient: ∂P/∂r (Pa/km)
-    dp_dr = (p_up - p_dn) / dr_km
-    
-    # Use average density for pressure gradient force
-    rho_avg = 0.5 * (rho_up + rho_dn)
-    
-    # Pressure acceleration: -(1/ρ)·∂P/∂r
-    # Units: (Pa/km) / (kg/m³) = (kg/(m·s²·km)) / (kg/m³) = m²/(s²·km) = m²/(s²·1000m) = m/(1000·s²) = 0.001 m/s²
-    # Convert to km/s²: 0.001 m/s² = 0.000001 km/s², so multiply by 1e-6 (or divide by 1e6)
-    pressure_accel = -(dp_dr / rho_avg) * 1.0e-6  # km/s²
-    
-    # Time step for this grid cell (units: seconds)
-    dt_s = dtdr * dr_km
-    
-    # Advection term: v_new = v - dt * v * ∂v/∂r
-    v_up_next = v_up - dtdr * v_up * (v_up - v_dn)
-    
-    # Add pressure force: Δv = -(1/ρ)·∂P/∂r · dt
-    v_up_next = v_up_next + pressure_accel * dt_s
-
-    # ====================================================================
-    # Compute velocity divergence for compression/expansion
-    # ====================================================================
-    # Radial positions in km (convert from solar radii to km)
-    r_dn = rrel[:-1] * 695700.0 + r_boundary  # km
-    r_up = rrel[1:] * 695700.0 + r_boundary   # km
+    # Compute radial grid
+    r_dn = rrel[:-1] * 695700.0 + r_boundary  # km, cell left edges
+    r_up = rrel[1:] * 695700.0 + r_boundary   # km, cell right edges
     dr = r_up - r_dn  # km
     
-    # Velocity gradient: ∂v/∂r (units: km/s per km = 1/s)
-    dv_dr = (v_up - v_dn) / dr
+    # Cell centers (for area and volume calculations)
+    r_center = 0.5 * (r_dn + r_up)  # km
     
-    # Geometric term for spherical divergence: 2v/r (units: 1/s)
-    geom_term = 2.0 * v_dn / r_dn
+    # Convert to meters for calculations
+    r_dn_m = r_dn * 1000.0  # m
+    r_up_m = r_up * 1000.0  # m
+    r_center_m = r_center * 1000.0  # m
     
-    # Total velocity divergence (units: 1/s)
-    div_v = dv_dr + geom_term
+    # Compute pressure from equation of state
+    p_up = (rho_up / m_p) * k_B * temp_up  # Pa
+    p_dn = (rho_dn / m_p) * k_B * temp_dn  # Pa
     
-    # Time step for this grid cell (units: seconds)
-    dt = dtdr * dr
-
-    # ====================================================================
-    # Density evolution with compression
-    # Equation: ∂ρ/∂t + v·∂ρ/∂r + ρ·(∂v/∂r + 2v/r) = 0
-    # ====================================================================
-    # Advection term
-    rho_advection = - dtdr * v_up * (rho_up - rho_dn)
+    # Convert velocities to SI
+    v_up_SI = v_up * 1000.0  # m/s
+    v_dn_SI = v_dn * 1000.0  # m/s
     
-    # Compression term: -ρ·(∂v/∂r + 2v/r)·dt
-    rho_compression = - rho_dn * div_v * dt
+    nr = len(v_up)
     
-    rho_up_next = rho_up + rho_advection + rho_compression
+    # Cell volumes: V = (1/3) * (r_outer³ - r_inner³)
+    V = (1.0 / 3.0) * (r_up_m**3 - r_dn_m**3)  # m³
     
-    # Ensure density remains positive (numerical safety)
-    rho_up_next = np.maximum(rho_up_next, 1e-30)
-
-    # ====================================================================
-    # Temperature evolution with adiabatic heating/cooling
-    # Equation: ∂T/∂t + v·∂T/∂r + (γ-1)·T·(∂v/∂r + 2v/r) = 0
-    # ====================================================================
-    # Advection term
-    temp_advection = - dtdr * v_up * (temp_up - temp_dn)
+    # Initialize conservative variables per unit volume
+    U_mass = rho_up
+    U_mom = rho_up * v_up_SI
     
-    # Adiabatic heating/cooling term: -(γ-1)·T·(∂v/∂r + 2v/r)·dt
-    temp_compression = - (gamma - 1.0) * temp_dn * div_v * dt
+    U_mass_next = np.empty(nr, dtype=np.float64)
+    U_mom_next = np.empty(nr, dtype=np.float64)
     
-    temp_up_next = temp_up + temp_advection + temp_compression
+    # Time step
+    dt = dtdr * dr  # seconds (dtdr is s/km, dr is km)
     
-    # Ensure temperature remains positive (numerical safety)
-    temp_up_next = np.maximum(temp_up_next, 1e3)
-
+    # Flux differencing with area weighting
+    for i in range(nr):
+        # Right interface (i+1/2) at r_up[i]
+        A_right = r_up_m[i]**2  # Interface area (dropping 4π)
+        
+        if i < nr - 1:
+            F_mass_R, F_mom_R, _ = _hll_flux_(rho_up[i], v_up[i], p_up[i],
+                                               rho_up[i+1], v_up[i+1], p_up[i+1], gamma)
+        else:
+            # Extrapolate at boundary
+            F_mass_R, F_mom_R, _ = _hll_flux_(rho_up[i], v_up[i], p_up[i],
+                                               rho_up[i], v_up[i], p_up[i], gamma)
+        
+        # Left interface (i-1/2) at r_dn[i]
+        A_left = r_dn_m[i]**2  # Interface area (dropping 4π)
+        
+        if i > 0:
+            F_mass_L, F_mom_L, _ = _hll_flux_(rho_up[i-1], v_up[i-1], p_up[i-1],
+                                               rho_up[i], v_up[i], p_up[i], gamma)
+        else:
+            # Boundary condition
+            F_mass_L, F_mom_L, _ = _hll_flux_(rho_dn[i], v_dn[i], p_dn[i],
+                                               rho_up[i], v_up[i], p_up[i], gamma)
+        
+        # Conservative update: dU/dt = -(1/V) * (A_R*F_R - A_L*F_L)
+        # Geometric effects are automatically included via area weighting!
+        dU_mass = -(A_right * F_mass_R - A_left * F_mass_L) / V[i]
+        dU_mom = -(A_right * F_mom_R - A_left * F_mom_L) / V[i]
+        
+        U_mass_next[i] = U_mass[i] + dt[i] * dU_mass
+        U_mom_next[i] = U_mom[i] + dt[i] * dU_mom
+    
+    # Convert conservative variables back to primitives
+    rho_up_next = U_mass_next
+    v_up_next = U_mom_next / U_mass_next / 1000.0  # Convert m/s to km/s
+    
+    # Temperature evolution using primitive equation (dual-energy formulation)
+    # This avoids numerical precision issues when KE >> IE
+    temp_up_next = np.empty(nr, dtype=np.float64)
+    
+    for i in range(nr):
+        # Compute velocity divergence: div(v) = ∂v/∂r + 2v/r
+        if i < nr - 1:
+            dv_dr = (v_up_next[i+1] - v_up_next[i]) / (dr[i])  # 1/s (dr in km, v in km/s)
+        elif i > 0:
+            dv_dr = (v_up_next[i] - v_up_next[i-1]) / (dr[i])
+        else:
+            dv_dr = 0.0
+        
+        geom_term = 2.0 * v_up_next[i] / r_center[i]  # 1/s
+        div_v = dv_dr + geom_term
+        
+        # Advection term: -v·∂T/∂r
+        if i > 0:
+            dT_dr = (temp_up[i] - temp_up[i-1]) / dr[i]
+        else:
+            dT_dr = (temp_up[i] - temp_dn[i]) / dr[i]
+        
+        temp_advection = -v_up_next[i] * dT_dr * dt[i]  # dt in s, dT_dr in K/km, v in km/s
+        
+        # Compression/expansion term: -(γ-1)·T·div(v)
+        temp_compression = -(gamma - 1.0) * temp_up[i] * div_v * dt[i]  # dt in s, div_v in 1/s
+        
+        temp_up_next[i] = temp_up[i] + temp_advection + temp_compression
+    
+    # Apply bounds
+    for i in range(nr):
+        if v_up_next[i] < 100.0:
+            v_up_next[i] = 100.0
+        if v_up_next[i] > 3000.0:
+            v_up_next[i] = 3000.0
+        if rho_up_next[i] > 1e-17:
+            rho_up_next[i] = 1e-17
+        if rho_up_next[i] < 1e-30:
+            rho_up_next[i] = 1e-30
+        if temp_up_next[i] > 1e8:
+            temp_up_next[i] = 1e8
+        if temp_up_next[i] < 1e4:
+            temp_up_next[i] = 1e4
+    
     return v_up_next, rho_up_next, temp_up_next
+
+
 
 
 @jit(nopython=True)
