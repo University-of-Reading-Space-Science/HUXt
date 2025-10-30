@@ -620,7 +620,7 @@ class HUXt:
         self.__version__ = get_version()
         
         # Validate and store solver choice
-        valid_solvers = ['upwind', 'upwind_opsplit', 'hll', 'hll_fv', 'mol']
+        valid_solvers = ['upwind', 'upwind_opsplit', 'hll', 'hll_fv', 'mol', 'cgf']
         if solver not in valid_solvers:
             raise ValueError(f"Invalid solver '{solver}'. Must be one of: {valid_solvers}")
         
@@ -921,8 +921,27 @@ class HUXt:
             lonint = np.arange(lon_start, lon_stop, dlondt)
             # Rectify so that it is between 0 - 2pi
             loninit = zerototwopi(lonint)
+            
+            # DEBUG: Check longitude mapping
+            if i == 0:
+                print(f"\n  DEBUG ts_from_vlong for longitude {i}:")
+                print(f"    lon_out: {lon_out * 180/np.pi:.1f} deg")
+                print(f"    lon_start: {lon_start * 180/np.pi:.1f} deg, lon_stop: {lon_stop * 180/np.pi:.1f} deg")
+                print(f"    loninit range: {loninit.min() * 180/np.pi:.1f} - {loninit.max() * 180/np.pi:.1f} deg")
+                print(f"    v_boundary_lons range: {self.v_boundary_lons.value.min() * 180/np.pi:.1f} - {self.v_boundary_lons.value.max() * 180/np.pi:.1f} deg")
+            
             # Interpolate the inner boundary speed to this higher resolution
             vinit = np.interp(loninit, self.v_boundary_lons.value, self.v_boundary.value, period=2 * np.pi)
+            
+            # DEBUG: Check if perturbation made it through
+            if i == 0:
+                print(f"    vinit range: {vinit.min():.1f} - {vinit.max():.1f} km/s")
+                # Check if v_boundary has the perturbation
+                print(f"    v_boundary input range: {self.v_boundary.value.min():.1f} - {self.v_boundary.value.max():.1f} km/s")
+                high_v_indices = np.where(self.v_boundary.value > 500)[0]
+                if len(high_v_indices) > 0:
+                    print(f"    v_boundary has {len(high_v_indices)} points > 500 km/s at indices {high_v_indices[0]}-{high_v_indices[-1]}")
+                    print(f"    These correspond to longitudes: {self.v_boundary_lons.value[high_v_indices[0]] * 180/np.pi:.1f} - {self.v_boundary_lons.value[high_v_indices[-1]] * 180/np.pi:.1f} deg")
             # convert from cr longitude to timesolve
             vinput = np.flipud(vinit) * (u.km / u.s)
             # Store the input series
@@ -1249,12 +1268,223 @@ class HUXt:
             streak_times = np.ones((self.nlon, 1, 1, 1)) * np.nan
 
         # ======================================================================
-        # Solve the time series at each longitude
+        # CGF (PYRO) SOLVER - Handle separately from built-in solvers
+        # ======================================================================
+        if self.solver == 'cgf':
+            print("\n" + "="*70)
+            print("USING CGF SOLVER (PYRO)")
+            print("="*70)
+            print(f"Frame: {self.frame}")
+            print(f"v_boundary: {len(self.v_boundary)} longitudes, range [{self.v_boundary.value.min():.1f}, {self.v_boundary.value.max():.1f}] km/s")
+            if self.v_boundary.value.max() - self.v_boundary.value.min() > 1.0:
+                print(f"  ** Spatial structure detected in v_boundary **")
+            
+            # CGF solver requires separate handling - call pyro for each longitude
+            from huxt.solar_wind_pyro_solver import run_solar_wind_pyro
+            import matplotlib.pyplot as plt
+            
+            # Physical constants (CGS)
+            AU = 1.496e13  # cm
+            PROTON_MASS = 1.67262192e-24  # grams
+            BOLTZMANN = 1.380649e-16  # erg/K
+            KM_TO_CM = 1e5  # cm/km
+            
+            # Process each longitude
+            for i in range(self.lon.size):
+                print(f"\nProcessing longitude {i+1}/{self.lon.size}")
+                
+                # Get boundary conditions for this longitude
+                v_bc_kms = self.input_v_ts[:, i].value  # km/s
+                rho_bc_kgm3 = self.input_rho_ts[:, i].value  # kg/m³
+                T_bc_K = self.input_temp_ts[:, i].value  # K
+                
+                # Diagnostic: Check if boundary conditions are varying
+                v_min, v_max = v_bc_kms.min(), v_bc_kms.max()
+                print(f"  Boundary condition range: v=[{v_min:.1f}, {v_max:.1f}] km/s")
+                if v_max - v_min > 1.0:
+                    print(f"    Time-varying boundary detected!")
+                    # Find when perturbation occurs
+                    high_v_mask = v_bc_kms > (v_min + 0.5 * (v_max - v_min))
+                    if np.any(high_v_mask):
+                        high_v_indices = np.where(high_v_mask)[0]
+                        t_start = self.model_time[high_v_indices[0]].value / 86400
+                        t_end = self.model_time[high_v_indices[-1]].value / 86400
+                        print(f"    High velocity period: t={t_start:.2f} to {t_end:.2f} days")
+                
+                # Convert to CGS
+                # 1 kg/m³ = 1000 g / 1000000 cm³ = 0.001 g/cm³
+                v_bc_cgs = v_bc_kms * KM_TO_CM  # cm/s
+                rho_bc_cgs = rho_bc_kgm3 * 0.001  # kg/m³ to g/cm³
+                
+                # Also compute protons/cc for display
+                rho_bc_protons = rho_bc_cgs / PROTON_MASS  # g/cm³ to protons/cc
+                
+                # Convert HUXt radial grid to cm
+                rgrid_km = (self.rrel.value - self.rrel.value[0]) * 695700.0 + self.r[0].to('km').value
+                r_grid_cm = rgrid_km * KM_TO_CM
+                
+                # Time grid for pyro
+                # model_time includes full simulation + spin-up at high temporal resolution
+                # We need to run pyro over the full duration but only request output at specific times
+                
+                # Strip units from times
+                model_time_seconds = self.model_time.value if hasattr(self.model_time, 'value') else self.model_time
+                time_out_seconds = self.time_out.value if hasattr(self.time_out, 'value') else self.time_out
+                
+                # Check if model_time has negative values (spin-up period)
+                t_offset = 0.0
+                if model_time_seconds[0] < 0:
+                    # Pyro needs times starting at 0, so add offset
+                    t_offset = -model_time_seconds[0]
+                    print(f"  Model time: {model_time_seconds[0]/86400:.2f} to {model_time_seconds[-1]/86400:.2f} days")
+                    print(f"  Spin-up period: {t_offset/86400:.2f} days")
+                
+                # Create output time grid for pyro
+                # We want output at time_out points, but need to include spin-up times too
+                # Combine spin-up times with time_out
+                spinup_times = model_time_seconds[model_time_seconds < time_out_seconds[0]]
+                # Sample spin-up period at same rate as time_out to avoid too many points
+                dt_out = time_out_seconds[1] - time_out_seconds[0] if len(time_out_seconds) > 1 else self.dt_out.value
+                spinup_sampled = spinup_times[::int(max(1, len(spinup_times)//len(time_out_seconds)))]
+                
+                # Combine spinup and regular output times
+                t_grid_combined = np.concatenate([spinup_sampled, time_out_seconds])
+                t_grid_pyro = t_grid_combined + t_offset  # Apply offset for pyro
+                
+                print(f"  Output times: {len(t_grid_pyro)} snapshots ({len(spinup_sampled)} spin-up + {len(time_out_seconds)} main)")
+                
+                # Boundary condition functions (MUST return plain floats, no units)
+                # These use the ORIGINAL times (before offset) for interpolation
+                def v_bc_func(t):
+                    # Remove offset to get back to model_time coordinates
+                    t_model = t - t_offset
+                    return float(np.interp(t_model, model_time_seconds, v_bc_cgs))
+                
+                def rho_bc_func(t):
+                    t_model = t - t_offset
+                    return float(np.interp(t_model, model_time_seconds, rho_bc_cgs))
+                
+                def T_bc_func(t):
+                    t_model = t - t_offset
+                    return float(np.interp(t_model, model_time_seconds, T_bc_K))
+                
+                # TODO: Add particle tracking (CME, HCS, streaklines)
+                # For now, run without particles
+                
+                print(f"  Calling pyro...")
+                print(f"    r: {r_grid_cm[0]/AU:.4f} - {r_grid_cm[-1]/AU:.4f} AU")
+                print(f"    t: {t_grid_pyro[0]/86400:.2f} - {t_grid_pyro[-1]/86400:.2f} days (with offset)")
+                print(f"    v_bc: {v_bc_kms[0]:.1f} - {v_bc_kms[-1]:.1f} km/s")
+                
+                # Run pyro over FULL model_time (including spin-up)
+                results = run_solar_wind_pyro(
+                    r_grid=r_grid_cm,
+                    t_grid=t_grid_pyro,
+                    v_bc_func=v_bc_func,
+                    rho_bc_func=rho_bc_func,
+                    T_bc_func=T_bc_func,
+                    gamma=self.gamma,
+                    ntheta=1,
+                    cfl=0.8,
+                    riemann_solver="CGF",
+                    verbose=(i == 0),  # Only verbose for first longitude
+                    initial_profile="parker_nozzle",
+                    num_particles=0  # No particles for now
+                )
+                
+                # Extract data at time_out times (excluding spin-up)
+                # Pyro returned data at t_grid_combined times, we need just the time_out portion
+                
+                pyro_times = results['t'] - t_offset  # Remove offset to get back to model_time coordinates
+                
+                # Find indices corresponding to time_out in the combined grid
+                # The last nt_out points should correspond to time_out
+                n_spinup = len(spinup_sampled)
+                
+                if i == 0:
+                    print(f"  Extraction info:")
+                    print(f"    Total pyro snapshots: {len(results['t'])}")
+                    print(f"    Spin-up samples: {n_spinup}")
+                    print(f"    Expected time_out samples: {self.nt_out}")
+                    print(f"    Pyro time range: {pyro_times[0]/86400:.3f} to {pyro_times[-1]/86400:.3f} days")
+                    print(f"    time_out range: {time_out_seconds[0]/86400:.3f} to {time_out_seconds[-1]/86400:.3f} days")
+                
+                # Extract just the time_out portion (skip spin-up samples)
+                v_out = results['v'][n_spinup:, :]
+                rho_out = results['rho'][n_spinup:, :]
+                temp_out = results['T'][n_spinup:, :]
+                
+                # If pyro returned fewer points than expected, interpolate
+                if v_out.shape[0] != self.nt_out:
+                    print(f"  Warning: pyro returned {v_out.shape[0]} points, expected {self.nt_out}, interpolating...")
+                    v_interp = np.zeros((self.nt_out, self.nr))
+                    rho_interp = np.zeros((self.nt_out, self.nr))
+                    temp_interp = np.zeros((self.nt_out, self.nr))
+                    
+                    pyro_out_times = pyro_times[n_spinup:]
+                    
+                    if i == 0:
+                        print(f"    pyro_out_times: {len(pyro_out_times)} points from {pyro_out_times[0]/86400:.3f} to {pyro_out_times[-1]/86400:.3f} days")
+                        print(f"    v_out: shape {v_out.shape}, range [{v_out[:, 0].min()/1e5:.2f}, {v_out[:, 0].max()/1e5:.2f}] km/s at r[0]")
+                    
+                    for ir in range(self.nr):
+                        v_interp[:, ir] = np.interp(time_out_seconds, pyro_out_times, v_out[:, ir])
+                        rho_interp[:, ir] = np.interp(time_out_seconds, pyro_out_times, rho_out[:, ir])
+                        temp_interp[:, ir] = np.interp(time_out_seconds, pyro_out_times, temp_out[:, ir])
+                    
+                    if i == 0:
+                        print(f"    After interp: v_interp range [{v_interp[:, 0].min()/1e5:.2f}, {v_interp[:, 0].max()/1e5:.2f}] km/s at r[0]")
+                    
+                    v_out = v_interp
+                    rho_out = rho_interp
+                    temp_out = temp_interp
+                
+                # Convert to HUXt units and store
+                # v: cm/s → km/s
+                # rho: g/cm³ → kg/m³ (divide by 0.001)
+                # T: K (no conversion)
+                self.v_grid[:, :, i] = (v_out / KM_TO_CM) * self.kms
+                self.rho_grid[:, :, i] = (rho_out / 0.001) * (u.kg / u.m**3)
+                self.temp_grid[:, :, i] = temp_out * u.K
+                
+                # Plot results for first longitude only
+                if i == 0 and len(results['t']) > 1:
+                    print(f"  Creating diagnostic plots...")
+                    print(f"    Plot will show full runtime: {pyro_times[0]/86400:.2f} to {pyro_times[-1]/86400:.2f} days")
+                    # Create a copy of results with corrected times (offset removed)
+                    results_plot = results.copy()
+                    results_plot['t'] = pyro_times  # Use times in model_time coordinates
+                    _plot_pyro_inputs_outputs_(self.model_time.value, 
+                                              v_bc_kms, rho_bc_protons, T_bc_K,
+                                              results_plot, KM_TO_CM, PROTON_MASS)
+                elif i == 0:
+                    print(f"  Skipping plots (only {len(results['t'])} snapshots, need at least 2)")
+                
+                print(f"  Longitude {i+1} complete")
+            
+            print("\n" + "="*70)
+            print("CGF SOLVER COMPLETE")
+            print("="*70 + "\n")
+            
+            # Skip the normal longitude loop - CGF solver handled everything
+            # Set CME/HCS/streak arrays to NaN (not tracked with CGF yet)
+            self.cme_particles_r[:, :, :, :] = np.nan
+            self.cme_particles_v[:, :, :, :] = np.nan
+            if self.track_b:
+                self.hcs_particles_r[:, :, :, :] = np.nan
+            if self.track_streak:
+                self.streak_particles_r[:, :, :, :] = np.nan
+            
+            # Skip to CME tracking section
+            pass
+        
+        # ======================================================================
+        # Solve the time series at each longitude (BUILT-IN SOLVERS)
         # ======================================================================
         # Note: Grids are already in Fortran order from initialization, which makes
         # the [:, :, i] slices contiguous in memory for cache-efficient access
 
-        if self.parallel:
+        elif self.parallel:
             # Parallel execution using joblib
             results = Parallel(n_jobs=-1, backend='threading')(
                 delayed(self.process_longitude)(i, n_cme, n_hcs_max, streak_times) 
@@ -2034,6 +2264,194 @@ def _upwind_step_mol_(v_up, v_dn, rho_up, rho_dn, temp_up, temp_dn,
     
     # Extract interior points
     return v_next[1:], rho_next[1:], temp_next[1:]
+
+
+def _plot_pyro_inputs_outputs_(model_time, vinput, rhoinput, tempinput, 
+                                results, KM_TO_CM, PROTON_MASS):
+    """
+    Plot the boundary conditions going into pyro and the results coming out.
+    
+    This diagnostic function visualizes:
+    - Time-dependent boundary conditions (v, rho, T)
+    - Radial profiles at selected times
+    - Particle trajectories (if available)
+    """
+    import matplotlib.pyplot as plt
+    
+    fig = plt.figure(figsize=(16, 12))
+    
+    # Convert units for plotting
+    v_bc_kms = vinput  # Already in km/s
+    rho_bc_protons = rhoinput  # Already in protons/cc
+    T_bc_K = tempinput  # Already in K
+    
+    v_out_kms = results['v'] / KM_TO_CM  # cm/s to km/s
+    rho_out_protons = results['rho'] / PROTON_MASS  # g/cm³ to protons/cc
+    T_out_K = results['T']  # Already in K
+    
+    r_AU = results['r'] / 1.496e13  # cm to AU
+    t_days = results['t'] / 86400.0  # s to days
+    model_time_days = model_time / 86400.0
+    
+    print(f"    Plotting time range: {t_days.min():.2f} to {t_days.max():.2f} days ({len(t_days)} points)")
+    print(f"    Model time range: {model_time_days.min():.2f} to {model_time_days.max():.2f} days ({len(model_time_days)} points)")
+    
+    # Row 1: Boundary conditions (inputs)
+    ax1 = plt.subplot(4, 3, 1)
+    ax1.plot(model_time_days, v_bc_kms, 'b-', linewidth=2, label='Input BC')
+    ax1.set_ylabel('Velocity (km/s)')
+    ax1.set_title('Boundary Conditions (Input to Pyro)')
+    ax1.grid(True, alpha=0.3)
+    ax1.legend()
+    
+    ax2 = plt.subplot(4, 3, 2)
+    ax2.plot(model_time_days, rho_bc_protons, 'r-', linewidth=2, label='Input BC')
+    ax2.set_ylabel('Density (protons/cc)')
+    ax2.grid(True, alpha=0.3)
+    ax2.legend()
+    
+    ax3 = plt.subplot(4, 3, 3)
+    ax3.plot(model_time_days, T_bc_K / 1e6, 'g-', linewidth=2, label='Input BC')
+    ax3.set_ylabel('Temperature (MK)')
+    ax3.grid(True, alpha=0.3)
+    ax3.legend()
+    
+    # Row 2: Time evolution at inner boundary (comparing input vs output)
+    ax4 = plt.subplot(4, 3, 4)
+    ax4.plot(model_time_days, v_bc_kms, 'b--', linewidth=2, alpha=0.5, label='Input BC')
+    ax4.plot(t_days, v_out_kms[:, 0], 'b-', linewidth=2, label='Pyro output (r_in)')
+    ax4.axvline(0, color='k', linestyle=':', alpha=0.5, label='t=0 (sim start)')
+    ax4.set_ylabel('Velocity (km/s)')
+    ax4.set_title('Inner Boundary Evolution (including spin-up)')
+    ax4.grid(True, alpha=0.3)
+    ax4.legend()
+    
+    ax5 = plt.subplot(4, 3, 5)
+    ax5.plot(model_time_days, rho_bc_protons, 'r--', linewidth=2, alpha=0.5, label='Input BC')
+    ax5.plot(t_days, rho_out_protons[:, 0], 'r-', linewidth=2, label='Pyro output (r_in)')
+    ax5.axvline(0, color='k', linestyle=':', alpha=0.5, label='t=0 (sim start)')
+    ax5.set_ylabel('Density (protons/cc)')
+    ax5.grid(True, alpha=0.3)
+    ax5.legend()
+    
+    ax6 = plt.subplot(4, 3, 6)
+    ax6.plot(model_time_days, T_bc_K / 1e6, 'g--', linewidth=2, alpha=0.5, label='Input BC')
+    ax6.plot(t_days, T_out_K[:, 0] / 1e6, 'g-', linewidth=2, label='Pyro output (r_in)')
+    ax6.axvline(0, color='k', linestyle=':', alpha=0.5, label='t=0 (sim start)')
+    ax6.set_ylabel('Temperature (MK)')
+    ax6.grid(True, alpha=0.3)
+    ax6.legend()
+    
+    # Row 3: Radial profiles at selected times
+    # Only select times from the actual simulation (t >= 0), not spin-up
+    sim_mask = t_days >= 0
+    sim_indices = np.where(sim_mask)[0]
+    if len(sim_indices) > 0:
+        # Pick 4 times evenly spaced through the simulation period
+        n_sim = len(sim_indices)
+        time_indices = [sim_indices[0], 
+                       sim_indices[n_sim // 3], 
+                       sim_indices[2 * n_sim // 3], 
+                       sim_indices[-1]]
+    else:
+        # Fallback if no simulation times (shouldn't happen)
+        n_times = len(t_days)
+        time_indices = [0, n_times // 3, 2 * n_times // 3, -1]
+    colors = plt.cm.viridis(np.linspace(0, 1, len(time_indices)))
+    
+    ax7 = plt.subplot(4, 3, 7)
+    for idx, color in zip(time_indices, colors):
+        ax7.plot(r_AU, v_out_kms[idx, :], color=color, linewidth=2,
+                label=f't={t_days[idx]:.2f} days')
+    ax7.set_xlabel('Radius (AU)')
+    ax7.set_ylabel('Velocity (km/s)')
+    ax7.set_title('Radial Profiles (Pyro Output)')
+    ax7.grid(True, alpha=0.3)
+    ax7.legend()
+    
+    ax8 = plt.subplot(4, 3, 8)
+    for idx, color in zip(time_indices, colors):
+        ax8.semilogy(r_AU, rho_out_protons[idx, :], color=color, linewidth=2,
+                    label=f't={t_days[idx]:.2f} days')
+    ax8.set_xlabel('Radius (AU)')
+    ax8.set_ylabel('Density (protons/cc)')
+    ax8.grid(True, alpha=0.3)
+    ax8.legend()
+    
+    ax9 = plt.subplot(4, 3, 9)
+    for idx, color in zip(time_indices, colors):
+        ax9.semilogy(r_AU, T_out_K[idx, :] / 1e6, color=color, linewidth=2,
+                    label=f't={t_days[idx]:.2f} days')
+    ax9.set_xlabel('Radius (AU)')
+    ax9.set_ylabel('Temperature (MK)')
+    ax9.grid(True, alpha=0.3)
+    ax9.legend()
+    
+    # Row 4: Time-radius contours
+    T_grid, R_grid = np.meshgrid(t_days, r_AU, indexing='xy')
+    
+    ax10 = plt.subplot(4, 3, 10)
+    c10 = ax10.contourf(T_grid, R_grid, v_out_kms.T, levels=20, cmap='viridis')
+    plt.colorbar(c10, ax=ax10, label='Velocity (km/s)')
+    ax10.set_xlabel('Time (days)')
+    ax10.set_ylabel('Radius (AU)')
+    ax10.set_title('Velocity Evolution')
+    
+    ax11 = plt.subplot(4, 3, 11)
+    c11 = ax11.contourf(T_grid, R_grid, np.log10(rho_out_protons.T), levels=20, cmap='plasma')
+    plt.colorbar(c11, ax=ax11, label='log₁₀(n) [protons/cc]')
+    ax11.set_xlabel('Time (days)')
+    ax11.set_ylabel('Radius (AU)')
+    ax11.set_title('Density Evolution')
+    
+    ax12 = plt.subplot(4, 3, 12)
+    c12 = ax12.contourf(T_grid, R_grid, np.log10(T_out_K.T), levels=20, cmap='hot')
+    plt.colorbar(c12, ax=ax12, label='log₁₀(T) [K]')
+    ax12.set_xlabel('Time (days)')
+    ax12.set_ylabel('Radius (AU)')
+    ax12.set_title('Temperature Evolution')
+    
+    # Add particle trajectories if available
+    if 'particles' in results and results['particles'] is not None:
+        particles = results['particles']
+        
+        # Check if grouped particles
+        if 'groups' in particles:
+            # Plot each group with different colors
+            group_colors = {'cme': 'red', 'hcs': 'blue', 'streaklines': 'green'}
+            for group_name, group_data in particles['groups'].items():
+                r_traj = group_data['r'] / 1.496e13  # cm to AU
+                t_traj = group_data['t'] / 86400.0  # s to days
+                color = group_colors.get(group_name, 'gray')
+                
+                for i in range(r_traj.shape[0]):
+                    mask = ~np.isnan(r_traj[i, :])
+                    if np.any(mask):
+                        ax10.plot(t_traj[i, mask], r_traj[i, mask], 
+                                color=color, linewidth=0.5, alpha=0.6)
+                        ax11.plot(t_traj[i, mask], r_traj[i, mask], 
+                                color=color, linewidth=0.5, alpha=0.6)
+                        ax12.plot(t_traj[i, mask], r_traj[i, mask], 
+                                color=color, linewidth=0.5, alpha=0.6)
+        else:
+            # Single group mode
+            r_traj = particles['r'] / 1.496e13
+            t_traj = particles['t'] / 86400.0
+            
+            for i in range(r_traj.shape[0]):
+                mask = ~np.isnan(r_traj[i, :])
+                if np.any(mask):
+                    ax10.plot(t_traj[i, mask], r_traj[i, mask], 
+                            'w-', linewidth=0.5, alpha=0.6)
+                    ax11.plot(t_traj[i, mask], r_traj[i, mask], 
+                            'w-', linewidth=0.5, alpha=0.6)
+                    ax12.plot(t_traj[i, mask], r_traj[i, mask], 
+                            'w-', linewidth=0.5, alpha=0.6)
+    
+    plt.tight_layout()
+    plt.savefig('pyro_cgf_solver_diagnostic.png', dpi=150, bbox_inches='tight')
+    print(f"\nSaved diagnostic plot to: pyro_cgf_solver_diagnostic.png")
+    plt.show()
 
 
 @jit(nopython=True)
