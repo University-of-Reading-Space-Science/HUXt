@@ -55,8 +55,11 @@ HA.plot_timeseries(model2, r, lon=0.0)
 # filepath = os.path.join(data_path, 'wsa_gong_2024050906.fits')
 # vr_in = Hin.get_WSA_long_profile(filepath, lat=0.0 * u.deg)
 
+dirs = H._setup_dirs_()
+print(dirs)
 
 
+simtime = 1 *u.day
 # Set up HUXt
 cr=2120
 vr_in = Hin.get_MAS_long_profile(cr, 0.0*u.deg)
@@ -73,53 +76,56 @@ lon_grid = np.arange(dlon/2, 2*np.pi-dlon/2 + 0.0001, dlon)*u.rad
 
 # Get a list of two ConeCMEs
 daysec = 86400
-times = [0.5*u.day, 2*u.day]
-speeds = [1000, 850]
-lons = [-20, 20]
-widths = [60, 60]
-thickness = [8, 4]
+times = [0.5*u.day]
+speeds = [600]
+lons = [-20]
+widths = [60]
+thickness = [4]
 cme_list = []
 for t, l, w, v, thick in zip(times, lons, widths, speeds, thickness):
     cme = H.ConeCME(t_launch=t, longitude=l*u.deg, width=w*u.deg, v=v*u.km/u.s, 
-                    thickness=thick*u.solRad, density_fraction=1.0)
+                    thickness=thick*u.solRad, 
+                    density_fraction=0.5, temperature_fraction=0.5)
     cme_list.append(cme)
 
 
-# # Set up to trace a set of field lines from a range of evenly spaced Carrington longitudes
-# dlon = (20*u.deg).to(u.rad).value
-# lon_grid = np.arange(dlon/2, 2*np.pi-dlon/2 + 0.0001, dlon)*u.rad
+# Set up to trace a set of field lines from a range of evenly spaced Carrington longitudes
+dlon = (20*u.deg).to(u.rad).value
+lon_grid = np.arange(dlon/2, 2*np.pi-dlon/2 + 0.0001, dlon)*u.rad
 
 # Give the streakline footpoints (in Carr long) to the solve method
-model_comp = H.HUXt(v_boundary=vr_in, lon_start=300*u.deg, lon_stop=60*u.deg, simtime=5*u.day, dt_scale=4, 
-                    compressible=True, solver ='upwind')
-model_comp.solve(cme_list)
+# model_comp = H.HUXt(v_boundary=vr_in, lon_start=330*u.deg, lon_stop = 30*u.deg,
+#                      simtime=5*u.day, dt_scale=4, 
+#                     compressible=True, solver ='upwind')
+# model_comp.solve(cme_list, streak_carr=lon_grid)
+# HA.plot_earth_timeseries(model_comp)
 
-t_interest = 3*u.day
-H#A.plot(model_comp, t_interest)
-#HA.plot_compressible(model_comp, t_interest, tag = 'compressible_with_CME')
-HA.plot_earth_timeseries(model_comp)
+t_interest = 0.95*u.day
 
-model_incomp = H.HUXt(v_boundary=vr_in, lon_start=300*u.deg, lon_stop=60*u.deg, simtime=5*u.day, dt_scale=4, 
+
+model_incomp = H.HUXt(v_boundary=vr_in, lon_start=330*u.deg, lon_stop = 30*u.deg, 
+                      simtime=simtime, dt_scale=4, 
                     compressible=False, solver ='upwind')
-model_incomp.solve(cme_list)
+model_incomp.solve(cme_list, streak_carr=lon_grid)
 HA.plot_earth_timeseries(model_incomp)
+HA.plot(model_incomp, time=t_interest)
 
-model_comp_hll = H.HUXt(v_boundary=vr_in, lon_start=300*u.deg, lon_stop=60*u.deg, simtime=5*u.day, dt_scale=4, 
-                    compressible=True, solver ='hll')
-model_comp_hll.solve(cme_list)
-HA.plot_earth_timeseries(model_comp_hll)
+# model_comp_hll = H.HUXt(v_boundary=vr_in, lon_out=0*u.deg, simtime=5*u.day, dt_scale=4, 
+#                     compressible=True, solver ='hll')
+# model_comp_hll.solve(cme_list)
+# HA.plot_earth_timeseries(model_comp_hll)
 
-model_comp_hllc = H.HUXt(v_boundary=vr_in, lon_start=300*u.deg, lon_stop=60*u.deg, simtime=5*u.day, dt_scale=4, 
-                    compressible=True, solver ='hllc')
-model_comp_hllc.solve(cme_list)
-HA.plot_earth_timeseries(model_comp_hllc)
-#HA.animate(model_comp, tag = 'compressible_with_CME')
+model_comp_cgf = H.HUXt(v_boundary=vr_in, lon_start=330*u.deg, lon_stop = 30*u.deg,
+                        simtime=simtime, dt_scale=4, 
+                    compressible=True, solver ='cgf')
+model_comp_cgf.solve(cme_list, streak_carr=lon_grid)
+HA.plot_earth_timeseries(model_comp_cgf)
+HA.plot(model_comp_cgf, time=t_interest)
+# HA.animate(model_comp, tag = 'compressible_with_CME')
 
-plt.show()
-# #Repeat with incompressible model
-# model_incomp = H.HUXt(v_boundary=vr_in, lon_start=300*u.deg, lon_stop=60*u.deg, simtime=5*u.day, dt_scale=4,
-#                         compressible=False)
-# model_incomp.solve(cme_list)
+# Use block=True to ensure plot windows stay open until closed by user
+plt.show(block=True)
+
 
 #HA.plot(model_incomp, t_interest)
 #HA.animate(model_incomp, tag =  'incompressible_with_CME')

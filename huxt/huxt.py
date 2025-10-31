@@ -626,6 +626,11 @@ class HUXt:
         
         self.solver = solver
         
+        # CGF solver requires compressible mode - force it regardless of user setting
+        if solver == 'cgf' and not compressible:
+            print("Note: CGF solver requires compressible=True. Enabling compressible mode.")
+            compressible = True
+        
         # Store parallel computation flag
         self.parallel = parallel
 
@@ -922,26 +927,9 @@ class HUXt:
             # Rectify so that it is between 0 - 2pi
             loninit = zerototwopi(lonint)
             
-            # DEBUG: Check longitude mapping
-            if i == 0:
-                print(f"\n  DEBUG ts_from_vlong for longitude {i}:")
-                print(f"    lon_out: {lon_out * 180/np.pi:.1f} deg")
-                print(f"    lon_start: {lon_start * 180/np.pi:.1f} deg, lon_stop: {lon_stop * 180/np.pi:.1f} deg")
-                print(f"    loninit range: {loninit.min() * 180/np.pi:.1f} - {loninit.max() * 180/np.pi:.1f} deg")
-                print(f"    v_boundary_lons range: {self.v_boundary_lons.value.min() * 180/np.pi:.1f} - {self.v_boundary_lons.value.max() * 180/np.pi:.1f} deg")
-            
             # Interpolate the inner boundary speed to this higher resolution
             vinit = np.interp(loninit, self.v_boundary_lons.value, self.v_boundary.value, period=2 * np.pi)
             
-            # DEBUG: Check if perturbation made it through
-            if i == 0:
-                print(f"    vinit range: {vinit.min():.1f} - {vinit.max():.1f} km/s")
-                # Check if v_boundary has the perturbation
-                print(f"    v_boundary input range: {self.v_boundary.value.min():.1f} - {self.v_boundary.value.max():.1f} km/s")
-                high_v_indices = np.where(self.v_boundary.value > 500)[0]
-                if len(high_v_indices) > 0:
-                    print(f"    v_boundary has {len(high_v_indices)} points > 500 km/s at indices {high_v_indices[0]}-{high_v_indices[-1]}")
-                    print(f"    These correspond to longitudes: {self.v_boundary_lons.value[high_v_indices[0]] * 180/np.pi:.1f} - {self.v_boundary_lons.value[high_v_indices[-1]] * 180/np.pi:.1f} deg")
             # convert from cr longitude to timesolve
             vinput = np.flipud(vinit) * (u.km / u.s)
             # Store the input series
@@ -1016,6 +1004,197 @@ class HUXt:
                                                                       solver=self.solver)
         
         return (i, v, cme_r_bounds, cme_v_bounds, hcs_r, streak_r, rho_out, temp_out)
+    
+    def process_longitude_cgf(self, i, n_cme, n_hcs_max, streak_times, rgrid_km):
+        """
+        Process a single longitude slice using the CGF (pyro) solver.
+        This helper function is used for parallel execution across longitudes.
+        
+        Args:
+            i: Longitude index to process
+            n_cme: Number of CMEs
+            n_hcs_max: Maximum number of HCS particles
+            streak_times: Streakline timing data
+            rgrid_km: Radial grid in km
+            
+        Returns:
+            Dictionary with results for this longitude
+        """
+        # Get boundary conditions for this longitude
+        v_bc_kms = self.input_v_ts[:, i].value  # km/s
+        rho_bc_kgm3 = self.input_rho_ts[:, i].value  # kg/m³
+        T_bc_K = self.input_temp_ts[:, i].value  # K
+        
+        # Set up particle tracking for this longitude
+        num_particles = 0
+        particle_injection_rate = None
+        
+        if self.track_cmes or self.track_b or self.track_streak:
+            num_particles = {}
+            particle_injection_rate = {}
+            
+            # CME particles: track leading and trailing edges
+            if self.track_cmes and n_cme > 0:
+                for cme_id in range(n_cme):
+                    # Find times when this CME crosses this longitude
+                    cme_mask = (self.input_iscme_ts[:, i] == cme_id + 1)
+                    if np.any(cme_mask):
+                        # Leading edge injected at start of CME
+                        leading_idx = np.where(cme_mask)[0][0]
+                        t_leading = self.model_time[leading_idx].value if hasattr(self.model_time[leading_idx], 'value') else self.model_time[leading_idx]
+                        
+                        # Trailing edge injected at end of CME
+                        trailing_idx = np.where(cme_mask)[0][-1]
+                        t_trailing = self.model_time[trailing_idx].value if hasattr(self.model_time[trailing_idx], 'value') else self.model_time[trailing_idx]
+                        
+                        num_particles[f'cme_{cme_id}_leading'] = 1
+                        num_particles[f'cme_{cme_id}_trailing'] = 1
+                        particle_injection_rate[f'cme_{cme_id}_leading'] = [t_leading]
+                        particle_injection_rate[f'cme_{cme_id}_trailing'] = [t_trailing]
+            
+            # HCS particles: inject at each polarity change
+            if self.track_b and n_hcs_max > 0:
+                hcs_times = []
+                b_input = self.input_b_ts[:, i].value
+                for t in range(1, len(b_input)):
+                    if b_input[t] - b_input[t-1] != 0:  # Polarity change
+                        t_hcs = self.model_time[t].value if hasattr(self.model_time[t], 'value') else self.model_time[t]
+                        hcs_times.append(t_hcs)
+                
+                if len(hcs_times) > 0:
+                    num_particles['hcs'] = len(hcs_times)
+                    particle_injection_rate['hcs'] = hcs_times
+            
+            # Streakline particles: inject according to streak_times
+            if self.track_streak:
+                # streak_times has shape (nlon, n_streaks, n_rots, 2)
+                # where last dim is [time_index, rotation_number]
+                streak_data = streak_times[i, :, :, 0]  # Get time indices for this longitude
+                n_streaks = streak_data.shape[0]
+                n_rots = streak_data.shape[1]
+                
+                for istreak in range(n_streaks):
+                    for irot in range(n_rots):
+                        time_idx = streak_data[istreak, irot]
+                        if not np.isnan(time_idx):
+                            streak_name = f'streak_{istreak}_rot_{irot}'
+                            t_inject = self.model_time[int(time_idx)]
+                            t_inject = t_inject.value if hasattr(t_inject, 'value') else t_inject
+                            num_particles[streak_name] = 1
+                            particle_injection_rate[streak_name] = [t_inject]
+            
+            # If no particles were actually added, revert to no tracking
+            if len(num_particles) == 0:
+                num_particles = 0
+                particle_injection_rate = None
+        
+        # Call consolidated CGF solver function with particle tracking
+        v_out_kms, rho_out_kgm3, temp_out_K, particle_data = solve_radial_cgf(
+            v_bc_kms=v_bc_kms,
+            rho_bc_kgm3=rho_bc_kgm3,
+            T_bc_K=T_bc_K,
+            model_time=self.model_time,
+            time_out=self.time_out,
+            r_grid=rgrid_km,
+            gamma=self.gamma,
+            nt_out=self.nt_out,
+            nr=self.nr,
+            verbose=False,  # Suppress detailed pyro output in parallel mode
+            create_diagnostic_plot=False,  # No plots in parallel mode
+            num_particles=num_particles,
+            particle_injection_rate=particle_injection_rate
+        )
+        
+        # Extract particle positions at output times
+        cme_particles_r_out = None
+        hcs_particles_r_out = None
+        streak_particles_r_out = None
+        
+        if particle_data is not None and 'groups' in particle_data:
+            groups = particle_data['groups']
+            
+            # Get time_out as plain array (strip units if present)
+            time_out_sec = self.time_out.value if hasattr(self.time_out, 'value') else self.time_out
+            
+            # Initialize arrays
+            cme_particles_r_out = np.full((n_cme, self.nt_out, 2), np.nan)
+            hcs_particles_r_out = np.full((n_hcs_max, self.nt_out, 2), np.nan)
+            if self.track_streak:
+                streak_data = streak_times[i, :, :, 0]
+                n_streaks = streak_data.shape[0]
+                n_rots = streak_data.shape[1]
+                streak_particles_r_out = np.full((self.nt_out, n_streaks, n_rots), np.nan)
+            
+            # Process CME particles
+            if self.track_cmes:
+                for cme_id in range(n_cme):
+                    leading_key = f'cme_{cme_id}_leading'
+                    trailing_key = f'cme_{cme_id}_trailing'
+                    
+                    if leading_key in groups:
+                        r_traj = groups[leading_key]['r'][0, :]
+                        t_traj = groups[leading_key]['t'][0, :]
+                        valid_mask = ~np.isnan(r_traj)
+                        if np.any(valid_mask):
+                            r_valid = r_traj[valid_mask]
+                            t_valid = t_traj[valid_mask]
+                            r_out = np.interp(time_out_sec, t_valid, r_valid, 
+                                             left=np.nan, right=np.nan)
+                            cme_particles_r_out[cme_id, :, 0] = r_out
+                    
+                    if trailing_key in groups:
+                        r_traj = groups[trailing_key]['r'][0, :]
+                        t_traj = groups[trailing_key]['t'][0, :]
+                        valid_mask = ~np.isnan(r_traj)
+                        if np.any(valid_mask):
+                            r_valid = r_traj[valid_mask]
+                            t_valid = t_traj[valid_mask]
+                            r_out = np.interp(time_out_sec, t_valid, r_valid,
+                                             left=np.nan, right=np.nan)
+                            cme_particles_r_out[cme_id, :, 1] = r_out
+            
+            # Process HCS particles
+            if self.track_b and 'hcs' in groups:
+                hcs_group = groups['hcs']
+                n_hcs_this_lon = hcs_group['n_particles']
+                
+                for ihcs in range(min(n_hcs_this_lon, n_hcs_max)):
+                    r_traj = hcs_group['r'][ihcs, :]
+                    t_traj = hcs_group['t'][ihcs, :]
+                    valid_mask = ~np.isnan(r_traj)
+                    if np.any(valid_mask):
+                        r_valid = r_traj[valid_mask]
+                        t_valid = t_traj[valid_mask]
+                        r_out = np.interp(time_out_sec, t_valid, r_valid,
+                                         left=np.nan, right=np.nan)
+                        hcs_particles_r_out[ihcs, :, 0] = r_out
+                        hcs_particles_r_out[ihcs, :, 1] = 1.0  # Placeholder for polarity
+            
+            # Process streakline particles
+            if self.track_streak:
+                for istreak in range(n_streaks):
+                    for irot in range(n_rots):
+                        streak_name = f'streak_{istreak}_rot_{irot}'
+                        if streak_name in groups:
+                            r_traj = groups[streak_name]['r'][0, :]
+                            t_traj = groups[streak_name]['t'][0, :]
+                            valid_mask = ~np.isnan(r_traj)
+                            if np.any(valid_mask):
+                                r_valid = r_traj[valid_mask]
+                                t_valid = t_traj[valid_mask]
+                                r_out = np.interp(time_out_sec, t_valid, r_valid,
+                                                 left=np.nan, right=np.nan)
+                                streak_particles_r_out[:, istreak, irot] = r_out
+        
+        return {
+            'lon_idx': i,
+            'v': v_out_kms,
+            'rho': rho_out_kgm3,
+            'temp': temp_out_K,
+            'cme_particles_r': cme_particles_r_out,
+            'hcs_particles_r': hcs_particles_r_out,
+            'streak_particles_r': streak_particles_r_out
+        }
     
     def set_gamma(self, new_gamma):
         """
@@ -1271,211 +1450,234 @@ class HUXt:
         # CGF (PYRO) SOLVER - Handle separately from built-in solvers
         # ======================================================================
         if self.solver == 'cgf':
+            import time
+            solve_start = time.time()
+            
             print("\n" + "="*70)
             print("USING CGF SOLVER (PYRO)")
             print("="*70)
             print(f"Frame: {self.frame}")
+            print(f"Parallel: {self.parallel}")
             print(f"v_boundary: {len(self.v_boundary)} longitudes, range [{self.v_boundary.value.min():.1f}, {self.v_boundary.value.max():.1f}] km/s")
             if self.v_boundary.value.max() - self.v_boundary.value.min() > 1.0:
                 print(f"  ** Spatial structure detected in v_boundary **")
             
             # CGF solver requires separate handling - call pyro for each longitude
-            from huxt.solar_wind_pyro_solver import run_solar_wind_pyro
-            import matplotlib.pyplot as plt
+            # Convert HUXt radial grid to km for solve_radial_cgf
+            rgrid_km = (self.rrel.value - self.rrel.value[0]) * 695700.0 + self.r[0].to('km').value
             
-            # Physical constants (CGS)
-            AU = 1.496e13  # cm
-            PROTON_MASS = 1.67262192e-24  # grams
-            BOLTZMANN = 1.380649e-16  # erg/K
-            KM_TO_CM = 1e5  # cm/km
-            
-            # Process each longitude
-            for i in range(self.lon.size):
-                print(f"\nProcessing longitude {i+1}/{self.lon.size}")
-                
-                # Get boundary conditions for this longitude
-                v_bc_kms = self.input_v_ts[:, i].value  # km/s
-                rho_bc_kgm3 = self.input_rho_ts[:, i].value  # kg/m³
-                T_bc_K = self.input_temp_ts[:, i].value  # K
-                
-                # Diagnostic: Check if boundary conditions are varying
-                v_min, v_max = v_bc_kms.min(), v_bc_kms.max()
-                print(f"  Boundary condition range: v=[{v_min:.1f}, {v_max:.1f}] km/s")
-                if v_max - v_min > 1.0:
-                    print(f"    Time-varying boundary detected!")
-                    # Find when perturbation occurs
-                    high_v_mask = v_bc_kms > (v_min + 0.5 * (v_max - v_min))
-                    if np.any(high_v_mask):
-                        high_v_indices = np.where(high_v_mask)[0]
-                        t_start = self.model_time[high_v_indices[0]].value / 86400
-                        t_end = self.model_time[high_v_indices[-1]].value / 86400
-                        print(f"    High velocity period: t={t_start:.2f} to {t_end:.2f} days")
-                
-                # Convert to CGS
-                # 1 kg/m³ = 1000 g / 1000000 cm³ = 0.001 g/cm³
-                v_bc_cgs = v_bc_kms * KM_TO_CM  # cm/s
-                rho_bc_cgs = rho_bc_kgm3 * 0.001  # kg/m³ to g/cm³
-                
-                # Also compute protons/cc for display
-                rho_bc_protons = rho_bc_cgs / PROTON_MASS  # g/cm³ to protons/cc
-                
-                # Convert HUXt radial grid to cm
-                rgrid_km = (self.rrel.value - self.rrel.value[0]) * 695700.0 + self.r[0].to('km').value
-                r_grid_cm = rgrid_km * KM_TO_CM
-                
-                # Time grid for pyro
-                # model_time includes full simulation + spin-up at high temporal resolution
-                # We need to run pyro over the full duration but only request output at specific times
-                
-                # Strip units from times
-                model_time_seconds = self.model_time.value if hasattr(self.model_time, 'value') else self.model_time
-                time_out_seconds = self.time_out.value if hasattr(self.time_out, 'value') else self.time_out
-                
-                # Check if model_time has negative values (spin-up period)
-                t_offset = 0.0
-                if model_time_seconds[0] < 0:
-                    # Pyro needs times starting at 0, so add offset
-                    t_offset = -model_time_seconds[0]
-                    print(f"  Model time: {model_time_seconds[0]/86400:.2f} to {model_time_seconds[-1]/86400:.2f} days")
-                    print(f"  Spin-up period: {t_offset/86400:.2f} days")
-                
-                # Create output time grid for pyro
-                # We want output at time_out points, but need to include spin-up times too
-                # Combine spin-up times with time_out
-                spinup_times = model_time_seconds[model_time_seconds < time_out_seconds[0]]
-                # Sample spin-up period at same rate as time_out to avoid too many points
-                dt_out = time_out_seconds[1] - time_out_seconds[0] if len(time_out_seconds) > 1 else self.dt_out.value
-                spinup_sampled = spinup_times[::int(max(1, len(spinup_times)//len(time_out_seconds)))]
-                
-                # Combine spinup and regular output times
-                t_grid_combined = np.concatenate([spinup_sampled, time_out_seconds])
-                t_grid_pyro = t_grid_combined + t_offset  # Apply offset for pyro
-                
-                print(f"  Output times: {len(t_grid_pyro)} snapshots ({len(spinup_sampled)} spin-up + {len(time_out_seconds)} main)")
-                
-                # Boundary condition functions (MUST return plain floats, no units)
-                # These use the ORIGINAL times (before offset) for interpolation
-                def v_bc_func(t):
-                    # Remove offset to get back to model_time coordinates
-                    t_model = t - t_offset
-                    return float(np.interp(t_model, model_time_seconds, v_bc_cgs))
-                
-                def rho_bc_func(t):
-                    t_model = t - t_offset
-                    return float(np.interp(t_model, model_time_seconds, rho_bc_cgs))
-                
-                def T_bc_func(t):
-                    t_model = t - t_offset
-                    return float(np.interp(t_model, model_time_seconds, T_bc_K))
-                
-                # TODO: Add particle tracking (CME, HCS, streaklines)
-                # For now, run without particles
-                
-                print(f"  Calling pyro...")
-                print(f"    r: {r_grid_cm[0]/AU:.4f} - {r_grid_cm[-1]/AU:.4f} AU")
-                print(f"    t: {t_grid_pyro[0]/86400:.2f} - {t_grid_pyro[-1]/86400:.2f} days (with offset)")
-                print(f"    v_bc: {v_bc_kms[0]:.1f} - {v_bc_kms[-1]:.1f} km/s")
-                
-                # Run pyro over FULL model_time (including spin-up)
-                results = run_solar_wind_pyro(
-                    r_grid=r_grid_cm,
-                    t_grid=t_grid_pyro,
-                    v_bc_func=v_bc_func,
-                    rho_bc_func=rho_bc_func,
-                    T_bc_func=T_bc_func,
-                    gamma=self.gamma,
-                    ntheta=1,
-                    cfl=0.8,
-                    riemann_solver="CGF",
-                    verbose=(i == 0),  # Only verbose for first longitude
-                    initial_profile="parker_nozzle",
-                    num_particles=0  # No particles for now
+            if self.parallel:
+                # Parallel execution
+                print(f"\nProcessing {self.lon.size} longitudes in parallel...")
+                results = Parallel(n_jobs=-1, backend='threading')(
+                    delayed(self.process_longitude_cgf)(i, n_cme, n_hcs_max, streak_times, rgrid_km)
+                    for i in range(self.lon.size)
                 )
                 
-                # Extract data at time_out times (excluding spin-up)
-                # Pyro returned data at t_grid_combined times, we need just the time_out portion
-                
-                pyro_times = results['t'] - t_offset  # Remove offset to get back to model_time coordinates
-                
-                # Find indices corresponding to time_out in the combined grid
-                # The last nt_out points should correspond to time_out
-                n_spinup = len(spinup_sampled)
-                
-                if i == 0:
-                    print(f"  Extraction info:")
-                    print(f"    Total pyro snapshots: {len(results['t'])}")
-                    print(f"    Spin-up samples: {n_spinup}")
-                    print(f"    Expected time_out samples: {self.nt_out}")
-                    print(f"    Pyro time range: {pyro_times[0]/86400:.3f} to {pyro_times[-1]/86400:.3f} days")
-                    print(f"    time_out range: {time_out_seconds[0]/86400:.3f} to {time_out_seconds[-1]/86400:.3f} days")
-                
-                # Extract just the time_out portion (skip spin-up samples)
-                v_out = results['v'][n_spinup:, :]
-                rho_out = results['rho'][n_spinup:, :]
-                temp_out = results['T'][n_spinup:, :]
-                
-                # If pyro returned fewer points than expected, interpolate
-                if v_out.shape[0] != self.nt_out:
-                    print(f"  Warning: pyro returned {v_out.shape[0]} points, expected {self.nt_out}, interpolating...")
-                    v_interp = np.zeros((self.nt_out, self.nr))
-                    rho_interp = np.zeros((self.nt_out, self.nr))
-                    temp_interp = np.zeros((self.nt_out, self.nr))
+                # Unpack results into grids
+                for result in results:
+                    i = result['lon_idx']
+                    self.v_grid[:, :, i] = result['v'] * self.kms
+                    self.rho_grid[:, :, i] = result['rho'] * (u.kg / u.m**3)
+                    self.temp_grid[:, :, i] = result['temp'] * u.K
                     
-                    pyro_out_times = pyro_times[n_spinup:]
-                    
-                    if i == 0:
-                        print(f"    pyro_out_times: {len(pyro_out_times)} points from {pyro_out_times[0]/86400:.3f} to {pyro_out_times[-1]/86400:.3f} days")
-                        print(f"    v_out: shape {v_out.shape}, range [{v_out[:, 0].min()/1e5:.2f}, {v_out[:, 0].max()/1e5:.2f}] km/s at r[0]")
-                    
-                    for ir in range(self.nr):
-                        v_interp[:, ir] = np.interp(time_out_seconds, pyro_out_times, v_out[:, ir])
-                        rho_interp[:, ir] = np.interp(time_out_seconds, pyro_out_times, rho_out[:, ir])
-                        temp_interp[:, ir] = np.interp(time_out_seconds, pyro_out_times, temp_out[:, ir])
-                    
-                    if i == 0:
-                        print(f"    After interp: v_interp range [{v_interp[:, 0].min()/1e5:.2f}, {v_interp[:, 0].max()/1e5:.2f}] km/s at r[0]")
-                    
-                    v_out = v_interp
-                    rho_out = rho_interp
-                    temp_out = temp_interp
+                    if result['cme_particles_r'] is not None:
+                        self.cme_particles_r[:, :, :, i] = result['cme_particles_r']
+                    if result['hcs_particles_r'] is not None:
+                        self.hcs_particles_r[:, :, :, i] = result['hcs_particles_r']
+                    if result['streak_particles_r'] is not None:
+                        self.streak_particles_r[:, :, :, i] = result['streak_particles_r']
+            else:
+                # Serial execution
+                print(f"\nProcessing {self.lon.size} longitudes serially...")
+                for i in range(self.lon.size):
+                    print(f"  Longitude {i+1}/{self.lon.size}")
+
+                    # Get boundary conditions for this longitude
+                    v_bc_kms = self.input_v_ts[:, i].value  # km/s
+                    rho_bc_kgm3 = self.input_rho_ts[:, i].value  # kg/m³
+                    T_bc_K = self.input_temp_ts[:, i].value  # K
+
+                    # Set up particle tracking for this longitude
+                    num_particles = 0
+                    particle_injection_rate = None
+
+                    if self.track_cmes or self.track_b or self.track_streak:
+                        num_particles = {}
+                        particle_injection_rate = {}
+
+                        # CME particles: track leading and trailing edges
+                        if self.track_cmes and n_cme > 0:
+                            for cme_id in range(n_cme):
+                                # Find times when this CME crosses this longitude
+                                cme_mask = (self.input_iscme_ts[:, i] == cme_id + 1)
+                                if np.any(cme_mask):
+                                    # Leading edge injected at start of CME
+                                    leading_idx = np.where(cme_mask)[0][0]
+                                    t_leading = self.model_time[leading_idx].value if hasattr(self.model_time[leading_idx], 'value') else self.model_time[leading_idx]
+
+                                    # Trailing edge injected at end of CME
+                                    trailing_idx = np.where(cme_mask)[0][-1]
+                                    t_trailing = self.model_time[trailing_idx].value if hasattr(self.model_time[trailing_idx], 'value') else self.model_time[trailing_idx]
+
+                                    num_particles[f'cme_{cme_id}_leading'] = 1
+                                    num_particles[f'cme_{cme_id}_trailing'] = 1
+                                    particle_injection_rate[f'cme_{cme_id}_leading'] = [t_leading]
+                                    particle_injection_rate[f'cme_{cme_id}_trailing'] = [t_trailing]
+
+                        # HCS particles: inject at each polarity change
+                        if self.track_b and n_hcs_max > 0:
+                            hcs_times = []
+                            b_input = self.input_b_ts[:, i].value
+                            for t in range(1, len(b_input)):
+                                if b_input[t] - b_input[t-1] != 0:  # Polarity change
+                                    t_hcs = self.model_time[t].value if hasattr(self.model_time[t], 'value') else self.model_time[t]
+                                    hcs_times.append(t_hcs)
+
+                            if len(hcs_times) > 0:
+                                num_particles['hcs'] = len(hcs_times)
+                                particle_injection_rate['hcs'] = hcs_times
+
+                        # Streakline particles: inject according to streak_times
+                        if self.track_streak:
+                            # streak_times has shape (nlon, n_streaks, n_rots, 2)
+                            # where last dim is [time_index, rotation_number]
+                            streak_data = streak_times[i, :, :, 0]  # Get time indices for this longitude
+                            n_streaks = streak_data.shape[0]
+                            n_rots = streak_data.shape[1]
+
+                            for istreak in range(n_streaks):
+                                for irot in range(n_rots):
+                                    time_idx = streak_data[istreak, irot]
+                                    if not np.isnan(time_idx):
+                                        streak_name = f'streak_{istreak}_rot_{irot}'
+                                        t_inject = self.model_time[int(time_idx)]
+                                        t_inject = t_inject.value if hasattr(t_inject, 'value') else t_inject
+                                        num_particles[streak_name] = 1
+                                        particle_injection_rate[streak_name] = [t_inject]
+
+                        # If no particles were actually added, revert to no tracking
+                        if len(num_particles) == 0:
+                            num_particles = 0
+                            particle_injection_rate = None
+
+                    # Call consolidated CGF solver function with particle tracking
+                    v_out_kms, rho_out_kgm3, temp_out_K, particle_data = solve_radial_cgf(
+                        v_bc_kms=v_bc_kms,
+                        rho_bc_kgm3=rho_bc_kgm3,
+                        T_bc_K=T_bc_K,
+                        model_time=self.model_time,
+                        time_out=self.time_out,
+                        r_grid=rgrid_km,
+                        gamma=self.gamma,
+                        nt_out=self.nt_out,
+                        nr=self.nr,
+                        verbose=False,  # Suppress detailed pyro output to avoid slowdown
+                        create_diagnostic_plot='False',  # Only plot for first longitude
+                        num_particles=num_particles,
+                        particle_injection_rate=particle_injection_rate
+                    )
+
+                    # Store results in HUXt grids with units
+                    self.v_grid[:, :, i] = v_out_kms * self.kms
+                    self.rho_grid[:, :, i] = rho_out_kgm3 * (u.kg / u.m**3)
+                    self.temp_grid[:, :, i] = temp_out_K * u.K
+
+                    # Extract particle positions at output times and store in HUXt arrays
+                    if particle_data is not None and 'groups' in particle_data:
+                        groups = particle_data['groups']
+
+                        # Get time_out as plain array (strip units if present)
+                        time_out_sec = self.time_out.value if hasattr(self.time_out, 'value') else self.time_out
+
+                        # Process CME particles
+                        if self.track_cmes:
+                            for cme_id in range(n_cme):
+                                leading_key = f'cme_{cme_id}_leading'
+                                trailing_key = f'cme_{cme_id}_trailing'
+
+                                if leading_key in groups:
+                                    # Interpolate particle position to output times
+                                    r_traj = groups[leading_key]['r'][0, :]  # Shape: (n_timesteps,) in km
+                                    t_traj = groups[leading_key]['t'][0, :]  # Shape: (n_timesteps,) in seconds
+
+                                    # Remove NaNs from trajectory
+                                    valid_mask = ~np.isnan(r_traj)
+                                    if np.any(valid_mask):
+                                        r_valid = r_traj[valid_mask]
+                                        t_valid = t_traj[valid_mask]
+
+                                        # Interpolate to output times (both plain arrays now)
+                                        r_out = np.interp(time_out_sec, t_valid, r_valid,
+                                                         left=np.nan, right=np.nan)
+                                        self.cme_particles_r[cme_id, :, 0, i] = r_out
+
+                                if trailing_key in groups:
+                                    r_traj = groups[trailing_key]['r'][0, :]
+                                    t_traj = groups[trailing_key]['t'][0, :]
+
+                                    valid_mask = ~np.isnan(r_traj)
+                                    if np.any(valid_mask):
+                                        r_valid = r_traj[valid_mask]
+                                        t_valid = t_traj[valid_mask]
+
+                                        r_out = np.interp(time_out_sec, t_valid, r_valid,
+                                                         left=np.nan, right=np.nan)
+                                        self.cme_particles_r[cme_id, :, 1, i] = r_out
+
+                        # Process HCS particles
+                        if self.track_b and 'hcs' in groups:
+                            hcs_group = groups['hcs']
+                            n_hcs_this_lon = hcs_group['n_particles']
+
+                            for ihcs in range(min(n_hcs_this_lon, n_hcs_max)):
+                                r_traj = hcs_group['r'][ihcs, :]
+                                t_traj = hcs_group['t'][ihcs, :]
+
+                                valid_mask = ~np.isnan(r_traj)
+                                if np.any(valid_mask):
+                                    r_valid = r_traj[valid_mask]
+                                    t_valid = t_traj[valid_mask]
+
+                                    r_out = np.interp(time_out_sec, t_valid, r_valid,
+                                                     left=np.nan, right=np.nan)
+                                    self.hcs_particles_r[ihcs, :, 0, i] = r_out
+                                    # Store polarity sign in second component
+                                    # (Determine from b_input at injection time)
+                                    self.hcs_particles_r[ihcs, :, 1, i] = 1.0  # Placeholder
+
+                        # Process streakline particles
+                        if self.track_streak:
+                            streak_data = streak_times[i, :, :, 0]
+                            n_streaks = streak_data.shape[0]
+                            n_rots = streak_data.shape[1]
+
+                            for istreak in range(n_streaks):
+                                for irot in range(n_rots):
+                                    streak_name = f'streak_{istreak}_rot_{irot}'
+                                    if streak_name in groups:
+                                        r_traj = groups[streak_name]['r'][0, :]
+                                        t_traj = groups[streak_name]['t'][0, :]
+
+                                        valid_mask = ~np.isnan(r_traj)
+                                        if np.any(valid_mask):
+                                            r_valid = r_traj[valid_mask]
+                                            t_valid = t_traj[valid_mask]
+
+                                            r_out = np.interp(time_out_sec, t_valid, r_valid,
+                                                             left=np.nan, right=np.nan)
+                                            self.streak_particles_r[:, istreak, irot, i] = r_out
                 
-                # Convert to HUXt units and store
-                # v: cm/s → km/s
-                # rho: g/cm³ → kg/m³ (divide by 0.001)
-                # T: K (no conversion)
-                self.v_grid[:, :, i] = (v_out / KM_TO_CM) * self.kms
-                self.rho_grid[:, :, i] = (rho_out / 0.001) * (u.kg / u.m**3)
-                self.temp_grid[:, :, i] = temp_out * u.K
-                
-                # Plot results for first longitude only
-                if i == 0 and len(results['t']) > 1:
-                    print(f"  Creating diagnostic plots...")
-                    print(f"    Plot will show full runtime: {pyro_times[0]/86400:.2f} to {pyro_times[-1]/86400:.2f} days")
-                    # Create a copy of results with corrected times (offset removed)
-                    results_plot = results.copy()
-                    results_plot['t'] = pyro_times  # Use times in model_time coordinates
-                    _plot_pyro_inputs_outputs_(self.model_time.value, 
-                                              v_bc_kms, rho_bc_protons, T_bc_K,
-                                              results_plot, KM_TO_CM, PROTON_MASS)
-                elif i == 0:
-                    print(f"  Skipping plots (only {len(results['t'])} snapshots, need at least 2)")
-                
-                print(f"  Longitude {i+1} complete")
             
+            solve_time = time.time() - solve_start
             print("\n" + "="*70)
             print("CGF SOLVER COMPLETE")
+            print("="*70)
+            print(f"Total time: {solve_time:.2f} seconds ({solve_time/60:.2f} minutes)")
+            print(f"Time per longitude: {solve_time/self.lon.size:.2f} seconds")
             print("="*70 + "\n")
             
             # Skip the normal longitude loop - CGF solver handled everything
-            # Set CME/HCS/streak arrays to NaN (not tracked with CGF yet)
-            self.cme_particles_r[:, :, :, :] = np.nan
-            self.cme_particles_v[:, :, :, :] = np.nan
-            if self.track_b:
-                self.hcs_particles_r[:, :, :, :] = np.nan
-            if self.track_streak:
-                self.streak_particles_r[:, :, :, :] = np.nan
-            
-            # Skip to CME tracking section
             pass
         
         # ======================================================================
@@ -2275,10 +2477,14 @@ def _plot_pyro_inputs_outputs_(model_time, vinput, rhoinput, tempinput,
     - Time-dependent boundary conditions (v, rho, T)
     - Radial profiles at selected times
     - Particle trajectories (if available)
+    
+    Note: This function creates the figure but does not display it.
+    The figure will be shown when plt.show() is called by the user.
     """
     import matplotlib.pyplot as plt
     
-    fig = plt.figure(figsize=(16, 12))
+    # Create figure with a unique number to avoid conflicts
+    fig = plt.figure(num='CGF Diagnostic', figsize=(16, 12))
     
     # Convert units for plotting
     v_bc_kms = vinput  # Already in km/s
@@ -2451,7 +2657,935 @@ def _plot_pyro_inputs_outputs_(model_time, vinput, rhoinput, tempinput,
     plt.tight_layout()
     plt.savefig('pyro_cgf_solver_diagnostic.png', dpi=150, bbox_inches='tight')
     print(f"\nSaved diagnostic plot to: pyro_cgf_solver_diagnostic.png")
-    plt.show()
+    # Don't call plt.show() here - let the user control when plots are shown
+    # The figure will be displayed when the user calls plt.show() at the end of their script
+
+
+# ============================================================================
+# Pyro CGF Solver Integration (consolidated from external modules)
+# ============================================================================
+
+class _PyroCustomBCWrapper:
+    """
+    Wrapper around pyro that allows custom boundary conditions.
+    
+    This extracts pyro's time-stepping but allows us to prescribe density,
+    velocity, and temperature as functions of radius at the boundaries.
+    
+    Consolidated from pyro_custom_bc_wrapper.py for HUXt integration.
+    """
+    
+    def __init__(self, pyro_obj, gamma=5.0/3.0):
+        """Initialize wrapper with pyro simulation object."""
+        self.pyro = pyro_obj
+        self.sim = pyro_obj.get_sim()
+        self.gamma = gamma
+        self.custom_bc_func = None
+        
+        # Physical constants (CGS)
+        self.PROTON_MASS = 1.67262192e-24  # grams
+        self.BOLTZMANN = 1.380649e-16  # erg/K
+        
+    def set_custom_bc(self, bc_func):
+        """Set custom boundary condition function: bc_func(r, t) -> (rho, v, T)."""
+        self.custom_bc_func = bc_func
+        
+    def apply_custom_bc(self):
+        """Apply custom boundary conditions to ghost cells."""
+        if self.custom_bc_func is None:
+            return
+            
+        myd = self.sim.cc_data
+        myg = myd.grid
+        
+        # Get current time
+        t = myd.t.value if hasattr(myd.t, 'value') else myd.t
+        
+        # Get variables
+        dens = myd.get_var("density")
+        xmom = myd.get_var("x-momentum")
+        ymom = myd.get_var("y-momentum")
+        ener = myd.get_var("energy")
+        
+        # Apply to inner boundary (lower x)
+        if myg.ilo > 0:
+            r_boundary = np.full(myg.ny, myg.xmin)
+            rho_bc, v_bc, T_bc = self.custom_bc_func(r_boundary, t)
+            
+            for i in range(myg.ilo):
+                dens[i, :] = rho_bc
+                xmom[i, :] = rho_bc * v_bc
+                ymom[i, :] = 0.0
+                
+                P_bc = rho_bc * self.BOLTZMANN * T_bc / self.PROTON_MASS
+                e_int = P_bc / (rho_bc * (self.gamma - 1.0))
+                e_kin = 0.5 * v_bc**2
+                ener[i, :] = rho_bc * (e_int + e_kin)
+        
+        # Apply to outer boundary (upper x)
+        if myg.ihi < myg.nx + 2*myg.ng - 1:
+            r_boundary = np.full(myg.ny, myg.xmax)
+            rho_bc, v_bc, T_bc = self.custom_bc_func(r_boundary, t)
+            
+            for i in range(myg.ihi + 1, myg.nx + 2*myg.ng):
+                dens[i, :] = rho_bc
+                xmom[i, :] = rho_bc * v_bc
+                ymom[i, :] = 0.0
+                
+                P_bc = rho_bc * self.BOLTZMANN * T_bc / self.PROTON_MASS
+                e_int = P_bc / (rho_bc * (self.gamma - 1.0))
+                e_kin = 0.5 * v_bc**2
+                ener[i, :] = rho_bc * (e_int + e_kin)
+    
+    def single_step_with_custom_bc(self):
+        """Perform a single timestep with custom boundary conditions."""
+        self.sim.cc_data.fill_BC_all()
+        self.apply_custom_bc()
+        self.sim.compute_timestep()
+        dt = self.sim.dt.value if hasattr(self.sim.dt, 'value') else self.sim.dt
+        self.sim.evolve()
+        return dt
+    
+    def get_state(self):
+        """Extract current state (radially averaged)."""
+        myd = self.sim.cc_data
+        myg = myd.grid
+        
+        # Get coordinates (interior cells only)
+        r = myg.x[myg.ilo:myg.ihi+1]
+        
+        # Get variables and average over angular direction
+        rho = np.mean(myd.get_var("density").v(), axis=1)
+        mom = np.mean(myd.get_var("x-momentum").v(), axis=1)
+        E = np.mean(myd.get_var("energy").v(), axis=1)
+        
+        # Compute primitives
+        v = mom / rho
+        ke = 0.5 * rho * v**2
+        P = (self.gamma - 1.0) * (E - ke)
+        T = P * self.PROTON_MASS / (rho * self.BOLTZMANN)
+        n = rho / self.PROTON_MASS
+        
+        t_value = myd.t.value if hasattr(myd.t, 'value') else myd.t
+        
+        return {'t': t_value, 'r': r, 'rho': rho, 'v': v, 'T': T, 'P': P, 'n': n}
+    
+    def finished(self):
+        """Check if simulation is finished."""
+        return self.sim.finished()
+
+
+def _compute_parker_nozzle_solution(r_grid, v0, n_rho0, T0, gamma):
+    """
+    Compute analytical Parker nozzle solution for solar wind expansion.
+    
+    Treats spherical expansion as quasi-1D nozzle flow where A(r) = r².
+    Assumes steady-state isentropic flow with perfect gas EOS.
+    
+    Returns: v, n_rho, T, rho (all as functions of r)
+    """
+    from scipy.optimize import bisect
+    
+    PROTON_MASS = 1.67262192e-24
+    BOLTZMANN = 1.380649e-16
+    
+    rho0 = n_rho0 * PROTON_MASS
+    R_gas = BOLTZMANN
+    
+    # Compute Mach number and stagnation conditions
+    c0 = np.sqrt(gamma * R_gas * T0 / PROTON_MASS)
+    M0 = v0 / c0
+    
+    T_t = T0 * (1 + ((gamma - 1)/2)*(M0**2))
+    p_t = (n_rho0 * BOLTZMANN * T0) * ((1 + ((gamma - 1)/2)*(M0**2)) ** (gamma/(gamma - 1)))
+    rho_t = rho0 * ((1 + ((gamma - 1)/2)*(M0**2)) ** (1/(gamma - 1)))
+    
+    # Area-Mach relation for nozzle
+    def A_norm_calc(M, gamma):
+        a = 2 / (gamma + 1)
+        b = (gamma - 1) / 2
+        c = (gamma + 1) / (2*(gamma - 1))
+        return (1/M) * (a*(1 + b*M*M))**c
+    
+    A0 = r_grid[0]**2
+    A0_norm = A_norm_calc(M0, gamma)
+    A_star = A0 / A0_norm
+    
+    # Solve for Mach number at each radius
+    A = r_grid**2
+    A_norm = A / A_star
+    
+    def invert_A_for_M(M, gamma, A_n):
+        return A_norm_calc(M, gamma) - A_n
+    
+    M = np.zeros(len(r_grid))
+    for i, a_n in enumerate(A_norm):
+        M[i] = bisect(invert_A_for_M, 1 + 1e-12, 1e4, args=(gamma, a_n))
+    
+    # Compute static properties from isentropic relations
+    T = T_t / (1 + ((gamma - 1)/2)*(M**2))
+    p = p_t * (T/T_t) ** (gamma/(gamma - 1))
+    rho = rho_t * (T/T_t) ** (1/(gamma - 1))
+    n_rho = rho / PROTON_MASS
+    c = np.sqrt(gamma * R_gas * T / PROTON_MASS)
+    v = M * c
+    
+    return v, n_rho, T, rho
+
+
+def _run_solar_wind_pyro(r_grid, t_grid, v_bc_func, rho_bc_func, T_bc_func,
+                         gamma=5.0/3.0, cfl=0.8, verbose=False,
+                         num_particles=0, particle_injection_rate=None):
+    """
+    Run solar wind simulation using pyro with time-dependent boundary conditions.
+    
+    Consolidated from solar_wind_pyro_solver.py for HUXt integration.
+    Includes particle tracking for CME, HCS, and streakline particles.
+    
+    Parameters
+    ----------
+    r_grid : array (nr,)
+        Radial grid positions in cm (interior cell centers)
+    t_grid : array (nt,)
+        Output time grid in seconds
+    v_bc_func, rho_bc_func, T_bc_func : callable
+        Boundary condition functions: func(t) -> value
+        v in cm/s, rho in g/cm³, T in K
+    gamma : float
+        Adiabatic index
+    cfl : float
+        CFL number for timestep
+    verbose : bool
+        Print detailed diagnostics
+    num_particles : int or dict, optional
+        Number of test particles to track. If 0 (default), no tracking.
+        Can be dict with keys as particle group names (e.g. 'cme_leading', 'cme_trailing', 
+        'hcs', 'streak_1', etc.) and values as number of particles in that group.
+    particle_injection_rate : array-like or dict, optional
+        Injection times (seconds) for particles. If num_particles is dict, this must also
+        be dict with matching keys, where each value is array of injection times.
+    
+    Returns
+    -------
+    dict with keys: 't', 'r', 'rho', 'v', 'T', 'P', 'n', 'step_count', 'solve_time'
+        If particles enabled, also includes 'particles' dict with trajectory data.
+    """
+    import time as time_module
+    from pyro.pyro_sim import Pyro
+    
+    # Physical constants
+    AU = 1.496e13
+    PROTON_MASS = 1.67262192e-24
+    BOLTZMANN = 1.380649e-16
+    KM_TO_CM = 1e5
+    
+    # Validate inputs
+    r_grid = np.asarray(r_grid)
+    t_grid = np.asarray(t_grid)
+    
+    if len(r_grid) < 2 or len(t_grid) < 1:
+        raise ValueError("r_grid must have at least 2 points, t_grid at least 1")
+    
+    nr = len(r_grid)
+    dr = (r_grid[-1] - r_grid[0]) / (nr - 1)
+    r_inner = r_grid[0] - 0.5 * dr
+    r_outer = r_grid[-1] + 0.5 * dr
+    t_max = t_grid[-1]
+    
+    # Get initial boundary conditions
+    rho_bc_init = rho_bc_func(t_grid[0])
+    v_bc_init = v_bc_func(t_grid[0])
+    T_bc_init = T_bc_func(t_grid[0])
+    
+    if verbose:
+        print("=" * 70)
+        print("Solar Wind Pyro Solver")
+        print("=" * 70)
+        print(f"Domain: {r_inner/AU:.6f} - {r_outer/AU:.6f} AU ({nr} cells)")
+        print(f"Time: 0 - {t_max/86400:.2f} days ({len(t_grid)} snapshots)")
+        n_bc_init = rho_bc_init / PROTON_MASS
+        print(f"Initial BC: v={v_bc_init/KM_TO_CM:.1f} km/s, n={n_bc_init:.1f} cm⁻³, T={T_bc_init:.2e} K")
+        print()
+    
+    # Create pyro simulation
+    pyro = Pyro("compressible")
+    pyro.initialize_problem(
+        problem_name="sedov",
+        inputs_dict={
+            "mesh.nx": nr,
+            "mesh.ny": 1,
+            "mesh.xmin": r_inner,
+            "mesh.xmax": r_outer,
+            "mesh.ymin": 0.0,
+            "mesh.ymax": np.pi,
+            "driver.tmax": t_max,
+            "driver.max_steps": 1000000,
+            "driver.cfl": cfl,
+            "compressible.riemann": "CGF",
+            "driver.verbose": 0,
+            "eos.gamma": gamma,
+            "mesh.grid_type": "SphericalPolar",
+            "mesh.xlboundary": "outflow",
+            "mesh.xrboundary": "outflow",
+        }
+    )
+    
+    # Initialize with Parker nozzle solution
+    myd = pyro.sim.cc_data
+    myg = myd.grid
+    
+    dens = myd.get_var("density")
+    xmom = myd.get_var("x-momentum")
+    ymom = myd.get_var("y-momentum")
+    ener = myd.get_var("energy")
+    
+    r_interior = myg.x2d[myg.ilo:myg.ihi+1, myg.jlo:myg.jhi+1]
+    r_1d = myg.x[myg.ilo:myg.ihi+1]
+    n_bc_init = rho_bc_init / PROTON_MASS
+    
+    v_parker, n_parker, T_parker, rho_parker = _compute_parker_nozzle_solution(
+        r_1d, v_bc_init, n_bc_init, T_bc_init, gamma
+    )
+    
+    # Broadcast to 2D grid
+    v_init = np.tile(v_parker[:, np.newaxis], (1, myg.jhi - myg.jlo + 1))
+    rho_init = np.tile(rho_parker[:, np.newaxis], (1, myg.jhi - myg.jlo + 1))
+    T_init = np.tile(T_parker[:, np.newaxis], (1, myg.jhi - myg.jlo + 1))
+    P_init = rho_init * BOLTZMANN * T_init / PROTON_MASS
+    
+    dens[myg.ilo:myg.ihi+1, myg.jlo:myg.jhi+1] = rho_init
+    xmom[myg.ilo:myg.ihi+1, myg.jlo:myg.jhi+1] = rho_init * v_init
+    ymom[myg.ilo:myg.ihi+1, myg.jlo:myg.jhi+1] = 0.0
+    
+    e_int = P_init / (rho_init * (gamma - 1.0))
+    e_kin = 0.5 * v_init**2
+    ener[myg.ilo:myg.ihi+1, myg.jlo:myg.jhi+1] = rho_init * (e_int + e_kin)
+    
+    # Create custom BC wrapper
+    wrapper = _PyroCustomBCWrapper(pyro, gamma=gamma)
+    
+    def boundary_condition(r_array, t):
+        rho_bc = rho_bc_func(t) * np.ones_like(r_array)
+        v_bc = v_bc_func(t) * np.ones_like(r_array)
+        T_bc = T_bc_func(t) * np.ones_like(r_array)
+        return rho_bc, v_bc, T_bc
+    
+    wrapper.set_custom_bc(boundary_condition)
+    
+    # Apply initial BCs
+    pyro.sim.cc_data.fill_BC_all()
+    wrapper.apply_custom_bc()
+    
+    if verbose:
+        print("Running simulation...")
+    
+    # Initialize test particles if requested
+    # Uses midpoint method (RK2) for advection, same as pyro's built-in particles
+    particles_enabled = False
+    particle_groups = {}
+    total_particles = 0
+    
+    if isinstance(num_particles, dict):
+        # Dictionary mode: multiple particle groups
+        particles_enabled = True
+        
+        # particle_injection_rate must also be a dict with matching keys
+        if not isinstance(particle_injection_rate, dict):
+            raise ValueError("If num_particles is a dict, particle_injection_rate must also be a dict with matching keys")
+        
+        if set(num_particles.keys()) != set(particle_injection_rate.keys()):
+            raise ValueError("Keys in num_particles and particle_injection_rate must match")
+        
+        for group_name in num_particles.keys():
+            n_particles = num_particles[group_name]
+            injection_spec = particle_injection_rate[group_name]
+            
+            # Convert injection spec to array of times
+            if isinstance(injection_spec, (list, np.ndarray)):
+                injection_times = np.asarray(injection_spec)
+                if len(injection_times) != n_particles:
+                    raise ValueError(f"Group '{group_name}': injection times array length ({len(injection_times)}) "
+                                   f"must match num_particles ({n_particles})")
+            else:
+                raise ValueError(f"Group '{group_name}': particle_injection_rate must be an array of times")
+            
+            particle_groups[group_name] = {
+                'n_particles': n_particles,
+                'injection_times': injection_times,
+                'particle_r': [],  # Store full trajectory for output
+                'particle_v': [],
+                'particle_t': [],
+                'particle_t_inject': [],
+                'particle_active': [],
+                'particles_injected': 0,
+            }
+            total_particles += n_particles
+        
+        if verbose:
+            print(f"Test particles enabled: {total_particles} particles in {len(particle_groups)} groups")
+            for group_name, group in particle_groups.items():
+                times = group['injection_times']
+                print(f"  Group '{group_name}': {group['n_particles']} particles, "
+                      f"t = [{times.min()/86400:.4f}, {times.max()/86400:.4f}] days")
+            print()
+            
+    elif isinstance(num_particles, int) and num_particles > 0:
+        # Single group mode (original behavior)
+        particles_enabled = True
+        group_name = 'default'
+        
+        # Determine injection schedule
+        if particle_injection_rate is None:
+            # Inject all particles at t=0
+            injection_times = np.zeros(num_particles)
+        elif isinstance(particle_injection_rate, (list, np.ndarray)):
+            # Explicit injection times provided
+            injection_times = np.asarray(particle_injection_rate)
+            if len(injection_times) != num_particles:
+                raise ValueError(f"Injection times array length ({len(injection_times)}) "
+                               f"must match num_particles ({num_particles})")
+        else:
+            raise ValueError("particle_injection_rate must be None or array-like for single group mode")
+        
+        particle_groups[group_name] = {
+            'n_particles': num_particles,
+            'injection_times': injection_times,
+            'particle_r': [],
+            'particle_v': [],
+            'particle_t': [],
+            'particle_t_inject': [],
+            'particle_active': [],
+            'particles_injected': 0,
+        }
+        total_particles = num_particles
+        
+        if verbose:
+            print(f"Test particles enabled: {num_particles} particles")
+            if injection_times is not None:
+                print(f"  Injection schedule: t = [{injection_times[0]/86400:.4f}, {injection_times[-1]/86400:.4f}] days")
+            print()
+    
+    # Main time-stepping loop
+    t_grid_idx = 0
+    next_snapshot_time = t_grid[0]
+    
+    rho_snapshots = []
+    v_snapshots = []
+    T_snapshots = []
+    P_snapshots = []
+    t_snapshots = []
+    
+    step_count = 0
+    solve_start_time = time_module.time()
+    
+    try:
+        while not wrapper.finished() and t_grid_idx < len(t_grid):
+            state = wrapper.get_state()
+            current_t = state['t']
+            r_state = state['r']
+            v_state = state['v']
+            
+            # Inject new particles if needed
+            if particles_enabled:
+                for group_name, group in particle_groups.items():
+                    injection_times = group['injection_times']
+                    
+                    # Pre-scheduled injection from array
+                    while (group['particles_injected'] < group['n_particles'] and 
+                           injection_times[group['particles_injected']] <= current_t):
+                        # Inject particle at inner boundary
+                        particle_idx = group['particles_injected']
+                        t_inj = injection_times[particle_idx]
+                        
+                        # Position at inner boundary
+                        r_init = r_state[0]
+                        v_init = v_state[0]
+                        
+                        # Store for trajectory
+                        group['particle_r'].append([r_init])
+                        group['particle_v'].append([v_init])
+                        group['particle_t'].append([current_t])
+                        group['particle_t_inject'].append(t_inj)
+                        group['particle_active'].append(True)
+                        group['particles_injected'] += 1
+                        
+                        if verbose and group['particles_injected'] % max(1, group['n_particles'] // 10) == 0:
+                            print(f"  Group '{group_name}': injected particle {group['particles_injected']}/{group['n_particles']} "
+                                  f"at t={current_t/86400:.4f} days")
+            
+            # Check if we need to save this snapshot
+            if current_t >= next_snapshot_time:
+                t_snapshots.append(current_t)
+                rho_snapshots.append(state['rho'].copy())
+                v_snapshots.append(state['v'].copy())
+                T_snapshots.append(state['T'].copy())
+                P_snapshots.append(state['P'].copy())
+                
+                if verbose:
+                    print(f"  Snapshot {t_grid_idx + 1}/{len(t_grid)} at t={current_t/86400.0:.4f} days (step {step_count})")
+                
+                t_grid_idx += 1
+                if t_grid_idx < len(t_grid):
+                    next_snapshot_time = t_grid[t_grid_idx]
+            
+            # Take one time step
+            dt = wrapper.single_step_with_custom_bc()
+            step_count += 1
+            
+            # Advect particles using midpoint method (RK2) - same method as pyro's particles
+            if particles_enabled:
+                for group_name, group in particle_groups.items():
+                    particle_r = group['particle_r']
+                    particle_v = group['particle_v']
+                    particle_t = group['particle_t']
+                    particle_active = group['particle_active']
+                    
+                    for i in range(len(particle_active)):
+                        if particle_active[i]:
+                            # Get current particle position
+                            r_p = particle_r[i][-1]
+                            
+                            # Check if still in domain
+                            if r_p < r_state[0] or r_p > r_state[-1]:
+                                particle_active[i] = False
+                            else:
+                                # Midpoint method (RK2) for advection
+                                # Step 1: Interpolate velocity at current position
+                                v_p = np.interp(r_p, r_state, v_state)
+                                
+                                # Step 2: Predict position at midpoint
+                                r_mid = r_p + 0.5 * v_p * dt
+                                
+                                # Step 3: Interpolate velocity at midpoint
+                                if r_mid >= r_state[0] and r_mid <= r_state[-1]:
+                                    v_mid = np.interp(r_mid, r_state, v_state)
+                                else:
+                                    # If midpoint is outside, use endpoint velocity
+                                    v_mid = v_p
+                                
+                                # Step 4: Update position using midpoint velocity
+                                r_p_new = r_p + v_mid * dt
+                                
+                                # Store new position
+                                particle_r[i].append(r_p_new)
+                                particle_v[i].append(v_mid)
+                                particle_t[i].append(current_t + dt)
+            
+            # Periodic diagnostics
+            if verbose and (step_count == 1 or step_count % 500 == 0):
+                msg = f"  Step {step_count}, t={current_t/86400.0:.4f} days, dt={dt:.2e} s"
+                if particles_enabled:
+                    total_injected = sum(g['particles_injected'] for g in particle_groups.values())
+                    total_active = sum(sum(g['particle_active'][:g['particles_injected']]) 
+                                      for g in particle_groups.values())
+                    msg += f", particles: {total_injected}/{total_particles} injected, {total_active} active"
+                print(msg)
+    
+    except Exception as e:
+        if verbose:
+            print(f"\nSimulation stopped at t={current_t:.2e} s: {e}")
+    
+    solve_time = time_module.time() - solve_start_time
+    
+    # Get final state if needed
+    if t_grid_idx < len(t_grid):
+        state = wrapper.get_state()
+        if verbose:
+            print(f"\nWarning: Ended at t={state['t']/86400.0:.4f} days before t_max={t_max/86400.0:.4f} days")
+    
+    if verbose:
+        print(f"\nSimulation complete: {step_count} steps in {solve_time:.3f} s")
+        print(f"Collected {len(t_snapshots)} snapshots")
+    
+    # Convert to arrays
+    t_out = np.array(t_snapshots)
+    rho_out = np.array(rho_snapshots)
+    v_out = np.array(v_snapshots)
+    T_out = np.array(T_snapshots)
+    P_out = np.array(P_snapshots)
+    n_out = rho_out / PROTON_MASS
+    
+    r_out = state['r']
+    
+    results = {
+        "r": r_out,
+        "t": t_out,
+        "rho": rho_out,
+        "v": v_out,
+        "T": T_out,
+        "P": P_out,
+        "n": n_out,
+        "step_count": step_count,
+        "solve_time": solve_time,
+    }
+    
+    # Add particle trajectories if enabled
+    if particles_enabled:
+        if len(particle_groups) == 1 and 'default' in particle_groups:
+            # Single group mode - return flat structure for backward compatibility
+            group = particle_groups['default']
+            particle_r = group['particle_r']
+            particle_v = group['particle_v']
+            particle_t = group['particle_t']
+            particle_t_inject = group['particle_t_inject']
+            particle_active = group['particle_active']
+            n_particles = group['n_particles']
+            
+            # Find max length for ragged arrays
+            max_len = max(len(particle_r[i]) for i in range(len(particle_r))) if len(particle_r) > 0 else 0
+            
+            # Create arrays filled with NaN for inactive/uninjected particles
+            particle_r_array = np.full((n_particles, max_len), np.nan)
+            particle_v_array = np.full((n_particles, max_len), np.nan)
+            particle_t_array = np.full((n_particles, max_len), np.nan)
+            
+            for i in range(len(particle_r)):
+                n_pts = len(particle_r[i])
+                particle_r_array[i, :n_pts] = particle_r[i]
+                particle_v_array[i, :n_pts] = particle_v[i]
+                particle_t_array[i, :n_pts] = particle_t[i]
+            
+            # Pad arrays for uninjected particles
+            particle_active_array = np.array(particle_active + [False] * (n_particles - len(particle_active)))
+            particle_t_inject_array = np.array(particle_t_inject + [np.nan] * (n_particles - len(particle_t_inject)))
+            
+            results["particles"] = {
+                "r": particle_r_array,
+                "v": particle_v_array,
+                "t": particle_t_array,
+                "t_inject": particle_t_inject_array,
+                "active": particle_active_array,
+            }
+            
+            if verbose:
+                print(f"Particle tracking summary:")
+                print(f"  Total particles: {n_particles}")
+                print(f"  Injected: {len(particle_r)}")
+                print(f"  Still active: {sum(particle_active)}")
+        else:
+            # Multi-group mode - return grouped structure
+            particle_data = {"groups": {}}
+            
+            for group_name, group in particle_groups.items():
+                particle_r = group['particle_r']
+                particle_v = group['particle_v']
+                particle_t = group['particle_t']
+                particle_t_inject = group['particle_t_inject']
+                particle_active = group['particle_active']
+                n_particles = group['n_particles']
+                
+                # Find max length for this group
+                max_len = max(len(particle_r[i]) for i in range(len(particle_r))) if len(particle_r) > 0 else 0
+                
+                # Create arrays for this group
+                particle_r_array = np.full((n_particles, max_len), np.nan)
+                particle_v_array = np.full((n_particles, max_len), np.nan)
+                particle_t_array = np.full((n_particles, max_len), np.nan)
+                
+                for i in range(len(particle_r)):
+                    n_pts = len(particle_r[i])
+                    particle_r_array[i, :n_pts] = particle_r[i]
+                    particle_v_array[i, :n_pts] = particle_v[i]
+                    particle_t_array[i, :n_pts] = particle_t[i]
+                
+                particle_active_array = np.array(particle_active + [False] * (n_particles - len(particle_active)))
+                particle_t_inject_array = np.array(particle_t_inject + [np.nan] * (n_particles - len(particle_t_inject)))
+                
+                particle_data["groups"][group_name] = {
+                    "r": particle_r_array,
+                    "v": particle_v_array,
+                    "t": particle_t_array,
+                    "t_inject": particle_t_inject_array,
+                    "active": particle_active_array,
+                    "n_particles": n_particles,
+                }
+            
+            results["particles"] = particle_data
+            
+            if verbose:
+                print(f"Particle tracking summary:")
+                print(f"  Total particles: {total_particles} in {len(particle_groups)} groups")
+                for group_name, group_data in particle_data["groups"].items():
+                    n_inj = np.sum(~np.isnan(group_data["t_inject"]))
+                    n_act = np.sum(group_data["active"])
+                    print(f"    Group '{group_name}': {n_inj} injected, {n_act} active")
+    
+    return results
+
+
+# ============================================================================
+# End of consolidated pyro integration code
+# ============================================================================
+
+
+def solve_radial_cgf(v_bc_kms, rho_bc_kgm3, T_bc_K, model_time, time_out, 
+                     r_grid, gamma, nt_out, nr, verbose=False, create_diagnostic_plot=False,
+                     num_particles=0, particle_injection_rate=None):
+    """
+    Solve 1D radial solar wind expansion using pyro's CGF Riemann solver.
+    
+    This function wraps the pyro solver (run_solar_wind_pyro) with proper
+    unit conversions and time handling for integration with HUXt.
+    
+    Parameters
+    ----------
+    v_bc_kms : array_like
+        Time series of inner boundary velocity (km/s), shape (nt_model,)
+    rho_bc_kgm3 : array_like
+        Time series of inner boundary density (kg/m³), shape (nt_model,)
+    T_bc_K : array_like
+        Time series of inner boundary temperature (K), shape (nt_model,)
+    model_time : array_like
+        Full model time grid including spin-up (seconds), shape (nt_model,)
+    time_out : array_like
+        Output time grid (seconds), shape (nt_out,)
+    r_grid : array_like
+        Radial grid positions (km), shape (nr,)
+    gamma : float
+        Adiabatic index
+    nt_out : int
+        Number of output time steps
+    nr : int
+        Number of radial grid points
+    verbose : bool, optional
+        If True, print detailed diagnostics. Default False.
+    create_diagnostic_plot : bool, optional
+        If True, create diagnostic plot for first longitude. Default True.
+    num_particles : int or dict, optional
+        Number of test particles to track. If 0 (default), no tracking.
+        Dict with keys 'cme_leading', 'cme_trailing', 'hcs', 'streak_*' supported.
+    particle_injection_rate : array-like or dict, optional
+        Injection times (seconds) for particles in model_time coordinates.
+        If num_particles is dict, this must also be dict with matching keys.
+    
+    Returns
+    -------
+    v_out : ndarray
+        Velocity at output times (km/s), shape (nt_out, nr)
+    rho_out : ndarray
+        Density at output times (kg/m³), shape (nt_out, nr)
+    temp_out : ndarray
+        Temperature at output times (K), shape (nt_out, nr)
+    particle_data : dict or None
+        Particle trajectory data if num_particles > 0, otherwise None.
+        Contains 'groups' dict with particle positions in km at all times
+    
+    Notes
+    -----
+    - Handles time offset automatically if model_time contains negative values (spin-up)
+    - Uses Parker nozzle solution for initialization
+    - Saves diagnostic plot to 'pyro_cgf_solver_diagnostic.png' if create_diagnostic_plot=True
+    """
+    # Physical constants (CGS)
+    AU = 1.496e13  # cm
+    PROTON_MASS = 1.67262192e-24  # grams
+    KM_TO_CM = 1e5  # cm/km
+    
+    # Strip units from times if needed
+    model_time_seconds = model_time.value if hasattr(model_time, 'value') else model_time
+    time_out_seconds = time_out.value if hasattr(time_out, 'value') else time_out
+    
+    # Diagnostic: Check if boundary conditions are varying
+    if verbose:
+        v_min, v_max = v_bc_kms.min(), v_bc_kms.max()
+        print(f"  Boundary condition range: v=[{v_min:.1f}, {v_max:.1f}] km/s")
+        if v_max - v_min > 1.0:
+            print(f"    Time-varying boundary detected!")
+            high_v_mask = v_bc_kms > (v_min + 0.5 * (v_max - v_min))
+            if np.any(high_v_mask):
+                high_v_indices = np.where(high_v_mask)[0]
+                t_start = model_time_seconds[high_v_indices[0]] / 86400
+                t_end = model_time_seconds[high_v_indices[-1]] / 86400
+                print(f"    High velocity period: t={t_start:.2f} to {t_end:.2f} days")
+    
+    # Convert to CGS
+    v_bc_cgs = v_bc_kms * KM_TO_CM  # cm/s
+    rho_bc_cgs = rho_bc_kgm3 * 0.001  # kg/m³ to g/cm³
+    rho_bc_protons = rho_bc_cgs / PROTON_MASS  # g/cm³ to protons/cc (for plotting)
+    
+    # Convert HUXt radial grid to cm
+    r_grid_cm = r_grid * KM_TO_CM
+    
+    # Handle time offset if model_time has negative values (spin-up period)
+    t_offset = 0.0
+    if model_time_seconds[0] < 0:
+        t_offset = -model_time_seconds[0]
+        if verbose:
+            print(f"  Model time: {model_time_seconds[0]/86400:.2f} to {model_time_seconds[-1]/86400:.2f} days")
+            print(f"  Spin-up period: {t_offset/86400:.2f} days")
+    
+    # Create output time grid for pyro
+    # Combine spin-up times with time_out
+    spinup_times = model_time_seconds[model_time_seconds < time_out_seconds[0]]
+    dt_out = time_out_seconds[1] - time_out_seconds[0] if len(time_out_seconds) > 1 else 3600.0
+    spinup_sampled = spinup_times[::int(max(1, len(spinup_times)//len(time_out_seconds)))]
+    
+    # Combine spinup and regular output times
+    t_grid_combined = np.concatenate([spinup_sampled, time_out_seconds])
+    t_grid_pyro = t_grid_combined + t_offset  # Apply offset for pyro
+    
+    if verbose:
+        print(f"  Output times: {len(t_grid_pyro)} snapshots ({len(spinup_sampled)} spin-up + {len(time_out_seconds)} main)")
+    
+    # Boundary condition functions (MUST return plain floats, no units)
+    # These use the ORIGINAL times (before offset) for interpolation
+    def v_bc_func(t):
+        t_model = t - t_offset
+        return float(np.interp(t_model, model_time_seconds, v_bc_cgs))
+    
+    def rho_bc_func(t):
+        t_model = t - t_offset
+        return float(np.interp(t_model, model_time_seconds, rho_bc_cgs))
+    
+    def T_bc_func(t):
+        t_model = t - t_offset
+        return float(np.interp(t_model, model_time_seconds, T_bc_K))
+    
+    # Prepare particle tracking parameters with time offset applied
+    num_particles_pyro = num_particles
+    particle_injection_rate_pyro = None
+    
+    if isinstance(num_particles, dict) and len(num_particles) > 0:
+        # Apply time offset to all injection times
+        particle_injection_rate_pyro = {}
+        for group_name, injection_times in particle_injection_rate.items():
+            # Convert injection times from model_time coordinates to pyro coordinates
+            injection_times_pyro = np.asarray(injection_times) + t_offset
+            particle_injection_rate_pyro[group_name] = injection_times_pyro
+    elif isinstance(num_particles, int) and num_particles > 0:
+        # Single group mode
+        if particle_injection_rate is not None:
+            injection_times_pyro = np.asarray(particle_injection_rate) + t_offset
+            particle_injection_rate_pyro = injection_times_pyro
+    
+    if verbose:
+        print(f"  Calling pyro...")
+        print(f"    r: {r_grid_cm[0]/AU:.4f} - {r_grid_cm[-1]/AU:.4f} AU")
+        print(f"    t: {t_grid_pyro[0]/86400:.2f} - {t_grid_pyro[-1]/86400:.2f} days (with offset)")
+        print(f"    v_bc: {v_bc_kms[0]:.1f} - {v_bc_kms[-1]:.1f} km/s")
+        if isinstance(num_particles, dict):
+            print(f"    Tracking {sum(num_particles.values())} particles in {len(num_particles)} groups")
+        elif isinstance(num_particles, int) and num_particles > 0:
+            print(f"    Tracking {num_particles} particles")
+    
+    # Run pyro over FULL model_time (including spin-up)
+    results = _run_solar_wind_pyro(
+        r_grid=r_grid_cm,
+        t_grid=t_grid_pyro,
+        v_bc_func=v_bc_func,
+        rho_bc_func=rho_bc_func,
+        T_bc_func=T_bc_func,
+        gamma=gamma,
+        cfl=0.5,
+        verbose=verbose,
+        num_particles=num_particles_pyro,
+        particle_injection_rate=particle_injection_rate_pyro
+    )
+    
+    # Remove time offset to get back to model_time coordinates
+    pyro_times = results['t'] - t_offset
+    
+    # Find indices corresponding to time_out in the combined grid
+    n_spinup = len(spinup_sampled)
+    
+    if verbose:
+        print(f"  Extraction info:")
+        print(f"    Total pyro snapshots: {len(results['t'])}")
+        print(f"    Spin-up samples: {n_spinup}")
+        print(f"    Expected time_out samples: {nt_out}")
+        print(f"    Pyro time range: {pyro_times[0]/86400:.3f} to {pyro_times[-1]/86400:.3f} days")
+        print(f"    time_out range: {time_out_seconds[0]/86400:.3f} to {time_out_seconds[-1]/86400:.3f} days")
+    
+    # Extract just the time_out portion (skip spin-up samples)
+    v_out_cgs = results['v'][n_spinup:, :]
+    rho_out_cgs = results['rho'][n_spinup:, :]
+    temp_out_K = results['T'][n_spinup:, :]
+    
+    # If pyro returned fewer points than expected, interpolate
+    if v_out_cgs.shape[0] != nt_out:
+        if verbose:
+            print(f"  Warning: pyro returned {v_out_cgs.shape[0]} points, expected {nt_out}, interpolating...")
+        
+        v_interp = np.zeros((nt_out, nr))
+        rho_interp = np.zeros((nt_out, nr))
+        temp_interp = np.zeros((nt_out, nr))
+        
+        pyro_out_times = pyro_times[n_spinup:]
+        
+        if verbose:
+            print(f"    pyro_out_times: {len(pyro_out_times)} points from {pyro_out_times[0]/86400:.3f} to {pyro_out_times[-1]/86400:.3f} days")
+            print(f"    v_out: shape {v_out_cgs.shape}, range [{v_out_cgs[:, 0].min()/1e5:.2f}, {v_out_cgs[:, 0].max()/1e5:.2f}] km/s at r[0]")
+        
+        for ir in range(nr):
+            v_interp[:, ir] = np.interp(time_out_seconds, pyro_out_times, v_out_cgs[:, ir])
+            rho_interp[:, ir] = np.interp(time_out_seconds, pyro_out_times, rho_out_cgs[:, ir])
+            temp_interp[:, ir] = np.interp(time_out_seconds, pyro_out_times, temp_out_K[:, ir])
+        
+        if verbose:
+            print(f"    After interp: v_interp range [{v_interp[:, 0].min()/1e5:.2f}, {v_interp[:, 0].max()/1e5:.2f}] km/s at r[0]")
+        
+        v_out_cgs = v_interp
+        rho_out_cgs = rho_interp
+        temp_out_K = temp_interp
+    
+    # Convert to HUXt units
+    v_out_kms = v_out_cgs / KM_TO_CM  # cm/s → km/s
+    rho_out_kgm3 = rho_out_cgs / 0.001  # g/cm³ → kg/m³
+    temp_out = temp_out_K  # K (no conversion)
+    
+    # Create diagnostic plot if requested
+    if create_diagnostic_plot and len(results['t']) > 1:
+        if verbose:
+            print(f"  Creating diagnostic plots...")
+            print(f"    Plot will show full runtime: {pyro_times[0]/86400:.2f} to {pyro_times[-1]/86400:.2f} days")
+        
+        # Create a copy of results with corrected times (offset removed)
+        results_plot = results.copy()
+        results_plot['t'] = pyro_times  # Use times in model_time coordinates
+        _plot_pyro_inputs_outputs_(model_time_seconds, 
+                                  v_bc_kms, rho_bc_protons, T_bc_K,
+                                  results_plot, KM_TO_CM, PROTON_MASS)
+    elif create_diagnostic_plot and verbose:
+        print(f"  Skipping plots (only {len(results['t'])} snapshots, need at least 2)")
+    
+    # Extract and convert particle data if present
+    particle_data = None
+    if 'particles' in results:
+        particle_data_cgs = results['particles']
+        
+        if isinstance(num_particles, dict):
+            # Multi-group mode - convert positions to km and remove time offset
+            particle_data = {'groups': {}}
+            for group_name, group in particle_data_cgs['groups'].items():
+                # Convert positions from cm to km
+                r_km = group['r'] / KM_TO_CM
+                # Convert times back to model_time coordinates (remove offset)
+                t_model = group['t'] - t_offset
+                t_inject_model = group['t_inject'] - t_offset
+                
+                particle_data['groups'][group_name] = {
+                    'r': r_km,  # km
+                    'v': group['v'] / KM_TO_CM,  # km/s
+                    't': t_model,  # seconds in model_time coordinates
+                    't_inject': t_inject_model,  # seconds in model_time coordinates
+                    'active': group['active'],
+                    'n_particles': group['n_particles'],
+                }
+        else:
+            # Single group mode - convert positions to km and remove time offset
+            r_km = particle_data_cgs['r'] / KM_TO_CM
+            t_model = particle_data_cgs['t'] - t_offset
+            t_inject_model = particle_data_cgs['t_inject'] - t_offset
+            
+            particle_data = {
+                'r': r_km,  # km
+                'v': particle_data_cgs['v'] / KM_TO_CM,  # km/s
+                't': t_model,  # seconds in model_time coordinates
+                't_inject': t_inject_model,  # seconds in model_time coordinates
+                'active': particle_data_cgs['active'],
+            }
+    
+    return v_out_kms, rho_out_kgm3, temp_out, particle_data
 
 
 @jit(nopython=True)
