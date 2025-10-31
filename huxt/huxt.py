@@ -150,6 +150,9 @@ class ConeCME:
         thickness: Thickness of the CME cone, in km.
         cme_density: Mass density of the CME in kg/m³. Defaults to 2x the solar wind density at initial_height.
         cme_temperature: Temperature of the CME in Kelvin. Defaults to 2x the solar wind temperature at initial_height.
+        profile_type: Temporal profile shape ('square' or 'sinusoidal'). 
+                     'square': step function from ambient to CME values
+                     'sinusoidal': smooth sinusoidal pulse from ambient to CME values and back
         coords: Dictionary containing the radial and longitudinal (for HUXT2D) coordinates of the of Cone CME for each
                 model time step.
     """
@@ -169,6 +172,7 @@ class ConeCME:
                  cme_fixed_duration=True, fixed_duration=12 * 60 * 60 * u.s, 
                  cme_density=np.nan * (u.kg / u.m**3), cme_temperature=np.nan * u.K, 
                  density_fraction=2.0, temperature_fraction=2.0,
+                 profile_type='square',
                  label=None):
 
         """
@@ -190,6 +194,9 @@ class ConeCME:
                             Only used if cme_density is not provided.
             temperature_fraction: Fraction of ambient solar wind temperature. Default 2.0 means twice the ambient temperature.
                                 Only used if cme_temperature is not provided.
+            profile_type: Type of temporal profile for CME perturbation. Options:
+                         'square' (default): Step function from ambient to CME values
+                         'sinusoidal': Smooth sinusoidal pulse from ambient to CME values and back
         Returns:
             None
         """
@@ -209,6 +216,11 @@ class ConeCME:
         self.cme_expansion = cme_expansion
         self.cme_fixed_duration = cme_fixed_duration
         self.fixed_duration = fixed_duration
+        
+        # Validate and store profile type
+        if profile_type not in ['square', 'sinusoidal']:
+            raise ValueError(f"profile_type must be 'square' or 'sinusoidal', not '{profile_type}'")
+        self.profile_type = profile_type
         
         # Set CME density and temperature
         if np.isnan(cme_density.value):
@@ -246,6 +258,9 @@ class ConeCME:
         Returns:
             None
         """
+        # Convert profile_type to numeric flag: 0 = square, 1 = sinusoidal
+        profile_flag = 1.0 if self.profile_type == 'sinusoidal' else 0.0
+        
         cme_parameters = [self.t_launch.to('s').value, 
                           self.longitude_huxt.to('rad').value,
                           self.latitude.to('rad').value,
@@ -259,7 +274,8 @@ class ConeCME:
                           self.cme_fixed_duration,
                           self.fixed_duration.to('s').value,
                           self.cme_density.value,
-                          self.cme_temperature.value]
+                          self.cme_temperature.value,
+                          profile_flag]
         return cme_parameters
 
     def _track_(self, model, cme_id):
@@ -723,7 +739,7 @@ class HUXt:
                 # Solar wind density at 1 AU is ~5 protons/cm³ = 8.35e-21 kg/m³
                 # Density scales as r^-2, so scale from 1 AU to r_min
                 r_1au = 215.0 * u.solRad  # 1 AU in solar radii
-                rho_1au = 20.35e-21 * (u.kg / u.m**3)  # Solar wind density at 1 AU
+                rho_1au = 16.35e-21 * (u.kg / u.m**3)  # Solar wind density at 1 AU
                 scaling_factor = (r_1au / r_min)**2
                 default_rho = rho_1au * scaling_factor
                 self.rho_boundary = np.ones(len(self.v_boundary_lons)) * default_rho
@@ -4052,20 +4068,47 @@ def add_cmes_to_input_series(vinput, model_time, lon, r_boundary, cme_params, la
             for n in range(n_cme):
                 cme = cme_params[n, :]
                 cme_expansion = cme[9]
+                profile_flag = cme[14]  # 0 = square, 1 = sinusoidal
+                
                 # Check if this point is within the cone CME
                 iscme, dist_from_nose = _is_in_cme_boundary_(r_boundary, lon, latitude, time, cme)
-                if iscme: 
+                if iscme:
+                    # Get ambient values at this time (initialize all to avoid Numba type inference issues)
+                    v_ambient = vinput[t]
+                    rho_ambient = 0.0
+                    temp_ambient = 0.0
+                    if compressible and rhoinput is not None:
+                        rho_ambient = rhoinput[t]
+                    if compressible and tempinput is not None:
+                        temp_ambient = tempinput[t]
+                    
+                    # Compute modulation factor based on profile type
+                    if profile_flag > 0.5:  # sinusoidal profile
+                        # Use sine function: 0 at edges (dist=0 or dist=1), 1 at center (dist=0.5)
+                        # sin(pi * dist_from_nose) gives: 0 at dist=0, 1 at dist=0.5, 0 at dist=1
+                        modulation = np.sin(np.pi * dist_from_nose)
+                    else:  # square profile (default)
+                        modulation = 1.0
+                    
+                    # Apply velocity profile
                     if cme_expansion:
                         # use Owens2005 empirical relations
-                        v_update_cme[n] = cme[4]*(1-dist_from_nose) + 200*dist_from_nose
+                        v_cme = cme[4]*(1-dist_from_nose) + 200*dist_from_nose
                     else:
-                        v_update_cme[n] = cme[4]
+                        v_cme = cme[4]
+                    
+                    # Interpolate between ambient and CME value using modulation
+                    v_update_cme[n] = v_ambient + modulation * (v_cme - v_ambient)
                     
                     # Add CME density and temperature if compressible
                     if compressible:
                         # CME density is at index 12, temperature at index 13 in cme_params
-                        rho_update_cme[n] = cme[12]
-                        temp_update_cme[n] = cme[13]
+                        rho_cme = cme[12]
+                        temp_cme = cme[13]
+                        
+                        # Apply modulation to density and temperature as well
+                        rho_update_cme[n] = rho_ambient + modulation * (rho_cme - rho_ambient)
+                        temp_update_cme[n] = temp_ambient + modulation * (temp_cme - temp_ambient)
 
                     # record the CME number
                     isincme[t] = n + 1
