@@ -1,0 +1,64 @@
+# automagically generated parameter file
+
+[compressible]
+use_flattening = 1    ; apply flattening at shocks (1)
+z0 = 0.75    ; flattening z0 parameter
+z1 = 0.85    ; flattening z1 parameter
+delta = 0.33    ; flattening delta parameter
+cvisc = 0.1    ; artificial viscosity coefficient
+limiter = 2    ; limiter (0 = none, 1 = 2nd order, 2 = 4th order)
+grav = 0.0    ; gravitational acceleration (in y-direction)
+riemann = CGF    ; HLLC or CGF
+small_dens = -1e+200    ; minimum allowed density
+small_eint = -1e+200    ; minimum allowed specific internal energy
+
+[driver]
+tmax = 1457839.35    ; maximum simulation time to evolve
+max_steps = 1000000    ; maximum number of steps to take
+fix_dt = -1.0
+init_tstep_factor = 0.01    ; first timestep = init_tstep_factor * CFL timestep
+max_dt_change = 2.0    ; max amount the timestep can change between steps
+verbose = 0    ; verbosity
+cfl = 0.7
+
+[eos]
+gamma = 1.5    ; pres = rho ener (gamma - 1)
+
+[io]
+basename = sedov_unsplit_    ; basename for output files
+dt_out = 0.0125    ; simulation time between writing output files
+n_out = 10000    ; number of timesteps between writing output files
+do_io = 0    ; do we output at all?
+force_final_output = 0    ; regardless of do_io, do we output when the simulation ends?
+
+[mesh]
+grid_type = SphericalPolar    ; Geometry of the Grid ('Cartesian2d' or 'SphericalPolar')
+xmin = 2034922500000.0    ; domain minimum x-coordinate
+xmax = 16748977500000.0    ; domain maximum x-coordinate
+ymin = 0.0    ; domain minimum y-coordinate
+ymax = 3.141592653589793    ; domain maximum y-coordinate
+xlboundary = outflow    ; minimum x BC ('reflect', 'outflow', or 'periodic')
+xrboundary = outflow    ; maximum x BC ('reflect', 'outflow', or 'periodic')
+ylboundary = outflow    ; minimum y BC ('reflect', 'outflow', or 'periodic')
+yrboundary = outflow    ; maximum y BC ('reflect', 'outflow', or 'periodic')
+nx = 141    ; number of zones in the x-direction
+ny = 1    ; number of zones in the y-direction
+
+[particles]
+do_particles = 0    ; include particles? (1=yes, 0=no)
+n_particles = 100    ; number of particles
+particle_generator = grid    ; how do we generate particles? (random, grid)
+
+[sedov]
+r_init = 0.01
+nsub = 4
+
+[sponge]
+do_sponge = 0    ; do we include a sponge source term
+sponge_rho_begin = 0.01    ; density below which to begin the sponge
+sponge_rho_full = 0.001    ; density below which the sponge is fully enabled
+sponge_timescale = 0.01    ; the timescale over which the sponge should act
+
+[vis]
+dovis = 0    ; runtime visualization? (1=yes, 0=no)
+store_images = 0    ; store vis images to files (1=yes, 0=no)

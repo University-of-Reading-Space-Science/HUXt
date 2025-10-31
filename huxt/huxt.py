@@ -723,7 +723,7 @@ class HUXt:
                 # Solar wind density at 1 AU is ~5 protons/cm³ = 8.35e-21 kg/m³
                 # Density scales as r^-2, so scale from 1 AU to r_min
                 r_1au = 215.0 * u.solRad  # 1 AU in solar radii
-                rho_1au = 8.35e-21 * (u.kg / u.m**3)  # Solar wind density at 1 AU
+                rho_1au = 20.35e-21 * (u.kg / u.m**3)  # Solar wind density at 1 AU
                 scaling_factor = (r_1au / r_min)**2
                 default_rho = rho_1au * scaling_factor
                 self.rho_boundary = np.ones(len(self.v_boundary_lons)) * default_rho
@@ -803,7 +803,7 @@ class HUXt:
 
         # Compute the buffertime required to spin up HUXt, based on minimum speed on the inner boundary
         # and span of radial grid
-        self.buffertime = 1.5 * (self.rrel[-1] / self.v_boundary.min()).to(u.day)
+        self.buffertime = 1.05 * (self.rrel[-1] / self.v_boundary.min()).to(u.day)
 
         # Preallocate space for the output for the solar wind fields for the cme and ambient solution.
         # Use Fortran order (column-major) for better cache efficiency during solve:
@@ -1089,12 +1089,16 @@ class HUXt:
                 particle_injection_rate = None
         
         # Call consolidated CGF solver function with particle tracking
+        # Strip units from time arrays for CGF solver
+        model_time_sec = self.model_time.value if hasattr(self.model_time, 'value') else self.model_time
+        time_out_sec = self.time_out.value if hasattr(self.time_out, 'value') else self.time_out
+        
         v_out_kms, rho_out_kgm3, temp_out_K, particle_data = solve_radial_cgf(
             v_bc_kms=v_bc_kms,
             rho_bc_kgm3=rho_bc_kgm3,
             T_bc_K=T_bc_K,
-            model_time=self.model_time,
-            time_out=self.time_out,
+            model_time=model_time_sec,
+            time_out=time_out_sec,
             r_grid=rgrid_km,
             gamma=self.gamma,
             nt_out=self.nt_out,
@@ -1467,9 +1471,21 @@ class HUXt:
             rgrid_km = (self.rrel.value - self.rrel.value[0]) * 695700.0 + self.r[0].to('km').value
             
             if self.parallel:
-                # Parallel execution
+                # NOTE: Benchmarking shows parallel execution is SLOWER than serial for CGF solver
+                # due to high Pyro initialization overhead. This option is kept for compatibility
+                # but is not recommended. Serial execution is typically 25-30% faster.
+                
+                print(f"\n⚠ WARNING: Parallel execution for CGF solver is typically SLOWER than serial")
+                print(f"  Recommended: Set parallel=False for better performance")
                 print(f"\nProcessing {self.lon.size} longitudes in parallel...")
-                results = Parallel(n_jobs=-1, backend='threading')(
+                
+                # Use threading with limited workers to minimize overhead
+                # Even so, parallel will likely be slower than serial
+                backend = 'threading'
+                n_jobs = min(self.lon.size, 4)  # Limit to 4 workers
+                print(f"  Using 'threading' backend with {n_jobs} workers")
+                
+                results = Parallel(n_jobs=n_jobs, backend=backend, verbose=0)(
                     delayed(self.process_longitude_cgf)(i, n_cme, n_hcs_max, streak_times, rgrid_km)
                     for i in range(self.lon.size)
                 )
@@ -1520,10 +1536,13 @@ class HUXt:
                                     trailing_idx = np.where(cme_mask)[0][-1]
                                     t_trailing = self.model_time[trailing_idx].value if hasattr(self.model_time[trailing_idx], 'value') else self.model_time[trailing_idx]
 
-                                    num_particles[f'cme_{cme_id}_leading'] = 1
-                                    num_particles[f'cme_{cme_id}_trailing'] = 1
-                                    particle_injection_rate[f'cme_{cme_id}_leading'] = [t_leading]
-                                    particle_injection_rate[f'cme_{cme_id}_trailing'] = [t_trailing]
+                                    # Only inject particles during simulation period (t >= 0), not during spin-up
+                                    if t_leading >= 0:
+                                        num_particles[f'cme_{cme_id}_leading'] = 1
+                                        particle_injection_rate[f'cme_{cme_id}_leading'] = [t_leading]
+                                    if t_trailing >= 0:
+                                        num_particles[f'cme_{cme_id}_trailing'] = 1
+                                        particle_injection_rate[f'cme_{cme_id}_trailing'] = [t_trailing]
 
                         # HCS particles: inject at each polarity change
                         if self.track_b and n_hcs_max > 0:
@@ -1532,7 +1551,9 @@ class HUXt:
                             for t in range(1, len(b_input)):
                                 if b_input[t] - b_input[t-1] != 0:  # Polarity change
                                     t_hcs = self.model_time[t].value if hasattr(self.model_time[t], 'value') else self.model_time[t]
-                                    hcs_times.append(t_hcs)
+                                    # Only inject HCS particles during simulation period (t >= 0)
+                                    if t_hcs >= 0:
+                                        hcs_times.append(t_hcs)
 
                             if len(hcs_times) > 0:
                                 num_particles['hcs'] = len(hcs_times)
@@ -1562,18 +1583,22 @@ class HUXt:
                             particle_injection_rate = None
 
                     # Call consolidated CGF solver function with particle tracking
+                    # Strip units from time arrays for CGF solver
+                    model_time_sec = self.model_time.value if hasattr(self.model_time, 'value') else self.model_time
+                    time_out_sec = self.time_out.value if hasattr(self.time_out, 'value') else self.time_out
+                    
                     v_out_kms, rho_out_kgm3, temp_out_K, particle_data = solve_radial_cgf(
                         v_bc_kms=v_bc_kms,
                         rho_bc_kgm3=rho_bc_kgm3,
                         T_bc_K=T_bc_K,
-                        model_time=self.model_time,
-                        time_out=self.time_out,
+                        model_time=model_time_sec,
+                        time_out=time_out_sec,
                         r_grid=rgrid_km,
                         gamma=self.gamma,
                         nt_out=self.nt_out,
                         nr=self.nr,
                         verbose=False,  # Suppress detailed pyro output to avoid slowdown
-                        create_diagnostic_plot='False',  # Only plot for first longitude
+                        create_diagnostic_plot=False,  # Only plot for first longitude
                         num_particles=num_particles,
                         particle_injection_rate=particle_injection_rate
                     )
@@ -2675,12 +2700,23 @@ class _PyroCustomBCWrapper:
     Consolidated from pyro_custom_bc_wrapper.py for HUXt integration.
     """
     
-    def __init__(self, pyro_obj, gamma=5.0/3.0):
-        """Initialize wrapper with pyro simulation object."""
+    def __init__(self, pyro_obj, gamma=5.0/3.0, t_offset=0.0):
+        """Initialize wrapper with pyro simulation object.
+        
+        Parameters
+        ----------
+        pyro_obj : Pyro
+            Pyro simulation object
+        gamma : float
+            Adiabatic index
+        t_offset : float
+            Offset to add to Pyro's internal time to get model time (default 0)
+        """
         self.pyro = pyro_obj
         self.sim = pyro_obj.get_sim()
         self.gamma = gamma
         self.custom_bc_func = None
+        self.t_offset = t_offset  # Convert Pyro time to model time
         
         # Physical constants (CGS)
         self.PROTON_MASS = 1.67262192e-24  # grams
@@ -2698,8 +2734,9 @@ class _PyroCustomBCWrapper:
         myd = self.sim.cc_data
         myg = myd.grid
         
-        # Get current time
-        t = myd.t.value if hasattr(myd.t, 'value') else myd.t
+        # Get current time from Pyro (starts at 0) and convert to model time
+        t_pyro = myd.t.value if hasattr(myd.t, 'value') else myd.t
+        t = t_pyro + self.t_offset
         
         # Get variables
         dens = myd.get_var("density")
@@ -2890,7 +2927,11 @@ def _run_solar_wind_pyro(r_grid, t_grid, v_bc_func, rho_bc_func, T_bc_func,
     dr = (r_grid[-1] - r_grid[0]) / (nr - 1)
     r_inner = r_grid[0] - 0.5 * dr
     r_outer = r_grid[-1] + 0.5 * dr
-    t_max = t_grid[-1]
+    
+    # Calculate simulation duration (supports negative start times)
+    t_start = t_grid[0]
+    t_end = t_grid[-1]
+    t_duration = t_end - t_start
     
     # Get initial boundary conditions
     rho_bc_init = rho_bc_func(t_grid[0])
@@ -2902,7 +2943,7 @@ def _run_solar_wind_pyro(r_grid, t_grid, v_bc_func, rho_bc_func, T_bc_func,
         print("Solar Wind Pyro Solver")
         print("=" * 70)
         print(f"Domain: {r_inner/AU:.6f} - {r_outer/AU:.6f} AU ({nr} cells)")
-        print(f"Time: 0 - {t_max/86400:.2f} days ({len(t_grid)} snapshots)")
+        print(f"Time: {t_start/86400:.2f} - {t_end/86400:.2f} days (duration: {t_duration/86400:.2f} days, {len(t_grid)} snapshots)")
         n_bc_init = rho_bc_init / PROTON_MASS
         print(f"Initial BC: v={v_bc_init/KM_TO_CM:.1f} km/s, n={n_bc_init:.1f} cm⁻³, T={T_bc_init:.2e} K")
         print()
@@ -2918,7 +2959,7 @@ def _run_solar_wind_pyro(r_grid, t_grid, v_bc_func, rho_bc_func, T_bc_func,
             "mesh.xmax": r_outer,
             "mesh.ymin": 0.0,
             "mesh.ymax": np.pi,
-            "driver.tmax": t_max,
+            "driver.tmax": t_duration,
             "driver.max_steps": 1000000,
             "driver.cfl": cfl,
             "compressible.riemann": "CGF",
@@ -2961,10 +3002,12 @@ def _run_solar_wind_pyro(r_grid, t_grid, v_bc_func, rho_bc_func, T_bc_func,
     e_kin = 0.5 * v_init**2
     ener[myg.ilo:myg.ihi+1, myg.jlo:myg.jhi+1] = rho_init * (e_int + e_kin)
     
-    # Create custom BC wrapper
-    wrapper = _PyroCustomBCWrapper(pyro, gamma=gamma)
+    # Create custom BC wrapper with time offset
+    # (BC functions expect model time, wrapper converts from Pyro's internal time)
+    wrapper = _PyroCustomBCWrapper(pyro, gamma=gamma, t_offset=t_start)
     
     def boundary_condition(r_array, t):
+        # t is already in model time coordinates (wrapper applies offset)
         rho_bc = rho_bc_func(t) * np.ones_like(r_array)
         v_bc = v_bc_func(t) * np.ones_like(r_array)
         T_bc = T_bc_func(t) * np.ones_like(r_array)
@@ -3066,6 +3109,9 @@ def _run_solar_wind_pyro(r_grid, t_grid, v_bc_func, rho_bc_func, T_bc_func,
             print()
     
     # Main time-stepping loop
+    # Pyro's internal time starts at 0, so we need to convert to model time coordinates
+    t_pyro_to_model = t_start  # offset to add to pyro's time to get model time
+    
     t_grid_idx = 0
     next_snapshot_time = t_grid[0]
     
@@ -3081,7 +3127,8 @@ def _run_solar_wind_pyro(r_grid, t_grid, v_bc_func, rho_bc_func, T_bc_func,
     try:
         while not wrapper.finished() and t_grid_idx < len(t_grid):
             state = wrapper.get_state()
-            current_t = state['t']
+            current_t_pyro = state['t']  # Pyro's internal time (starts at 0)
+            current_t = current_t_pyro + t_pyro_to_model  # Convert to model time
             r_state = state['r']
             v_state = state['v']
             
@@ -3090,7 +3137,7 @@ def _run_solar_wind_pyro(r_grid, t_grid, v_bc_func, rho_bc_func, T_bc_func,
                 for group_name, group in particle_groups.items():
                     injection_times = group['injection_times']
                     
-                    # Pre-scheduled injection from array
+                    # Pre-scheduled injection from array (use model time for comparison)
                     while (group['particles_injected'] < group['n_particles'] and 
                            injection_times[group['particles_injected']] <= current_t):
                         # Inject particle at inner boundary
@@ -3191,7 +3238,7 @@ def _run_solar_wind_pyro(r_grid, t_grid, v_bc_func, rho_bc_func, T_bc_func,
     if t_grid_idx < len(t_grid):
         state = wrapper.get_state()
         if verbose:
-            print(f"\nWarning: Ended at t={state['t']/86400.0:.4f} days before t_max={t_max/86400.0:.4f} days")
+            print(f"\nWarning: Ended at t={state['t']/86400.0:.4f} days before t_end={t_end/86400.0:.4f} days")
     
     if verbose:
         print(f"\nSimulation complete: {step_count} steps in {solve_time:.3f} s")
@@ -3372,7 +3419,7 @@ def solve_radial_cgf(v_bc_kms, rho_bc_kgm3, T_bc_K, model_time, time_out,
     
     Notes
     -----
-    - Handles time offset automatically if model_time contains negative values (spin-up)
+    - Passes model_time directly to pyro solver (supports negative times for spin-up)
     - Uses Parker nozzle solution for initialization
     - Saves diagnostic plot to 'pyro_cgf_solver_diagnostic.png' if create_diagnostic_plot=True
     """
@@ -3406,62 +3453,52 @@ def solve_radial_cgf(v_bc_kms, rho_bc_kgm3, T_bc_K, model_time, time_out,
     # Convert HUXt radial grid to cm
     r_grid_cm = r_grid * KM_TO_CM
     
-    # Handle time offset if model_time has negative values (spin-up period)
-    t_offset = 0.0
-    if model_time_seconds[0] < 0:
-        t_offset = -model_time_seconds[0]
-        if verbose:
-            print(f"  Model time: {model_time_seconds[0]/86400:.2f} to {model_time_seconds[-1]/86400:.2f} days")
-            print(f"  Spin-up period: {t_offset/86400:.2f} days")
-    
-    # Create output time grid for pyro
-    # Combine spin-up times with time_out
-    spinup_times = model_time_seconds[model_time_seconds < time_out_seconds[0]]
-    dt_out = time_out_seconds[1] - time_out_seconds[0] if len(time_out_seconds) > 1 else 3600.0
-    spinup_sampled = spinup_times[::int(max(1, len(spinup_times)//len(time_out_seconds)))]
-    
-    # Combine spinup and regular output times
+    # Create output time grid for pyro - include spin-up snapshots
+    # Need to save intermediate snapshots during spin-up for solution accuracy
+    spinup_time_seconds = time_out_seconds[0] - model_time_seconds[0]
+    n_spinup_snaps = max(5, int(spinup_time_seconds / 86400))  # At least 5, or ~1 per day
+    spinup_sampled = np.linspace(model_time_seconds[0], time_out_seconds[0], n_spinup_snaps, endpoint=False)
     t_grid_combined = np.concatenate([spinup_sampled, time_out_seconds])
-    t_grid_pyro = t_grid_combined + t_offset  # Apply offset for pyro
+    t_grid_pyro = t_grid_combined
     
     if verbose:
-        print(f"  Output times: {len(t_grid_pyro)} snapshots ({len(spinup_sampled)} spin-up + {len(time_out_seconds)} main)")
+        print(f"  Model time: {model_time_seconds[0]/86400:.2f} to {model_time_seconds[-1]/86400:.2f} days")
+        spinup_duration = (time_out_seconds[0] - model_time_seconds[0]) / 86400
+        print(f"  Spin-up snapshots: {n_spinup_snaps} over {spinup_duration:.2f} days")
+        print(f"  Output snapshots: {len(time_out_seconds)} from t=0 onwards")
+        print(f"  Total Pyro snapshots: {len(t_grid_pyro)}")
     
     # Boundary condition functions (MUST return plain floats, no units)
-    # These use the ORIGINAL times (before offset) for interpolation
+    # These use model_time directly for interpolation
     def v_bc_func(t):
-        t_model = t - t_offset
-        return float(np.interp(t_model, model_time_seconds, v_bc_cgs))
+        return float(np.interp(t, model_time_seconds, v_bc_cgs))
     
     def rho_bc_func(t):
-        t_model = t - t_offset
-        return float(np.interp(t_model, model_time_seconds, rho_bc_cgs))
+        return float(np.interp(t, model_time_seconds, rho_bc_cgs))
     
     def T_bc_func(t):
-        t_model = t - t_offset
-        return float(np.interp(t_model, model_time_seconds, T_bc_K))
+        return float(np.interp(t, model_time_seconds, T_bc_K))
     
-    # Prepare particle tracking parameters with time offset applied
+    # Prepare particle tracking parameters (use model times directly)
     num_particles_pyro = num_particles
     particle_injection_rate_pyro = None
     
     if isinstance(num_particles, dict) and len(num_particles) > 0:
-        # Apply time offset to all injection times
+        # Use injection times directly in model_time coordinates
         particle_injection_rate_pyro = {}
         for group_name, injection_times in particle_injection_rate.items():
-            # Convert injection times from model_time coordinates to pyro coordinates
-            injection_times_pyro = np.asarray(injection_times) + t_offset
+            injection_times_pyro = np.asarray(injection_times)
             particle_injection_rate_pyro[group_name] = injection_times_pyro
     elif isinstance(num_particles, int) and num_particles > 0:
         # Single group mode
         if particle_injection_rate is not None:
-            injection_times_pyro = np.asarray(particle_injection_rate) + t_offset
+            injection_times_pyro = np.asarray(particle_injection_rate)
             particle_injection_rate_pyro = injection_times_pyro
     
     if verbose:
         print(f"  Calling pyro...")
         print(f"    r: {r_grid_cm[0]/AU:.4f} - {r_grid_cm[-1]/AU:.4f} AU")
-        print(f"    t: {t_grid_pyro[0]/86400:.2f} - {t_grid_pyro[-1]/86400:.2f} days (with offset)")
+        print(f"    t: {t_grid_pyro[0]/86400:.2f} - {t_grid_pyro[-1]/86400:.2f} days")
         print(f"    v_bc: {v_bc_kms[0]:.1f} - {v_bc_kms[-1]:.1f} km/s")
         if isinstance(num_particles, dict):
             print(f"    Tracking {sum(num_particles.values())} particles in {len(num_particles)} groups")
@@ -3476,30 +3513,29 @@ def solve_radial_cgf(v_bc_kms, rho_bc_kgm3, T_bc_K, model_time, time_out,
         rho_bc_func=rho_bc_func,
         T_bc_func=T_bc_func,
         gamma=gamma,
-        cfl=0.5,
+        cfl=0.7,  # Increased from 0.5 for ~30% speed improvement (fewer timesteps)
         verbose=verbose,
         num_particles=num_particles_pyro,
         particle_injection_rate=particle_injection_rate_pyro
     )
     
-    # Remove time offset to get back to model_time coordinates
-    pyro_times = results['t'] - t_offset
+    # Pyro times are already in model_time coordinates (no offset removed)
+    pyro_times = results['t']
     
-    # Find indices corresponding to time_out in the combined grid
+    # Extract only the output times (skip spin-up snapshots)
     n_spinup = len(spinup_sampled)
-    
     if verbose:
         print(f"  Extraction info:")
-        print(f"    Total pyro snapshots: {len(results['t'])}")
-        print(f"    Spin-up samples: {n_spinup}")
+        print(f"    Total Pyro snapshots: {len(results['t'])}")
+        print(f"    Spin-up snapshots: {n_spinup}")
         print(f"    Expected time_out samples: {nt_out}")
         print(f"    Pyro time range: {pyro_times[0]/86400:.3f} to {pyro_times[-1]/86400:.3f} days")
         print(f"    time_out range: {time_out_seconds[0]/86400:.3f} to {time_out_seconds[-1]/86400:.3f} days")
     
-    # Extract just the time_out portion (skip spin-up samples)
-    v_out_cgs = results['v'][n_spinup:, :]
-    rho_out_cgs = results['rho'][n_spinup:, :]
-    temp_out_K = results['T'][n_spinup:, :]
+    # Skip spin-up snapshots, extract only output times
+    v_out_cgs = results['v'][n_spinup:]
+    rho_out_cgs = results['rho'][n_spinup:]
+    temp_out_K = results['T'][n_spinup:]
     
     # If pyro returned fewer points than expected, interpolate
     if v_out_cgs.shape[0] != nt_out:
@@ -3510,6 +3546,7 @@ def solve_radial_cgf(v_bc_kms, rho_bc_kgm3, T_bc_K, model_time, time_out,
         rho_interp = np.zeros((nt_out, nr))
         temp_interp = np.zeros((nt_out, nr))
         
+        # Skip spin-up times to get only output times
         pyro_out_times = pyro_times[n_spinup:]
         
         if verbose:
@@ -3554,34 +3591,29 @@ def solve_radial_cgf(v_bc_kms, rho_bc_kgm3, T_bc_K, model_time, time_out,
         particle_data_cgs = results['particles']
         
         if isinstance(num_particles, dict):
-            # Multi-group mode - convert positions to km and remove time offset
+            # Multi-group mode - convert positions to km (times already in model_time coordinates)
             particle_data = {'groups': {}}
             for group_name, group in particle_data_cgs['groups'].items():
                 # Convert positions from cm to km
                 r_km = group['r'] / KM_TO_CM
-                # Convert times back to model_time coordinates (remove offset)
-                t_model = group['t'] - t_offset
-                t_inject_model = group['t_inject'] - t_offset
                 
                 particle_data['groups'][group_name] = {
                     'r': r_km,  # km
                     'v': group['v'] / KM_TO_CM,  # km/s
-                    't': t_model,  # seconds in model_time coordinates
-                    't_inject': t_inject_model,  # seconds in model_time coordinates
+                    't': group['t'],  # seconds in model_time coordinates
+                    't_inject': group['t_inject'],  # seconds in model_time coordinates
                     'active': group['active'],
                     'n_particles': group['n_particles'],
                 }
         else:
-            # Single group mode - convert positions to km and remove time offset
+            # Single group mode - convert positions to km (times already in model_time coordinates)
             r_km = particle_data_cgs['r'] / KM_TO_CM
-            t_model = particle_data_cgs['t'] - t_offset
-            t_inject_model = particle_data_cgs['t_inject'] - t_offset
             
             particle_data = {
                 'r': r_km,  # km
                 'v': particle_data_cgs['v'] / KM_TO_CM,  # km/s
-                't': t_model,  # seconds in model_time coordinates
-                't_inject': t_inject_model,  # seconds in model_time coordinates
+                't': particle_data_cgs['t'],  # seconds in model_time coordinates
+                't_inject': particle_data_cgs['t_inject'],  # seconds in model_time coordinates
                 'active': particle_data_cgs['active'],
             }
     

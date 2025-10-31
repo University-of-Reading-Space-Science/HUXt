@@ -59,10 +59,11 @@ dirs = H._setup_dirs_()
 print(dirs)
 
 
-simtime = 1 *u.day
+simtime = 10 *u.day
 # Set up HUXt
 cr=2120
 vr_in = Hin.get_MAS_long_profile(cr, 0.0*u.deg)
+
 
 
 # Set up to trace a set of field lines from a range of evenly spaced Carrington longitudes
@@ -76,8 +77,8 @@ lon_grid = np.arange(dlon/2, 2*np.pi-dlon/2 + 0.0001, dlon)*u.rad
 
 # Get a list of two ConeCMEs
 daysec = 86400
-times = [0.5*u.day]
-speeds = [600]
+times = [5*u.day]
+speeds = [1000]
 lons = [-20]
 widths = [60]
 thickness = [4]
@@ -85,7 +86,7 @@ cme_list = []
 for t, l, w, v, thick in zip(times, lons, widths, speeds, thickness):
     cme = H.ConeCME(t_launch=t, longitude=l*u.deg, width=w*u.deg, v=v*u.km/u.s, 
                     thickness=thick*u.solRad, 
-                    density_fraction=0.5, temperature_fraction=0.5)
+                    density_fraction=1, temperature_fraction=1)
     cme_list.append(cme)
 
 
@@ -103,24 +104,26 @@ lon_grid = np.arange(dlon/2, 2*np.pi-dlon/2 + 0.0001, dlon)*u.rad
 t_interest = 0.95*u.day
 
 
-model_incomp = H.HUXt(v_boundary=vr_in, lon_start=330*u.deg, lon_stop = 30*u.deg, 
+model_incomp = H.HUXt(v_boundary=vr_in, #lon_start=350*u.deg, lon_stop = 10*u.deg, 
+                      lon_out=0.0*u.rad,
                       simtime=simtime, dt_scale=4, 
                     compressible=False, solver ='upwind')
-model_incomp.solve(cme_list, streak_carr=lon_grid)
+model_incomp.solve(cme_list)#, streak_carr=lon_grid)
 HA.plot_earth_timeseries(model_incomp)
-HA.plot(model_incomp, time=t_interest)
+#HA.plot(model_incomp, time=t_interest)
 
 # model_comp_hll = H.HUXt(v_boundary=vr_in, lon_out=0*u.deg, simtime=5*u.day, dt_scale=4, 
 #                     compressible=True, solver ='hll')
 # model_comp_hll.solve(cme_list)
 # HA.plot_earth_timeseries(model_comp_hll)
 
-model_comp_cgf = H.HUXt(v_boundary=vr_in, lon_start=330*u.deg, lon_stop = 30*u.deg,
+model_comp_cgf = H.HUXt(v_boundary=vr_in, #lon_start=350*u.deg, lon_stop = 10*u.deg,
+                        lon_out=0.0*u.rad,
                         simtime=simtime, dt_scale=4, 
                     compressible=True, solver ='cgf')
-model_comp_cgf.solve(cme_list, streak_carr=lon_grid)
+model_comp_cgf.solve(cme_list)#, streak_carr=lon_grid)
 HA.plot_earth_timeseries(model_comp_cgf)
-HA.plot(model_comp_cgf, time=t_interest)
+#HA.plot(model_comp_cgf, time=t_interest)
 # HA.animate(model_comp, tag = 'compressible_with_CME')
 
 # Use block=True to ensure plot windows stay open until closed by user
