@@ -636,7 +636,7 @@ class HUXt:
         self.__version__ = get_version()
         
         # Validate and store solver choice
-        valid_solvers = ['upwind', 'hll', 'hll_fv', 'mol', 'cgf']
+        valid_solvers = ['upwind', 'hll', 'cgf']
         if solver not in valid_solvers:
             raise ValueError(f"Invalid solver '{solver}'. Must be one of: {valid_solvers}")
         
@@ -1870,14 +1870,15 @@ class HUXt:
                 'dt_scale', 'time_out', 'dt_out', 'r', 'dr', 'lon', 'dlon', 'r_grid', 'lon_grid',
                 'v_grid', 'latitude', 'v_boundary', '_v_boundary_init_', 'cme_particles_r', 'cme_particles_v',
                 'streak_particles_r', 'streak_lon_r0', 'hcs_particles_r', 'frame', 'track_cmes', 'accel_limit',
-                'track_b', 'track_streak', 'compressible']
+                'track_b', 'track_streak', 'compressible', 'solver']
 
         # Handle keys to magnetic field arrays seperately
         mag_keys = ['_b_boundary_init_', 'b_boundary_lons', 'b_boundary', 'b_grid']
 
         # Handle keys to compressible solver arrays separately
         compressible_keys = ['_rho_boundary_init_', 'rho_boundary_lons', 'rho_boundary', 
-                             '_temp_boundary_init_', 'temp_boundary_lons', 'temp_boundary']
+                             '_temp_boundary_init_', 'temp_boundary_lons', 'temp_boundary',
+                             'rho_grid', 'temp_grid']
 
         for k, v in self.__dict__.items():
 
@@ -1933,6 +1934,12 @@ class HUXt:
                     elif isinstance(v, u.Quantity):
                         dset = out_file.create_dataset(k, data=v.value)
                         dset.attrs['unit'] = v.unit.to_string()
+                    
+                    # Add dimension labels for grid arrays
+                    if k in ['rho_grid', 'temp_grid']:
+                        dset.dims[0].label = 'time'
+                        dset.dims[1].label = 'radius'
+                        dset.dims[2].label = 'longitude'
 
                     out_file.flush()
 
@@ -2350,163 +2357,6 @@ def zerototwopi(angles):
     angles_out = angles_out + (a * twopi)
 
     return angles_out
-
-
-@jit(nopython=True)
-def _compute_rhs_mol_(rho, v, temp, r_full, gamma):
-    """
-    Compute RHS of PDEs using Method of Lines for conservative equations.
-    
-    Conservative form in spherical coordinates:
-    ∂ρ/∂t = -∂(ρv)/∂r - (2/r)·ρv
-    ∂(ρv)/∂t = -∂(ρv² + P)/∂r - (2/r)·ρv²  
-    
-    For temperature, use primitive form:
-    ∂T/∂t = -v·∂T/∂r - (γ-1)·T·∇·v
-    
-    Returns time derivatives of density, velocity, and temperature.
-    """
-    k_B = 1.38064852e-23
-    m_p = 1.67262192e-27
-    
-    nr = len(rho)
-    v_SI = v * 1000.0  # Convert km/s to m/s
-    r_m = r_full * 1000.0  # Convert km to m
-    
-    # Pressure (Pa)
-    P = (rho / m_p) * k_B * temp
-    
-    # Fluxes
-    F_mass = rho * v_SI
-    F_mom = rho * v_SI**2 + P
-    
-    # Initialize outputs
-    drho_dt = np.zeros(nr)
-    dv_dt = np.zeros(nr)
-    dtemp_dt = np.zeros(nr)
-    
-    # Interior points: use central differences
-    for i in range(1, nr-1):
-        dr_left = r_m[i] - r_m[i-1]
-        dr_right = r_m[i+1] - r_m[i]
-        dr_center = 0.5 * (dr_left + dr_right)
-        
-        # Spatial derivatives
-        dF_mass_dr = (F_mass[i+1] - F_mass[i-1]) / (dr_left + dr_right)
-        dF_mom_dr = (F_mom[i+1] - F_mom[i-1]) / (dr_left + dr_right)
-        
-        # Geometric source terms
-        geom_mass = (2.0 / r_m[i]) * F_mass[i]
-        geom_mom = (2.0 / r_m[i]) * (rho[i] * v_SI[i]**2)  # Only advective part
-        
-        # Mass equation RHS
-        drho_dt[i] = -dF_mass_dr - geom_mass
-        
-        # Momentum equation: d(ρv)/dt = -∂(ρv² + P)/∂r - (2/r)·ρv²
-        # Convert to velocity: dv/dt = (1/ρ)[d(ρv)/dt - v·dρ/dt]
-        d_rhov_dt = -dF_mom_dr - geom_mom
-        dv_dt[i] = (d_rhov_dt - v_SI[i] * drho_dt[i]) / rho[i] / 1000.0  # km/s/s
-        
-        # Temperature: primitive form
-        dT_dr = (temp[i+1] - temp[i-1]) / (dr_left + dr_right)
-        dv_dr = (v[i+1] - v[i-1]) / (dr_left + dr_right) / 1000.0  # Convert to 1/s
-        div_v = dv_dr + 2.0 * v_SI[i] / r_m[i]
-        
-        dtemp_dt[i] = -v_SI[i] * dT_dr - (gamma - 1.0) * temp[i] * div_v
-    
-    # Boundary conditions: keep boundaries fixed (zero time derivative)
-    drho_dt[0] = 0.0
-    drho_dt[-1] = 0.0
-    dv_dt[0] = 0.0
-    dv_dt[-1] = 0.0
-    dtemp_dt[0] = 0.0
-    dtemp_dt[-1] = 0.0
-    
-    return drho_dt, dv_dt, dtemp_dt
-
-
-@jit(nopython=True)
-def _upwind_step_mol_(v_up, v_dn, rho_up, rho_dn, temp_up, temp_dn,
-                      dtdr, alpha, r_accel, rrel, r_boundary, gamma):
-    """
-    Method of Lines with RK4 time integration for compressible solver.
-    
-    This implements a higher-order time integration scheme that better
-    preserves conservation properties compared to operator splitting.
-    """
-    # Build full state including boundary
-    nr_full = len(v_up) + 1
-    rho_full = np.empty(nr_full)
-    v_full = np.empty(nr_full)
-    temp_full = np.empty(nr_full)
-    r_full = np.empty(nr_full)
-    
-    # Boundary (index 0)
-    rho_full[0] = rho_dn[0]
-    v_full[0] = v_dn[0]
-    temp_full[0] = temp_dn[0]
-    r_full[0] = rrel[0] * 695700.0 + r_boundary
-    
-    # Interior
-    rho_full[1:] = rho_up
-    v_full[1:] = v_up
-    temp_full[1:] = temp_up
-    r_full[1:] = rrel[1:] * 695700.0 + r_boundary
-    
-    # Time step
-    dr = r_full[1] - r_full[0]
-    dt = dtdr * dr
-    
-    # RK4 integration
-    # Stage 1
-    k1_rho, k1_v, k1_temp = _compute_rhs_mol_(rho_full, v_full, temp_full, r_full, gamma)
-    
-    # Stage 2
-    rho2 = rho_full + 0.5 * dt * k1_rho
-    rho2[0] = rho_full[0]  # Keep boundary fixed
-    v2 = v_full + 0.5 * dt * k1_v
-    v2[0] = v_full[0]
-    temp2 = temp_full + 0.5 * dt * k1_temp
-    temp2[0] = temp_full[0]
-    k2_rho, k2_v, k2_temp = _compute_rhs_mol_(rho2, v2, temp2, r_full, gamma)
-    
-    # Stage 3
-    rho3 = rho_full + 0.5 * dt * k2_rho
-    rho3[0] = rho_full[0]
-    v3 = v_full + 0.5 * dt * k2_v
-    v3[0] = v_full[0]
-    temp3 = temp_full + 0.5 * dt * k2_temp
-    temp3[0] = temp_full[0]
-    k3_rho, k3_v, k3_temp = _compute_rhs_mol_(rho3, v3, temp3, r_full, gamma)
-    
-    # Stage 4
-    rho4 = rho_full + dt * k3_rho
-    rho4[0] = rho_full[0]
-    v4 = v_full + dt * k3_v
-    v4[0] = v_full[0]
-    temp4 = temp_full + dt * k3_temp
-    temp4[0] = temp_full[0]
-    k4_rho, k4_v, k4_temp = _compute_rhs_mol_(rho4, v4, temp4, r_full, gamma)
-    
-    # Combine
-    rho_next = rho_full + (dt / 6.0) * (k1_rho + 2*k2_rho + 2*k3_rho + k4_rho)
-    v_next = v_full + (dt / 6.0) * (k1_v + 2*k2_v + 2*k3_v + k4_v)
-    temp_next = temp_full + (dt / 6.0) * (k1_temp + 2*k2_temp + 2*k3_temp + k4_temp)
-    
-    # Keep boundary fixed
-    rho_next[0] = rho_full[0]
-    v_next[0] = v_full[0]
-    temp_next[0] = temp_full[0]
-    
-    # Apply bounds
-    rho_next = np.maximum(rho_next, 1e-30)
-    v_next = np.maximum(v_next, 100.0)
-    v_next = np.minimum(v_next, 3000.0)
-    temp_next = np.maximum(temp_next, 1e3)
-    temp_next = np.minimum(temp_next, 1e8)
-    
-    # Extract interior points
-    return v_next[1:], rho_next[1:], temp_next[1:]
 
 
 def _plot_pyro_inputs_outputs_(model_time, vinput, rhoinput, tempinput, 
@@ -3860,61 +3710,8 @@ def solve_radial(vinput, binput, iscmeinput, model_time, rrel, params,
                 # Save the updated time step (direct assignment, no copy needed)
                 v[1:] = u_up_next
         
-        elif solver == 'hll_fv':
-            # Finite-volume HLL solver with area-weighted fluxes (clean spherical geometry)
-            
-            if compressible:
-                # Use finite-volume HLL Riemann solver
-                rho_up = rho[1:].copy()
-                rho_dn = rho[:-1].copy()
-                temp_up = temp[1:].copy()
-                temp_dn = temp[:-1].copy()
-                
-                u_up_next, rho_up_next, temp_up_next = _hll_fv_step_compressible_(
-                    u_up, u_dn, rho_up, rho_dn, temp_up, temp_dn, dtdr, alpha, r_accel, rrel, r_boundary, gamma)
-                
-                # Save the updated time steps (direct assignment, no copy needed)
-                v[1:] = u_up_next
-                rho[1:] = rho_up_next
-                temp[1:] = temp_up_next
-            else:
-                # For incompressible, fall back to upwind
-                if accel_limit:
-                    u_up_next = _upwind_step_accel_limit(u_up, u_dn, dtdr, alpha, r_accel, rrel)
-                else:
-                    u_up_next = _upwind_step_(u_up, u_dn, dtdr, alpha, r_accel, rrel)
-                
-                # Save the updated time step (direct assignment, no copy needed)
-                v[1:] = u_up_next
-        
-        elif solver == 'mol':
-            # Method of Lines with RK4 time integration
-            
-            if compressible:
-                # Use MOL/RK4 for compressible flow
-                rho_up = rho[1:].copy()
-                rho_dn = rho[:-1].copy()
-                temp_up = temp[1:].copy()
-                temp_dn = temp[:-1].copy()
-                
-                u_up_next, rho_up_next, temp_up_next = _upwind_step_mol_(
-                    u_up, u_dn, rho_up, rho_dn, temp_up, temp_dn, dtdr, alpha, r_accel, rrel, r_boundary, gamma)
-                
-                # Save the updated time steps
-                v[1:] = u_up_next
-                rho[1:] = rho_up_next
-                temp[1:] = temp_up_next
-            else:
-                # For incompressible, fall back to upwind
-                if accel_limit:
-                    u_up_next = _upwind_step_accel_limit(u_up, u_dn, dtdr, alpha, r_accel, rrel)
-                else:
-                    u_up_next = _upwind_step_(u_up, u_dn, dtdr, alpha, r_accel, rrel)
-                
-                v[1:] = u_up_next
-        
         else:
-            raise ValueError(f"Unknown solver: {solver}. Supported solvers: 'upwind', 'hll', 'hll_fv', 'mol', 'cgf'")
+            raise ValueError(f"Unknown solver: {solver}. Supported solvers: 'upwind', 'hll', 'cgf'")
 
         # Move the CME test particles forward
         if t > 0 and do_cme:
@@ -4863,174 +4660,6 @@ def _hll_step_compressible_(v_up, v_dn, rho_up, rho_dn, temp_up, temp_dn,
 
 
 @jit(nopython=True)
-def _hll_fv_step_compressible_(v_up, v_dn, rho_up, rho_dn, temp_up, temp_dn,
-                                dtdr, alpha, r_accel, rrel, r_boundary, gamma=5.0/3.0):
-    """
-    Finite-volume HLL Riemann solver using area-weighted fluxes for spherical geometry.
-    
-    This is an alternative formulation that naturally handles geometric effects through
-    proper area weighting at cell interfaces, avoiding explicit source terms.
-    
-    The conservative update is:
-        dU/dt = -(1/V_i) * (A_{i+1/2}·F_{i+1/2} - A_{i-1/2}·F_{i-1/2})
-    
-    where:
-        - V_i = (1/3) * (r_{i+1/2}³ - r_{i-1/2}³) is the cell volume
-        - A_i = r_i² is the interface area (4π factor drops out in 1D)
-        - F is the HLL Riemann flux
-    
-    This approach is mathematically elegant and commonly used in spherical codes.
-    The geometric divergence is automatically captured through (A_R - A_L) ∝ (r_R² - r_L²).
-    
-    Note: This gives slightly different results than the explicit source term approach
-    due to how geometric effects are discretized. Both are valid approximations to
-    the continuous equations.
-    
-    Temperature uses primitive equation (dual-energy) to avoid KE >> IE numerical issues.
-    
-    Args:
-        v_up: Upwind velocity (km/s)
-        v_dn: Downwind velocity (km/s)
-        rho_up: Upwind density (kg/m³)
-        rho_dn: Downwind density (kg/m³)
-        temp_up: Upwind temperature (K)
-        temp_dn: Downwind temperature (K)
-        dtdr: Time/space ratio (s/km)
-        alpha: Acceleration parameter (NOT USED)
-        r_accel: Acceleration scale (NOT USED)
-        rrel: Relative radial coordinate
-        r_boundary: Inner boundary radius (km)
-        gamma: Adiabatic index
-    
-    Returns:
-        v_up_next, rho_up_next, temp_up_next: Updated state
-    """
-    # Physical constants
-    k_B = 1.38064852e-23
-    m_p = 1.67262192e-27
-    
-    # Compute radial grid
-    r_dn = rrel[:-1] * 695700.0 + r_boundary  # km, cell left edges
-    r_up = rrel[1:] * 695700.0 + r_boundary   # km, cell right edges
-    dr = r_up - r_dn  # km
-    
-    # Cell centers (for area and volume calculations)
-    r_center = 0.5 * (r_dn + r_up)  # km
-    
-    # Convert to meters for calculations
-    r_dn_m = r_dn * 1000.0  # m
-    r_up_m = r_up * 1000.0  # m
-    r_center_m = r_center * 1000.0  # m
-    
-    # Compute pressure from equation of state
-    p_up = (rho_up / m_p) * k_B * temp_up  # Pa
-    p_dn = (rho_dn / m_p) * k_B * temp_dn  # Pa
-    
-    # Convert velocities to SI
-    v_up_SI = v_up * 1000.0  # m/s
-    v_dn_SI = v_dn * 1000.0  # m/s
-    
-    nr = len(v_up)
-    
-    # Cell volumes: V = (1/3) * (r_outer³ - r_inner³)
-    V = (1.0 / 3.0) * (r_up_m**3 - r_dn_m**3)  # m³
-    
-    # Initialize conservative variables per unit volume
-    U_mass = rho_up
-    U_mom = rho_up * v_up_SI
-    
-    U_mass_next = np.empty(nr, dtype=np.float64)
-    U_mom_next = np.empty(nr, dtype=np.float64)
-    
-    # Time step
-    dt = dtdr * dr  # seconds (dtdr is s/km, dr is km)
-    
-    # Flux differencing with area weighting
-    for i in range(nr):
-        # Right interface (i+1/2) at r_up[i]
-        A_right = r_up_m[i]**2  # Interface area (dropping 4π)
-        
-        if i < nr - 1:
-            F_mass_R, F_mom_R, _ = _hll_flux_(rho_up[i], v_up[i], p_up[i],
-                                               rho_up[i+1], v_up[i+1], p_up[i+1], gamma)
-        else:
-            # Extrapolate at boundary
-            F_mass_R, F_mom_R, _ = _hll_flux_(rho_up[i], v_up[i], p_up[i],
-                                               rho_up[i], v_up[i], p_up[i], gamma)
-        
-        # Left interface (i-1/2) at r_dn[i]
-        A_left = r_dn_m[i]**2  # Interface area (dropping 4π)
-        
-        if i > 0:
-            F_mass_L, F_mom_L, _ = _hll_flux_(rho_up[i-1], v_up[i-1], p_up[i-1],
-                                               rho_up[i], v_up[i], p_up[i], gamma)
-        else:
-            # Boundary condition
-            F_mass_L, F_mom_L, _ = _hll_flux_(rho_dn[i], v_dn[i], p_dn[i],
-                                               rho_up[i], v_up[i], p_up[i], gamma)
-        
-        # Conservative update: dU/dt = -(1/V) * (A_R*F_R - A_L*F_L)
-        # Geometric effects are automatically included via area weighting!
-        dU_mass = -(A_right * F_mass_R - A_left * F_mass_L) / V[i]
-        dU_mom = -(A_right * F_mom_R - A_left * F_mom_L) / V[i]
-        
-        U_mass_next[i] = U_mass[i] + dt[i] * dU_mass
-        U_mom_next[i] = U_mom[i] + dt[i] * dU_mom
-    
-    # Convert conservative variables back to primitives
-    rho_up_next = U_mass_next
-    v_up_next = U_mom_next / U_mass_next / 1000.0  # Convert m/s to km/s
-    
-    # Temperature evolution using primitive equation (dual-energy formulation)
-    # This avoids numerical precision issues when KE >> IE
-    temp_up_next = np.empty(nr, dtype=np.float64)
-    
-    for i in range(nr):
-        # Compute velocity divergence: div(v) = ∂v/∂r + 2v/r
-        if i < nr - 1:
-            dv_dr = (v_up_next[i+1] - v_up_next[i]) / (dr[i])  # 1/s (dr in km, v in km/s)
-        elif i > 0:
-            dv_dr = (v_up_next[i] - v_up_next[i-1]) / (dr[i])
-        else:
-            dv_dr = 0.0
-        
-        geom_term = 2.0 * v_up_next[i] / r_center[i]  # 1/s
-        div_v = dv_dr + geom_term
-        
-        # Advection term: -v·∂T/∂r
-        if i > 0:
-            dT_dr = (temp_up[i] - temp_up[i-1]) / dr[i]
-        else:
-            dT_dr = (temp_up[i] - temp_dn[i]) / dr[i]
-        
-        temp_advection = -v_up_next[i] * dT_dr * dt[i]  # dt in s, dT_dr in K/km, v in km/s
-        
-        # Compression/expansion term: -(γ-1)·T·div(v)
-        temp_compression = -(gamma - 1.0) * temp_up[i] * div_v * dt[i]  # dt in s, div_v in 1/s
-        
-        temp_up_next[i] = temp_up[i] + temp_advection + temp_compression
-    
-    # Apply bounds
-    for i in range(nr):
-        if v_up_next[i] < 100.0:
-            v_up_next[i] = 100.0
-        if v_up_next[i] > 3000.0:
-            v_up_next[i] = 3000.0
-        if rho_up_next[i] > 1e-17:
-            rho_up_next[i] = 1e-17
-        if rho_up_next[i] < 1e-30:
-            rho_up_next[i] = 1e-30
-        if temp_up_next[i] > 1e8:
-            temp_up_next[i] = 1e8
-        if temp_up_next[i] < 1e4:
-            temp_up_next[i] = 1e4
-    
-    return v_up_next, rho_up_next, temp_up_next
-
-
-
-
-@jit(nopython=True)
 def _is_in_cme_boundary_(r_boundary, lon, lat, time, cme_params):
     """
     Check whether a given lat, lon point on the inner boundary is within a given CME.
@@ -5133,6 +4762,9 @@ def load_HUXt_run(filepath):
         
         # Load compressible flag if it exists (for backward compatibility with older saved files)
         compressible = bool(data['compressible'][()]) if 'compressible' in data else False
+        
+        # Load solver if it exists (for backward compatibility with older saved files)
+        solver = data['solver'][()].decode("utf-8") if 'solver' in data else 'upwind'
 
         if track_b:
             b_boundary = data['_b_boundary_init_'][()]
@@ -5166,7 +4798,8 @@ def load_HUXt_run(filepath):
             'frame': frame,
             'track_cmes': track_cmes,
             'accel_limit': accel_limit,
-            'compressible': compressible
+            'compressible': compressible,
+            'solver': solver
         }
         
         if track_b:
@@ -5202,6 +4835,12 @@ def load_HUXt_run(filepath):
                 model.rho_boundary_lons = rho_boundary_lons
             if '_temp_boundary_init_' in data:
                 model.temp_boundary_lons = temp_boundary_lons
+            
+            # Load rho_grid and temp_grid if they exist
+            if 'rho_grid' in data:
+                model.rho_grid = data['rho_grid'][()] * u.Unit(data['rho_grid'].attrs['unit'])
+            if 'temp_grid' in data:
+                model.temp_grid = data['temp_grid'][()] * u.Unit(data['temp_grid'].attrs['unit'])
         
         if track_streak:
             model.track_streak = track_streak
