@@ -4117,32 +4117,19 @@ def _upwind_step_compressible_(v_up, v_dn, rho_up, rho_dn, temp_up, temp_dn,
     # consistent with mass conservation in a steady wind.
     # ====================================================================
     
-    # Compute reference mass flux at inner boundary (kg·km/s per unit solid angle)
-    # Using boundary values (index 0 of downwind arrays)
-    # Note: r_dn[0] is the first radial position (inner boundary)
-    F_ref = rho_dn[0] * v_dn[0] * (r_dn[0] ** 2)
+    # ==================================================================
+    # MASS FLUX CORRECTION: Enforce ρvr² = const
+    # ==================================================================
+    # Use vectorized operations to enforce mass conservation
     
-    # Apply correction at each grid point
-    # ρ_corrected = F_ref / (v * r²)
-    for i in range(len(rho_up_next)):
-        # Store original density
-        rho_old = rho_up_next[i]
-        
-        # Expected density from mass conservation: ρ = F_ref / (v·r²)
-        rho_conserved = F_ref / (v_up_next[i] * (r_up[i] ** 2))
-        
-        # Apply full correction for exact mass conservation
-        rho_up_next[i] = rho_conserved
-        
-        # Adjust temperature to maintain constant pressure (isobaric process)
-        # This is physically consistent: in a steady expanding wind, the gas
-        # adjusts thermally to maintain force balance
-        # P = ρ·R·T ==> If ρ changes, T adjusts to keep P constant
-        # T_new = T_old · (ρ_old / ρ_new)
-        if rho_old > 1e-35:  # Avoid division by tiny numbers
-            temp_up_next[i] = temp_up_next[i] * (rho_old / rho_up_next[i])
+    # Reference flux from first interior point
+    F_ref = rho_up_next[0] * v_up_next[0] * (r_up[0] ** 2)
     
-    # Ensure physical bounds (numerical safety)
+    # Apply correction to ALL points using numpy arrays
+    # ρ_corrected = F_ref / (v·r²)
+    rho_up_next = F_ref / (v_up_next * (r_up ** 2))
+    
+    # Ensure physical bounds
     rho_up_next = np.maximum(rho_up_next, 1e-30)
     temp_up_next = np.maximum(temp_up_next, 1e3)
 
