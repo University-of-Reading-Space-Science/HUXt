@@ -614,6 +614,7 @@ class HUXt:
                    'upwind' (default): First-order upwind scheme (Godunov-type)
                    'hll': HLL (Harten-Lax-van Leer) Riemann solver for shock capturing
                    'cgf': Colella-Glaz-Ferguson solver (pyro-based, compressible only)
+                   'pluto': PLUTO spherical hydrodynamics solver (HLL+RK3, compressible only)
             parallel: Boolean flag to enable parallel computation across longitude slices (default True).
                      Uses joblib threading backend for parallelization. Set to False for debugging
                      or if running on a single-core system.
@@ -636,15 +637,15 @@ class HUXt:
         self.__version__ = get_version()
         
         # Validate and store solver choice
-        valid_solvers = ['upwind', 'hll', 'cgf']
+        valid_solvers = ['upwind', 'hll', 'cgf', 'pluto']
         if solver not in valid_solvers:
             raise ValueError(f"Invalid solver '{solver}'. Must be one of: {valid_solvers}")
         
         self.solver = solver
         
-        # CGF solver requires compressible mode - force it regardless of user setting
-        if solver == 'cgf' and not compressible:
-            print("Note: CGF solver requires compressible=True. Enabling compressible mode.")
+        # CGF and PLUTO solvers require compressible mode - force it regardless of user setting
+        if solver in ['cgf', 'pluto'] and not compressible:
+            print(f"Note: {solver.upper()} solver requires compressible=True. Enabling compressible mode.")
             compressible = True
         
         # Store parallel computation flag
@@ -2550,6 +2551,288 @@ def _plot_pyro_inputs_outputs_(model_time, vinput, rhoinput, tempinput,
     print(f"\nSaved diagnostic plot to: pyro_cgf_solver_diagnostic.png")
     # Don't call plt.show() here - let the user control when plots are shown
     # The figure will be displayed when the user calls plt.show() at the end of their script
+
+
+# ============================================================================
+# PLUTO Spherical Hydrodynamics Solver
+# ============================================================================
+# Based on PLUTO code (Mignone et al. 2007) and sunRunner1D configuration.
+# Uses:
+# - Conservative finite volume method  
+# - HLL Riemann solver
+# - Spherical geometry source terms
+# - Compatible with HUXt time-stepping loop
+
+# PLUTO configuration constants
+GAMMA_PLUTO = 1.5  # Polytropic index (matches sunRunner1D)
+
+
+@jit(nopython=True)
+def _pluto_conservative_to_primitive(U, gamma=GAMMA_PLUTO):
+    """
+    Convert conservative variables to primitive variables.
+    
+    Args:
+        U: Conservative variables [rho, rho*v, E] where E = 0.5*rho*v^2 + P/(gamma-1)
+        gamma: Ratio of specific heats
+        
+    Returns:
+        V: Primitive variables [rho, v, P]
+    """
+    rho = U[0]
+    mom = U[1]
+    E = U[2]
+    
+    # Safety check for density
+    if rho <= 0:
+        rho = 1e-20
+    
+    v = mom / rho
+    # E = 0.5*rho*v^2 + P/(gamma-1)
+    # P = (gamma-1) * (E - 0.5*rho*v^2)
+    P = (gamma - 1.0) * (E - 0.5 * rho * v * v)
+    
+    # Ensure positive pressure
+    if P <= 0:
+        P = 1e-10
+    
+    return np.array([rho, v, P])
+
+
+@jit(nopython=True)
+def _pluto_primitive_to_conservative(V, gamma=GAMMA_PLUTO):
+    """
+    Convert primitive variables to conservative variables.
+    
+    Args:
+        V: Primitive variables [rho, v, P]
+        gamma: Ratio of specific heats
+        
+    Returns:
+        U: Conservative variables [rho, rho*v, E]
+    """
+    rho = V[0]
+    v = V[1]
+    P = V[2]
+    
+    mom = rho * v
+    E = 0.5 * rho * v * v + P / (gamma - 1.0)
+    
+    return np.array([rho, mom, E])
+
+
+@jit(nopython=True)
+def _pluto_compute_flux(V, gamma=GAMMA_PLUTO):
+    """
+    Compute physical flux from primitive variables.
+    
+    Args:
+        V: Primitive variables [rho, v, P]
+        gamma: Ratio of specific heats
+        
+    Returns:
+        F: Flux vector [rho*v, rho*v^2 + P, v*(E + P)]
+    """
+    rho = V[0]
+    v = V[1]
+    P = V[2]
+    
+    E = 0.5 * rho * v * v + P / (gamma - 1.0)
+    
+    F = np.zeros(3)
+    F[0] = rho * v  # Mass flux
+    F[1] = rho * v * v + P  # Momentum flux
+    F[2] = v * (E + P)  # Energy flux
+    
+    return F
+
+
+@jit(nopython=True)
+def _pluto_hll_flux(V_L, V_R, gamma=GAMMA_PLUTO):
+    """
+    Compute HLL Riemann flux at cell interface.
+    
+    Following PLUTO's HLL implementation:
+    - Estimates fastest wave speeds S_L and S_R
+    - Computes intermediate flux based on wave speeds
+    
+    Args:
+        V_L: Left primitive state [rho, v, P]
+        V_R: Right primitive state [rho, v, P]
+        gamma: Ratio of specific heats
+        
+    Returns:
+        F_HLL: HLL flux at interface
+    """
+    rho_L, v_L, P_L = V_L[0], V_L[1], V_L[2]
+    rho_R, v_R, P_R = V_R[0], V_R[1], V_R[2]
+    
+    # Sound speeds
+    c_L = np.sqrt(gamma * P_L / rho_L)
+    c_R = np.sqrt(gamma * P_R / rho_R)
+    
+    # Wave speed estimates
+    S_L = min(v_L - c_L, v_R - c_R)
+    S_R = max(v_L + c_L, v_R + c_R)
+    
+    # Physical fluxes
+    F_L = _pluto_compute_flux(V_L, gamma)
+    F_R = _pluto_compute_flux(V_R, gamma)
+    
+    # Conservative variables
+    U_L = _pluto_primitive_to_conservative(V_L, gamma)
+    U_R = _pluto_primitive_to_conservative(V_R, gamma)
+    
+    # HLL flux formula
+    if S_L >= 0.0:
+        return F_L
+    elif S_R <= 0.0:
+        return F_R
+    else:
+        F_HLL = (S_R * F_L - S_L * F_R + S_L * S_R * (U_R - U_L)) / (S_R - S_L)
+        return F_HLL
+
+
+@jit(nopython=True)
+def _pluto_compute_source_terms(U, r, gamma=GAMMA_PLUTO):
+    """
+    Compute geometric source terms for spherical coordinates.
+    
+    For 1D spherical geometry:
+    S = -(2/r) * F
+    
+    where F is the flux vector.
+    
+    Args:
+        U: Conservative variables [rho, rho*v, E]
+        r: Radial coordinate (km)
+        gamma: Ratio of specific heats
+        
+    Returns:
+        S: Source term vector
+    """
+    V = _pluto_conservative_to_primitive(U, gamma)
+    F = _pluto_compute_flux(V, gamma)
+    
+    # Geometric source: S = -(2/r) * F
+    # Convert r from km to m for SI consistency
+    r_m = r * 1000.0
+    S = -2.0 * F / r_m
+    
+    return S
+
+
+@jit(nopython=True)
+def _pluto_spatial_operator(U, r_grid, dr, gamma=GAMMA_PLUTO):
+    """
+    Compute spatial operator L(U) = -∂F/∂r + S.
+    
+    Uses HLL Riemann solver for fluxes and includes geometric source terms.
+    Applies zero-gradient outflow boundary condition at outer boundary.
+    
+    Args:
+        U: Conservative variables array (nr x 3)
+        r_grid: Radial coordinate grid (km)
+        dr: Grid spacing (km)
+        gamma: Ratio of specific heats
+        
+    Returns:
+        dUdt: Time derivative of conservative variables
+    """
+    nr = len(U)
+    dUdt = np.zeros((nr, 3))
+    
+    # Convert dr from km to m
+    dr_m = dr * 1000.0
+    
+    # Compute fluxes at cell interfaces using HLL solver
+    for i in range(1, nr):
+        # Left and right states
+        V_L = _pluto_conservative_to_primitive(U[i-1], gamma)
+        V_R = _pluto_conservative_to_primitive(U[i], gamma)
+        
+        # HLL flux at interface
+        F_interface = _pluto_hll_flux(V_L, V_R, gamma)
+        
+        # Flux difference
+        dUdt[i] -= F_interface / dr_m
+        dUdt[i-1] += F_interface / dr_m
+    
+    # Add geometric source terms to all cells
+    for i in range(nr):
+        S = _pluto_compute_source_terms(U[i], r_grid[i], gamma)
+        dUdt[i] += S
+    
+    return dUdt
+
+
+@jit(nopython=True)
+def _pluto_step_euler(v_grid, rho_grid, temp_grid, r_grid, dt, gamma=GAMMA_PLUTO):
+    """
+    Single forward Euler step using PLUTO's spatial operator.
+    
+    This is compatible with HUXt's time-stepping structure where
+    the outer loop manages time integration.
+    
+    U^(n+1) = U^n + dt*L(U^n)
+    
+    where L is the spatial operator including HLL fluxes and geometric sources.
+    
+    Args:
+        v_grid: Velocity grid (km/s)
+        rho_grid: Density grid (kg/m³)
+        temp_grid: Temperature grid (K)
+        r_grid: Radial coordinate grid (km)
+        dt: Time step (s)
+        gamma: Ratio of specific heats
+        
+    Returns:
+        v_new, rho_new, temp_new: Updated grids
+    """
+    nr = len(v_grid)
+    dr = r_grid[1] - r_grid[0]  # Assuming uniform grid
+    
+    # Physical constants
+    k_B = 1.380649e-23  # Boltzmann constant (J/K)
+    m_p = 1.67262192e-27  # Proton mass (kg)
+    
+    # Convert to conservative variables
+    U = np.zeros((nr, 3))
+    for i in range(nr):
+        # Convert velocity from km/s to m/s for energy calculation
+        v_ms = v_grid[i] * 1000.0
+        P = rho_grid[i] * k_B * temp_grid[i] / m_p  # Pressure (Pa)
+        
+        U[i, 0] = rho_grid[i]  # rho
+        U[i, 1] = rho_grid[i] * v_ms  # rho*v
+        U[i, 2] = 0.5 * rho_grid[i] * v_ms * v_ms + P / (gamma - 1.0)  # E
+    
+    # Forward Euler step
+    L = _pluto_spatial_operator(U, r_grid, dr, gamma)
+    U_new = U + dt * L
+    
+    # Convert back to primitive variables
+    v_new = np.zeros(nr)
+    rho_new = np.zeros(nr)
+    temp_new = np.zeros(nr)
+    
+    for i in range(nr):
+        # Ensure conservative variables are physical before conversion
+        if U_new[i, 0] <= 0:
+            U_new[i, 0] = U[i, 0]  # Revert to old value if density became negative
+        
+        V = _pluto_conservative_to_primitive(U_new[i], gamma)
+        rho_new[i] = V[0]
+        v_new[i] = V[1] / 1000.0  # Convert back to km/s
+        P = V[2]
+        
+        # Ensure temperature is positive
+        if rho_new[i] > 0:
+            temp_new[i] = P * m_p / (rho_new[i] * k_B)
+        else:
+            temp_new[i] = temp_grid[i]  # Revert to old value
+    
+    return v_new, rho_new, temp_new
 
 
 # ============================================================================
