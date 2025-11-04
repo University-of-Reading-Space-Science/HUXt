@@ -4101,38 +4101,6 @@ def _upwind_step_compressible_(v_up, v_dn, rho_up, rho_dn, temp_up, temp_dn,
     # Ensure temperature remains positive (numerical safety)
     temp_up_next = np.maximum(temp_up_next, 1e3)
 
-    # ====================================================================
-    # MASS FLUX CORRECTION: Enforce exact conservation of ρvr² = const
-    # 
-    # In spherical geometry, steady-state continuity requires ρvr² = constant
-    # The operator-split update above doesn't guarantee this exactly.
-    # Apply a correction to ensure mass flux is conserved.
-    #
-    # Reference flux at inner boundary: F_ref = ρ_dn[0] * v_dn[0] * r_dn[0]²
-    # At each radius: ρ_corrected = F_ref / (v * r²)
-    #
-    # IMPORTANT: This correction maintains thermodynamic consistency by adjusting
-    # temperature to preserve enthalpy (h = c_p·T) after density correction.
-    # Since we're changing density at constant enthalpy flux, this is physically
-    # consistent with mass conservation in a steady wind.
-    # ====================================================================
-    
-    # ==================================================================
-    # MASS FLUX CORRECTION: Enforce ρvr² = const
-    # ==================================================================
-    # Use vectorized operations to enforce mass conservation
-    
-    # Reference flux from first interior point
-    F_ref = rho_up_next[0] * v_up_next[0] * (r_up[0] ** 2)
-    
-    # Apply correction to ALL points using numpy arrays
-    # ρ_corrected = F_ref / (v·r²)
-    rho_up_next = F_ref / (v_up_next * (r_up ** 2))
-    
-    # Ensure physical bounds
-    rho_up_next = np.maximum(rho_up_next, 1e-30)
-    temp_up_next = np.maximum(temp_up_next, 1e3)
-
     return v_up_next, rho_up_next, temp_up_next
 
 
