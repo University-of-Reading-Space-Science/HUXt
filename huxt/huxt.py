@@ -3993,8 +3993,33 @@ def solve_radial(vinput, binput, iscmeinput, model_time, rrel, params,
                 # Save the updated time step (direct assignment, no copy needed)
                 v[1:] = u_up_next
         
+        elif solver == 'pluto':
+            # PLUTO spherical hydrodynamics solver
+            # Uses conservative formulation with HLL Riemann solver and spherical source terms
+            
+            if compressible:
+                # PLUTO requires full grid (not split into up/dn)
+                # Convert HUXt radial grid to absolute km
+                r_grid_km = rrel * 695700.0 + r_boundary
+                
+                # Compute time step - use same method as upwind/hll solvers
+                # Grid spacing in km
+                dr_km = r_grid_km[1] - r_grid_km[0]
+                dt = dtdr * dr_km  # Actual time step in seconds
+                
+                # Call PLUTO Euler step
+                v_new, rho_new, temp_new = _pluto_step_euler(
+                    v, rho, temp, r_grid_km, dt, gamma=GAMMA_PLUTO)
+                
+                # Update grids (preserve boundary condition at r[0])
+                v[1:] = v_new[1:]
+                rho[1:] = rho_new[1:]
+                temp[1:] = temp_new[1:]
+            else:
+                raise ValueError("PLUTO solver requires compressible=True")
+        
         else:
-            raise ValueError(f"Unknown solver: {solver}. Supported solvers: 'upwind', 'hll', 'cgf'")
+            raise ValueError(f"Unknown solver: {solver}. Supported solvers: 'upwind', 'hll', 'cgf', 'pluto'")
 
         # Move the CME test particles forward
         if t > 0 and do_cme:
