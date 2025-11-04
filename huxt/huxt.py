@@ -612,8 +612,8 @@ class HUXt:
             compressible: Boolean flag to use compressible solver instead of incompressible (default False).
             solver: String specifying the numerical solver to use. Options:
                    'upwind' (default): First-order upwind scheme (Godunov-type)
-                   'upwind_opsplit': Upwind with operator splitting for temperature and limiters
                    'hll': HLL (Harten-Lax-van Leer) Riemann solver for shock capturing
+                   'cgf': Colella-Glaz-Ferguson solver (pyro-based, compressible only)
             parallel: Boolean flag to enable parallel computation across longitude slices (default True).
                      Uses joblib threading backend for parallelization. Set to False for debugging
                      or if running on a single-core system.
@@ -636,7 +636,7 @@ class HUXt:
         self.__version__ = get_version()
         
         # Validate and store solver choice
-        valid_solvers = ['upwind', 'upwind_opsplit', 'hll', 'hll_fv', 'mol', 'cgf']
+        valid_solvers = ['upwind', 'hll', 'hll_fv', 'mol', 'cgf']
         if solver not in valid_solvers:
             raise ValueError(f"Invalid solver '{solver}'. Must be one of: {valid_solvers}")
         
@@ -3832,34 +3832,6 @@ def solve_radial(vinput, binput, iscmeinput, model_time, rrel, params,
                 # Save the updated time step (direct assignment, no copy needed)
                 v[1:] = u_up_next
         
-        elif solver == 'upwind_opsplit':
-            # Upwind solver with operator splitting and limiters
-            
-            if compressible:
-                # Use upwind_opsplit for compressible flow
-                # NOTE: accel_limit is ignored for compressible solver (no residual acceleration)
-                rho_up = rho[1:].copy()
-                rho_dn = rho[:-1].copy()
-                temp_up = temp[1:].copy()
-                temp_dn = temp[:-1].copy()
-                
-                u_up_next, rho_up_next, temp_up_next = _upwind_opsplit_step_compressible_(
-                    u_up, u_dn, rho_up, rho_dn, temp_up, temp_dn, dtdr, alpha, r_accel, rrel, r_boundary, gamma)
-                
-                # Save the updated time steps (direct assignment, no copy needed)
-                v[1:] = u_up_next
-                rho[1:] = rho_up_next
-                temp[1:] = temp_up_next
-            else:
-                # For incompressible, fall back to upwind (Riemann solver requires full conservation)
-                if accel_limit:
-                    u_up_next = _upwind_step_accel_limit(u_up, u_dn, dtdr, alpha, r_accel, rrel)
-                else:
-                    u_up_next = _upwind_step_(u_up, u_dn, dtdr, alpha, r_accel, rrel)
-                
-                # Save the updated time step (direct assignment, no copy needed)
-                v[1:] = u_up_next
-        
         elif solver == 'hll':
             # HLL Riemann solver for shock capturing
             
@@ -3942,7 +3914,7 @@ def solve_radial(vinput, binput, iscmeinput, model_time, rrel, params,
                 v[1:] = u_up_next
         
         else:
-            raise ValueError(f"Unknown solver: {solver}. Supported solvers: 'upwind', 'upwind_opsplit', 'hll', 'hll_fv', 'mol'")
+            raise ValueError(f"Unknown solver: {solver}. Supported solvers: 'upwind', 'hll', 'hll_fv', 'mol', 'cgf'")
 
         # Move the CME test particles forward
         if t > 0 and do_cme:
@@ -4335,106 +4307,6 @@ def _upwind_step_compressible_(v_up, v_dn, rho_up, rho_dn, temp_up, temp_dn,
     return v_up_next, rho_up_next, temp_up_next
 
 
-
-
-@jit(nopython=True)
-def _upwind_opsplit_step_compressible_(v_up, v_dn, rho_up, rho_dn, temp_up, temp_dn,
-                            dtdr, alpha, r_accel, rrel, r_boundary, gamma=5.0/3.0):
-    """
-    Compressible solver using operator splitting for temperature and divergence limiters.
-    Uses pure physics-based pressure gradient acceleration (no empirical terms).
-    
-    Args:
-        v_up: Upwind velocity (km/s)
-        v_dn: Downwind velocity (km/s)
-        rho_up: Upwind density (kg/m³)
-        rho_dn: Downwind density (kg/m³)
-        temp_up: Upwind temperature (K)
-        temp_dn: Downwind temperature (K)
-        dtdr: Time/space ratio (s/km)
-        alpha: Acceleration parameter (NOT USED - kept for interface compatibility)
-        r_accel: Acceleration scale (NOT USED - kept for interface compatibility)
-        rrel: Relative radial coordinate
-        r_boundary: Inner boundary radius (km)
-        gamma: Adiabatic index for compressible solver (typically 5/3 for monoatomic gas)
-    
-    Returns:
-        v_up_next, rho_up_next, temp_up_next: Updated state
-    """
-    # Physical constants
-    k_B = 1.38064852e-23
-    m_p = 1.67262192e-27
-    
-    # Compute radial grid for pressure gradient
-    r_dn = rrel[:-1] * 695700.0 + r_boundary
-    r_up = rrel[1:] * 695700.0 + r_boundary
-    dr = r_up - r_dn
-    dt = dtdr * dr
-    
-    # Compute pressure from equation of state
-    P_up = (rho_up / m_p) * k_B * temp_up  # Pa
-    P_dn = (rho_dn / m_p) * k_B * temp_dn  # Pa
-    
-    # Pressure gradient force (in km/s per timestep)
-    dP_dr = (P_up - P_dn) / (dr * 1000.0)  # Pa/m
-    pressure_accel = - dt * dP_dr / rho_up  # m/s
-    pressure_accel_km = pressure_accel / 1000.0  # km/s
-    
-    # Velocity evolution with advection + pressure gradient ONLY (no empirical acceleration)
-    v_up_next = v_up - dtdr * v_up * (v_up - v_dn)
-    v_up_next = v_up_next + pressure_accel_km  # Add pressure gradient force
-    
-    # Compute divergence for compressible effects (already have r_dn, r_up, dr, dt)
-    dv_dr = (v_up - v_dn) / dr
-    geom_term = 2.0 * v_dn / r_dn
-    div_v = dv_dr + geom_term
-    
-    # Limit divergence
-    div_v_max = 1.0 / dt
-    nr = len(v_up)
-    for i in range(nr):
-        if div_v[i] > div_v_max[i]:
-            div_v[i] = div_v_max[i]
-        elif div_v[i] < -div_v_max[i]:
-            div_v[i] = -div_v_max[i]
-    
-    # Density evolution with compression
-    rho_advection = - dtdr * v_up * (rho_up - rho_dn)
-    rho_compression = - rho_up * div_v * dt
-    rho_up_next = rho_up + rho_advection + rho_compression
-    
-    # Temperature evolution with advection AND adiabatic compression
-    # First advect temperature, then apply compression
-    temp_advection = - dtdr * v_up * (temp_up - temp_dn)
-    temp_advected = temp_up + temp_advection
-    
-    compression_factor = 1.0 - dt * div_v
-    # Ensure positive compression factor
-    for i in range(nr):
-        if compression_factor[i] < 0.01:
-            compression_factor[i] = 0.01
-        if compression_factor[i] > 100.0:
-            compression_factor[i] = 100.0
-    
-    # Apply adiabatic compression to advected temperature
-    temp_up_next = temp_advected * (compression_factor ** (gamma - 1.0))
-    
-    # Apply bounds
-    for i in range(nr):
-        if v_up_next[i] < 100.0:
-            v_up_next[i] = 100.0
-        if v_up_next[i] > 3000.0:
-            v_up_next[i] = 3000.0
-        if rho_up_next[i] > 1e-17:
-            rho_up_next[i] = 1e-17
-        if rho_up_next[i] < 1e-30:
-            rho_up_next[i] = 1e-30
-        if temp_up_next[i] > 1e8:
-            temp_up_next[i] = 1e8
-        if temp_up_next[i] < 1e4:  # Lower floor to 10,000 K
-            temp_up_next[i] = 1e4
-    
-    return v_up_next, rho_up_next, temp_up_next
 
 
 # ============================================================================
