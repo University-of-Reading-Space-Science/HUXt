@@ -127,7 +127,9 @@ model_comp_pluto = H.HUXt(cr_num=cr,
                     compressible=True, solver ='pluto')
 model_comp_pluto.solve(cme_list)#, streak_carr=lon_grid)
 HA.plot_earth_timeseries(model_comp_pluto)
-
+#HA.plot_timeseries(model_comp_cgf, 0.2*u.AU, lon=0.0)
+#HA.plot(model_comp_cgf, time=t_interest)
+# HA.animate(model_comp, tag = 'compressible_with_CME')
 
 # Use block=True to ensure plot windows stay open until closed by user
 plt.show(block=True)

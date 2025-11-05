@@ -3994,6 +3994,8 @@ def solve_radial_pluto(v_bc_kms, rho_bc_kgm3, T_bc_K, model_time, time_out,
         print(f"  Boundary: T={T_bc_K[0]:.2e}-{T_bc_K[-1]:.2e} K")
     
     # Create PLUTO wrapper
+    # CFL=0.4 is conservative but stable for HLL+WENO3 with time-varying BCs
+    # Higher values (0.6-0.8) can cause negative velocities with strong gradients
     wrapper = PLUTOCustomBCWrapper(
         pluto_dir=pluto_dir,
         gamma=gamma,
