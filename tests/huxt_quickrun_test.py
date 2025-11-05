@@ -111,13 +111,6 @@ model_incomp = H.HUXt(cr_num=cr,
                     compressible=False, solver ='upwind')
 model_incomp.solve(cme_list)#, streak_carr=lon_grid)
 HA.plot_earth_timeseries(model_incomp)
-HA.plot_timeseries(model_incomp, 0.2*u.AU, lon=0.0)
-#HA.plot(model_incomp, time=t_interest)
-
-# model_comp_hll = H.HUXt(v_boundary=vr_in, lon_out=0*u.deg, simtime=5*u.day, dt_scale=4, 
-#                     compressible=True, solver ='hll')
-# model_comp_hll.solve(cme_list)
-# HA.plot_earth_timeseries(model_comp_hll)
 
 model_comp_cgf = H.HUXt(cr_num=cr,
                         v_boundary=vr_in, #lon_start=350*u.deg, lon_stop = 10*u.deg,
@@ -126,9 +119,15 @@ model_comp_cgf = H.HUXt(cr_num=cr,
                     compressible=True, solver ='cgf')
 model_comp_cgf.solve(cme_list)#, streak_carr=lon_grid)
 HA.plot_earth_timeseries(model_comp_cgf)
-HA.plot_timeseries(model_comp_cgf, 0.2*u.AU, lon=0.0)
-#HA.plot(model_comp_cgf, time=t_interest)
-# HA.animate(model_comp, tag = 'compressible_with_CME')
+
+model_comp_pluto = H.HUXt(cr_num=cr,
+                        v_boundary=vr_in, #lon_start=350*u.deg, lon_stop = 10*u.deg,
+                        lon_out=0.0*u.rad,
+                        simtime=simtime, dt_scale=4, 
+                    compressible=True, solver ='pluto')
+model_comp_pluto.solve(cme_list)#, streak_carr=lon_grid)
+HA.plot_earth_timeseries(model_comp_pluto)
+
 
 # Use block=True to ensure plot windows stay open until closed by user
 plt.show(block=True)

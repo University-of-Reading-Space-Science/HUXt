@@ -13,13 +13,13 @@ small_dens = -1e+200    ; minimum allowed density
 small_eint = -1e+200    ; minimum allowed specific internal energy
 
 [driver]
-tmax = 937455.7500000001    ; maximum simulation time to evolve
+tmax = 1457839.35    ; maximum simulation time to evolve
 max_steps = 1000000    ; maximum number of steps to take
 fix_dt = -1.0
 init_tstep_factor = 0.01    ; first timestep = init_tstep_factor * CFL timestep
 max_dt_change = 2.0    ; max amount the timestep can change between steps
 verbose = 0    ; verbosity
-cfl = 0.5
+cfl = 0.7
 
 [eos]
 gamma = 1.5    ; pres = rho ener (gamma - 1)
