@@ -1,6 +1,8 @@
 import copy
 import errno
 import os
+import shutil
+import warnings
 
 from appdirs import user_data_dir
 import astropy.units as u
@@ -11,6 +13,31 @@ import numpy as np
 from numba import jit
 from pathlib import Path
 from sunpy.coordinates import sun
+
+
+def _check_pluto_availability():
+    """
+    Check if PLUTO is available on the system.
+    
+    Returns:
+        tuple: (bool, str) - (is_available, message)
+    """
+    pluto_exe = shutil.which('pluto')
+    if pluto_exe:
+        return True, f"PLUTO found at {pluto_exe}"
+    
+    pluto_dir = os.environ.get('PLUTO_DIR')
+    if pluto_dir:
+        pluto_exe_path = os.path.join(pluto_dir, 'Bin', 'pluto')
+        if os.path.exists(pluto_exe_path) or os.path.exists(pluto_exe_path + '.exe'):
+            return True, f"PLUTO found at {pluto_exe_path}"
+        else:
+            return False, f"PLUTO_DIR set to {pluto_dir}, but executable not found in Bin/ directory"
+    
+    return False, ("PLUTO not found on system. To use PLUTO solvers:\n"
+                   "  1. Download and build PLUTO from http://plutocode.ph.unito.it/\n"
+                   "  2. Set PLUTO_DIR environment variable to PLUTO installation directory\n"
+                   "  3. See PLUTO_SETUP.md for detailed instructions")
 
 
 class Observer:
@@ -640,6 +667,23 @@ class HUXt:
         valid_solvers = ['upwind', 'hll', 'cgf', 'pluto']
         if solver not in valid_solvers:
             raise ValueError(f"Invalid solver '{solver}'. Must be one of: {valid_solvers}")
+        
+        # Check PLUTO availability if PLUTO solver is requested
+        if solver == 'pluto':
+            pluto_available, pluto_msg = _check_pluto_availability()
+            if not pluto_available:
+                raise RuntimeError(f"PLUTO solver requested but not available.\n{pluto_msg}")
+            else:
+                print(f"✓ {pluto_msg}")
+        
+        # Check CGF solver availability if CGF solver is requested
+        if solver == 'cgf':
+            try:
+                import pyro
+                print("✓ CGF solver (PYRO) available")
+            except ImportError:
+                raise RuntimeError("CGF solver requested but pyro is not installed.\n"
+                                 "Install via: pip install pyro")
         
         self.solver = solver
         
@@ -1728,65 +1772,66 @@ class HUXt:
         elif self.solver == 'pluto':
             import time
             
-            print("\n" + "="*70)
-            print("USING PLUTO 1D HYDRODYNAMICS SOLVER")
-            print("="*70)
-            print(f"PLUTO directory: {os.getenv('PLUTO_DIR', 'Not set')}")
-            print(f"Solving {self.lon.size} longitudes serially...")
-            print("="*70 + "\n")
-            
-            solve_start = time.time()
-            
-            # PLUTO solver always runs serially (each longitude is independent)
-            for i in range(self.lon.size):
-                lon_start = time.time()
-                if self.lon.size == 1:
-                    lon_deg = self.lon.value
-                else:
-                    lon_deg = self.lon[i].value
-                print(f"\nProcessing longitude {i+1}/{self.lon.size} ({lon_deg:.2f} degrees)...")
+            try:
+                print("\n" + "="*70)
+                print("USING PLUTO 1D HYDRODYNAMICS SOLVER")
+                print("="*70)
+                print(f"PLUTO directory: {os.getenv('PLUTO_DIR', 'Not set')}")
+                print(f"Solving {self.lon.size} longitudes serially...")
+                print("="*70 + "\n")
                 
-                # Get boundary conditions for this longitude
-                # Handle both multi-longitude and single-longitude cases
-                if self.lon.size == 1:
-                    # Single longitude case - input_v_ts might be (time,) or (time, 1)
-                    if len(self.input_v_ts.shape) == 1:
-                        v_bc_kms = self.input_v_ts.to(u.km / u.s).value
-                        rho_bc_kgm3 = self.input_rho_ts.to(u.kg / u.m**3).value
-                        T_bc_K = self.input_temp_ts.to(u.K).value
+                solve_start = time.time()
+                
+                # PLUTO solver always runs serially (each longitude is independent)
+                for i in range(self.lon.size):
+                    lon_start = time.time()
+                    if self.lon.size == 1:
+                        lon_deg = self.lon.value
                     else:
+                        lon_deg = self.lon[i].value
+                    print(f"\nProcessing longitude {i+1}/{self.lon.size} ({lon_deg:.2f} degrees)...")
+                    
+                    # Get boundary conditions for this longitude
+                    # Handle both multi-longitude and single-longitude cases
+                    if self.lon.size == 1:
+                        # Single longitude case - input_v_ts might be (time,) or (time, 1)
+                        if len(self.input_v_ts.shape) == 1:
+                            v_bc_kms = self.input_v_ts.to(u.km / u.s).value
+                            rho_bc_kgm3 = self.input_rho_ts.to(u.kg / u.m**3).value
+                            T_bc_K = self.input_temp_ts.to(u.K).value
+                        else:
+                            v_bc_kms = self.input_v_ts[:, i].to(u.km / u.s).value
+                            rho_bc_kgm3 = self.input_rho_ts[:, i].to(u.kg / u.m**3).value
+                            T_bc_K = self.input_temp_ts[:, i].to(u.K).value
+                    else:
+                        # Multiple longitudes
                         v_bc_kms = self.input_v_ts[:, i].to(u.km / u.s).value
                         rho_bc_kgm3 = self.input_rho_ts[:, i].to(u.kg / u.m**3).value
                         T_bc_K = self.input_temp_ts[:, i].to(u.K).value
-                else:
-                    # Multiple longitudes
-                    v_bc_kms = self.input_v_ts[:, i].to(u.km / u.s).value
-                    rho_bc_kgm3 = self.input_rho_ts[:, i].to(u.kg / u.m**3).value
-                    T_bc_K = self.input_temp_ts[:, i].to(u.K).value
-                
-                # Debug: Check if BC contains CME data
-                print(f"  BC velocity range: {v_bc_kms.min():.1f} - {v_bc_kms.max():.1f} km/s")
-                print(f"  BC density range: {rho_bc_kgm3.min():.2e} - {rho_bc_kgm3.max():.2e} kg/m³")
-                print(f"  Number of CMEs in model: {len(self.cmes)}")
-                
-                # Convert model_time to seconds (array)
-                model_time_sec = self.model_time.to(u.s).value
-                
-                # Convert time_out to seconds (array)
-                time_out_sec = self.time_out.to(u.s).value
-                
-                # Convert r grid to km (array)
-                rgrid_km = self.r.to(u.km).value
-                
-                # Determine number of particles to track
-                num_particles = 0
-                particle_injection_rate = 1.0
-                
-                if self.track_cmes:
-                    num_particles = n_cme * 2  # Leading + trailing edge for each CME
-                
-                # Call solve_radial_pluto
-                v_out_kms, rho_out_kgm3, temp_out_K, particle_data = solve_radial_pluto(
+                    
+                    # Debug: Check if BC contains CME data
+                    print(f"  BC velocity range: {v_bc_kms.min():.1f} - {v_bc_kms.max():.1f} km/s")
+                    print(f"  BC density range: {rho_bc_kgm3.min():.2e} - {rho_bc_kgm3.max():.2e} kg/m³")
+                    print(f"  Number of CMEs in model: {len(self.cmes)}")
+                    
+                    # Convert model_time to seconds (array)
+                    model_time_sec = self.model_time.to(u.s).value
+                    
+                    # Convert time_out to seconds (array)
+                    time_out_sec = self.time_out.to(u.s).value
+                    
+                    # Convert r grid to km (array)
+                    rgrid_km = self.r.to(u.km).value
+                    
+                    # Determine number of particles to track
+                    num_particles = 0
+                    particle_injection_rate = 1.0
+                    
+                    if self.track_cmes:
+                        num_particles = n_cme * 2  # Leading + trailing edge for each CME
+                    
+                    # Call solve_radial_pluto
+                    v_out_kms, rho_out_kgm3, temp_out_K, particle_data = solve_radial_pluto(
                     v_bc_kms=v_bc_kms,
                     rho_bc_kgm3=rho_bc_kgm3,
                     T_bc_K=T_bc_K,
@@ -1843,6 +1888,22 @@ class HUXt:
             print("\nNOTE: Particle tracking not yet implemented for PLUTO solver")
             print("      (particle positions set to NaN)")
             print("="*70 + "\n")
+                    
+            except Exception as e:
+                print("\n" + "="*70)
+                print("ERROR IN PLUTO SOLVER")
+                print("="*70)
+                print(f"Error type: {type(e).__name__}")
+                print(f"Error message: {str(e)}")
+                print("="*70)
+                print("\nPossible issues:")
+                print("1. PLUTO executable not found - check PLUTO_DIR environment variable")
+                print("2. PLUTO was not built correctly - see PLUTO_SETUP.md for build instructions")
+                print("3. Input parameters are invalid or out of physical range")
+                print("4. Disk space or memory issues")
+                print("\nFor more help, see PLUTO_SETUP.md")
+                print("="*70)
+                raise RuntimeError(f"PLUTO solver failed: {str(e)}") from e
         
         # ======================================================================
         # Solve the time series at each longitude (BUILT-IN SOLVERS)
