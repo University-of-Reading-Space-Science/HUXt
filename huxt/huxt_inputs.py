@@ -49,25 +49,10 @@ def convert_hdf4_to_hdf5(hdf4_path, hdf5_path):
                     hdf5.create_dataset(var_name, data=data)
         return True
     except (ImportError, OSError):
-        # Fallback: try using pyhdf if available
-        try:
-            from pyhdf.SD import SD, SDC
-            
-            hdf4 = SD(str(hdf4_path), SDC.READ)
-            with h5py.File(str(hdf5_path), 'w') as hdf5:
-                # Get all datasets
-                datasets = hdf4.datasets()
-                for var_name, _ in datasets.items():
-                    sds = hdf4.select(var_name)
-                    data = sds.get()
-                    hdf5.create_dataset(var_name, data=data)
-                    sds.endaccess()
-            hdf4.end()
-            return True
-        except ImportError:
-            print("Warning: Neither netCDF4 (with HDF4 support) nor pyhdf available for conversion")
-            print("Please install via conda: conda install netcdf4")
-            return False
+        # netCDF4 with HDF4 support not available. Inform the user and return False.
+        print("Warning: netCDF4 with HDF4 support not available for conversion.")
+        print("Please install via conda: conda install -c conda-forge netcdf4")
+        return False
 
 
 from . import huxt as h
