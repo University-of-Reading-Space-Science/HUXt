@@ -4152,7 +4152,7 @@ def solve_radial_pluto(v_bc_kms, rho_bc_kgm3, T_bc_K, model_time, time_out,
     return v_out_kms, rho_out_kgm3, temp_out_K, particle_data
 
 
-@jit(nopython=True)
+@jit(nopython=True, nogil=True)
 def solve_radial(vinput, binput, iscmeinput, model_time, rrel, params,
                  n_cme, n_hcs_max, streak_times, rhoinput=None, tempinput=None, compressible=False, solver='upwind'):
     """
