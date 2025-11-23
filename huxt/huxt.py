@@ -1180,7 +1180,8 @@ class HUXt:
             
             # Initialize arrays
             cme_particles_r_out = np.full((n_cme, self.nt_out, 2), np.nan)
-            hcs_particles_r_out = np.full((n_hcs_max, self.nt_out, 2), np.nan)
+            if n_hcs_max > 0:
+                hcs_particles_r_out = np.full((n_hcs_max, self.nt_out, 2), np.nan)
             if self.track_streak:
                 streak_data = streak_times[i, :, :, 0]
                 n_streaks = streak_data.shape[0]
@@ -1438,8 +1439,8 @@ class HUXt:
                     self.input_iscme_ts[:, i] = isincme
 
         # Set up the CME test particle position field
-        self.cme_particles_r = np.zeros((n_cme, self.nt_out, 2, self.nlon)) * u.dimensionless_unscaled
-        self.cme_particles_v = np.zeros((n_cme, self.nt_out, 2, self.nlon)) * u.dimensionless_unscaled
+        self.cme_particles_r = np.full((n_cme, self.nt_out, 2, self.nlon), np.nan) * u.dimensionless_unscaled
+        self.cme_particles_v = np.full((n_cme, self.nt_out, 2, self.nlon), np.nan) * u.dimensionless_unscaled
 
         # ======================================================================    
         # Set up the HCS test particle position field
@@ -1457,7 +1458,7 @@ class HUXt:
 
             # create variables to store the HCS positions
             n_hcs_max = int(max(n_hcs)) + 1
-            self.hcs_particles_r = np.zeros((n_hcs_max, self.nt_out, 2, self.nlon)) * u.dimensionless_unscaled
+            self.hcs_particles_r = np.full((n_hcs_max, self.nt_out, 2, self.nlon), np.nan) * u.dimensionless_unscaled
 
         # ======================================================================
         # Set up the streak lines
@@ -3164,28 +3165,19 @@ def solve_radial_cgf(v_bc_kms, rho_bc_kgm3, T_bc_K, model_time, time_out,
             particle_data = {'groups': {}}
             for group_name, group_data in particle_data_cgs['groups'].items():
                 # Convert positions from cm to km
-                # group_data['r'] is list of lists, need to pad to create 2D array
-                trajs_r = group_data['r']
-                trajs_v = group_data['v']
-                trajs_t = group_data['t']
+                # group_data['r'] is now a padded numpy array (from cgf_solver)
+                r_cgs = group_data['r']
+                v_cgs = group_data['v']
+                t_sec = group_data['t']
                 
-                if not trajs_r:
+                if r_cgs.size == 0:
                     r_km = np.array([])
                     v_km = np.array([])
                     t_sec = np.array([])
                 else:
-                    n_p = len(trajs_r)
-                    max_len = max(len(t) for t in trajs_r)
-                    
-                    r_km = np.full((n_p, max_len), np.nan)
-                    v_km = np.full((n_p, max_len), np.nan)
-                    t_sec = np.full((n_p, max_len), np.nan)
-                    
-                    for i in range(n_p):
-                        l = len(trajs_r[i])
-                        r_km[i, :l] = np.array(trajs_r[i]) / KM_TO_CM
-                        v_km[i, :l] = np.array(trajs_v[i]) / KM_TO_CM
-                        t_sec[i, :l] = np.array(trajs_t[i])
+                    r_km = r_cgs / KM_TO_CM
+                    v_km = v_cgs / KM_TO_CM
+                    # t_sec is already in seconds
                 
                 particle_data['groups'][group_name] = {
                     'r': r_km,  # km
@@ -3197,27 +3189,18 @@ def solve_radial_cgf(v_bc_kms, rho_bc_kgm3, T_bc_K, model_time, time_out,
                 }
         else:
             # Single group mode - convert positions to km
-            trajs_r = particle_data_cgs['r']
-            trajs_v = particle_data_cgs['v']
-            trajs_t = particle_data_cgs['t']
+            r_cgs = particle_data_cgs['r']
+            v_cgs = particle_data_cgs['v']
+            t_sec = particle_data_cgs['t']
             
-            if not trajs_r:
+            if r_cgs.size == 0:
                 r_km = np.array([])
                 v_km = np.array([])
                 t_sec = np.array([])
             else:
-                n_p = len(trajs_r)
-                max_len = max(len(t) for t in trajs_r)
-                
-                r_km = np.full((n_p, max_len), np.nan)
-                v_km = np.full((n_p, max_len), np.nan)
-                t_sec = np.full((n_p, max_len), np.nan)
-                
-                for i in range(n_p):
-                    l = len(trajs_r[i])
-                    r_km[i, :l] = np.array(trajs_r[i]) / KM_TO_CM
-                    v_km[i, :l] = np.array(trajs_v[i]) / KM_TO_CM
-                    t_sec[i, :l] = np.array(trajs_t[i])
+                r_km = r_cgs / KM_TO_CM
+                v_km = v_cgs / KM_TO_CM
+                # t_sec is already in seconds
             
             particle_data = {
                 'r': r_km,  # km

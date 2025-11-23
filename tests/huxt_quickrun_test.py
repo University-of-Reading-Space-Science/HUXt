@@ -112,6 +112,7 @@ model_incomp = H.HUXt(cr_num=cr,
 model_incomp.solve(cme_list)#, streak_carr=lon_grid)
 HA.plot_earth_timeseries(model_incomp, plot_omni=False)
 ts_upwind = HA.get_observer_timeseries(model_incomp)
+HA.plot(model_incomp, time=t_interest)
 
 model_comp_cgf = H.HUXt(cr_num=cr,
                         v_boundary=vr_in, #lon_start=350*u.deg, lon_stop = 10*u.deg,
@@ -134,6 +135,33 @@ HA.plot_compressible(model_comp_cgf, time=t_interest)
 #HA.plot_timeseries(model_comp_cgf, 0.2*u.AU, lon=0.0)
 #HA.plot(model_comp_cgf, time=t_interest)
 # HA.animate(model_comp, tag = 'compressible_with_CME')
+
+# Check CME particles at 2 days
+print("\nChecking CME particles at t=2 days:")
+t_idx = np.argmin(np.abs(model_comp_cgf.time_out - 2*u.day))
+print(f"Time index: {t_idx}, Time: {model_comp_cgf.time_out[t_idx]}")
+
+# cme_particles_r shape: (n_cme, nt_out, 2, nlon)
+# Check CME 0, Leading edge (0)
+cme_r = model_comp_cgf.cme_particles_r[0, t_idx, 0, :]
+print("CME 0 Leading Edge Radial Positions (km):")
+# Print a subset or summary to avoid spamming, but user asked to output them.
+# Let's print them all if it's 128 longitudes.
+print(cme_r)
+
+# Check for zeros or small values (e.g. < 1 solar radius ~ 700000 km, or just < 1 km if it's really 0)
+# The boundary is at 30rs ~ 2e7 km. So anything small is suspicious.
+mask_small = (cme_r < 1000.0) & (~np.isnan(cme_r))
+if np.any(mask_small):
+    print("WARNING: Found small/zero values in CME particles:")
+    print(cme_r[mask_small])
+    print("Indices:", np.where(mask_small)[0])
+else:
+    print("No small/zero values found.")
+
+# Check for NaNs
+print(f"Number of NaNs: {np.isnan(cme_r).sum()}")
+
 
 # Use block=True to ensure plot windows stay open until closed by user
 plt.show(block=True)

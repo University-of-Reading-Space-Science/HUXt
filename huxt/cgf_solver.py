@@ -595,16 +595,40 @@ class CGFSolver:
         }
         
         if particles_enabled:
+            # Convert particle lists to padded numpy arrays
+            for name, g in particle_groups.items():
+                if len(g['r']) > 0:
+                    # Find max trajectory length
+                    max_len = max(len(traj) for traj in g['r'])
+                    n_p = len(g['r'])
+                    
+                    # Create padded arrays
+                    r_arr = np.full((n_p, max_len), np.nan)
+                    v_arr = np.full((n_p, max_len), np.nan)
+                    t_arr = np.full((n_p, max_len), np.nan)
+                    
+                    for i in range(n_p):
+                        traj_len = len(g['r'][i])
+                        r_arr[i, :traj_len] = g['r'][i]
+                        v_arr[i, :traj_len] = g['v'][i]
+                        t_arr[i, :traj_len] = g['t'][i]
+                        
+                    g['r'] = r_arr
+                    g['v'] = v_arr
+                    g['t'] = t_arr
+                    g['t_inject'] = np.array(g['t_inject'])
+                    g['active'] = np.array(g['active'])
+
             # Format particle data
             if len(particle_groups) == 1 and 'default' in particle_groups:
                 # Single group format
                 g = particle_groups['default']
                 results['particles'] = {
-                    'r': list(g['r']), # Convert to list to be safe
-                    'v': list(g['v']),
-                    't': list(g['t']),
-                    't_inject': list(g['t_inject']),
-                    'active': list(g['active'])
+                    'r': g['r'],
+                    'v': g['v'],
+                    't': g['t'],
+                    't_inject': g['t_inject'],
+                    'active': g['active']
                 }
             else:
                 results['particles'] = {'groups': particle_groups}

@@ -17,3 +17,16 @@
 .DS_Store
 
 /huxt.egg-info
+
+# Numba cache
+__pycache__/
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
+
+# IDE and temporary files
+.vscode/
+.pytest_cache/
+.coverage
