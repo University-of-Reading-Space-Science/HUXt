@@ -101,26 +101,28 @@ lon_grid = np.arange(dlon/2, 2*np.pi-dlon/2 + 0.0001, dlon)*u.rad
 # model_comp.solve(cme_list, streak_carr=lon_grid)
 # HA.plot_earth_timeseries(model_comp)
 
-t_interest = 5.01*u.day
+t_interest = 2.01*u.day
 
 
 model_incomp = H.HUXt(cr_num=cr,
                       v_boundary=vr_in, #lon_start=350*u.deg, lon_stop = 10*u.deg, 
-                      lon_out=0.0*u.rad,
+                      #lon_out=0.0*u.rad,
                       simtime=simtime, dt_scale=4, 
                     compressible=False, solver ='upwind')
 model_incomp.solve(cme_list)#, streak_carr=lon_grid)
-HA.plot_earth_timeseries(model_incomp)
+HA.plot_earth_timeseries(model_incomp, plot_omni=False)
 ts_upwind = HA.get_observer_timeseries(model_incomp)
 
 model_comp_cgf = H.HUXt(cr_num=cr,
                         v_boundary=vr_in, #lon_start=350*u.deg, lon_stop = 10*u.deg,
-                        lon_out=0.0*u.rad,
+                        #lon_out=0.0*u.rad,
                         simtime=simtime, dt_scale=4, 
                     compressible=True, solver ='cgf')
 model_comp_cgf.solve(cme_list)#, streak_carr=lon_grid)
-HA.plot_earth_timeseries(model_comp_cgf)
+HA.plot_earth_timeseries(model_comp_cgf, plot_omni=False)
 ts_cgf = HA.get_observer_timeseries(model_comp_cgf)
+
+HA.plot_compressible(model_comp_cgf, time=t_interest)
 
 # model_comp_pluto = H.HUXt(cr_num=cr,
 #                         v_boundary=vr_in, #lon_start=350*u.deg, lon_stop = 10*u.deg,

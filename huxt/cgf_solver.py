@@ -326,11 +326,82 @@ def _compute_parker_nozzle_solution(r_grid, v0, n_rho0, T0, gamma):
     n_rho = rho / PROTON_MASS
     
     return v, n_rho, T, rho
-    n_rho = rho / PROTON_MASS
-    c = np.sqrt(gamma * R_gas * T / PROTON_MASS)
-    v = M * c
+
+@njit(cache=True)
+def _get_dt_jit(U, gamma, dx, cfl):
+    nr = U.shape[0]
+    max_wave_speed = 0.0
+    for i in range(nr):
+        rho = max(U[i, 0], SMALL_RHO)
+        v = U[i, 1] / rho
+        p = get_gamma_law_pressure(rho, (U[i, 2] - 0.5 * rho * v**2) / rho, gamma)
+        p = max(p, SMALL_P)
+        cs = np.sqrt(gamma * p / rho)
+        max_wave_speed = max(max_wave_speed, abs(v) + cs)
+        
+    if max_wave_speed == 0:
+        return 1.0
+        
+    dt = cfl * np.min(dx) / max_wave_speed
+    return dt
+
+@njit(cache=True)
+def _step_jit(U, r, r_int, dx, dt, gamma, U_bc):
+    nr = U.shape[0]
+    ng = 2
     
-    return v, n_rho, T, rho
+    # 1. Boundary Conditions (Ghost cells)
+    U_padded = np.zeros((nr + 2*ng, 3))
+    U_padded[ng:-ng] = U
+    
+    # Inner BC
+    for i in range(ng):
+        U_padded[i] = U_bc
+        
+    # Outer BC (Zero gradient)
+    for i in range(ng):
+        U_padded[-1-i] = U_padded[-1-ng]
+        
+    # 2. Reconstruction
+    # Geometry factor for spherical: 2/r
+    r_padded = np.zeros(nr + 2*ng)
+    r_padded[ng:-ng] = r
+    dr_inner = r[1] - r[0]
+    for i in range(ng):
+        r_padded[ng-1-i] = r[0] - (i+1)*dr_inner
+        r_padded[-ng+i] = r[-1] + (i+1)*dr_inner
+        
+    geom_factor = 2.0 / r_padded
+    dx_padded = np.zeros(nr + 2*ng)
+    dx_mean = np.mean(dx)
+    dx_padded[:] = dx_mean
+    
+    q_int_l, q_int_r = reconstruct_states(U_padded, gamma, dx_padded, dt, geom_factor)
+    
+    # 3. Riemann Solver
+    # Interfaces ng to ng+nr
+    fluxes = solve_riemann_fluxes(q_int_l[ng:ng+nr+1], q_int_r[ng:ng+nr+1], gamma)
+    
+    # 4. Update
+    A = r_int**2
+    V = 1.0/3.0 * (r_int[1:]**3 - r_int[:-1]**3)
+    
+    flux_div = np.zeros((nr, 3))
+    for i in range(nr):
+        flux_div[i] = (A[i+1] * fluxes[i+1] - A[i] * fluxes[i]) / V[i]
+        
+    S = np.zeros((nr, 3))
+    for i in range(nr):
+        rho = max(U[i, 0], SMALL_RHO)
+        v = U[i, 1] / rho
+        p = get_gamma_law_pressure(rho, (U[i, 2] - 0.5 * rho * v**2) / rho, gamma)
+        p = max(p, SMALL_P)
+        
+        # Geometric pressure term
+        S[i, 1] += 2.0 * p / r[i]
+        
+    U_new = U - dt * flux_div + dt * S
+    return U_new
 
 class CGFSolver:
     def __init__(self, r_grid, gamma=5.0/3.0, cfl=0.8, verbose=False):
@@ -377,131 +448,21 @@ class CGFSolver:
         """
         Compute stable timestep.
         """
-        max_wave_speed = 0.0
-        for i in range(self.nr):
-            rho = max(self.U[i, 0], SMALL_RHO)
-            v = self.U[i, 1] / rho
-            p = get_gamma_law_pressure(rho, (self.U[i, 2] - 0.5 * rho * v**2) / rho, self.gamma)
-            p = max(p, SMALL_P)
-            cs = np.sqrt(self.gamma * p / rho)
-            max_wave_speed = max(max_wave_speed, abs(v) + cs)
-            
-        if max_wave_speed == 0:
-            return 1.0
-            
-        dt = self.cfl * np.min(self.dx) / max_wave_speed
-        return dt
+        return _get_dt_jit(self.U, self.gamma, self.dx, self.cfl)
         
     def step(self, dt, bc_func):
         """
         Advance solution by dt.
         bc_func: function(t) -> (rho_bc, v_bc, T_bc) for inner boundary
         """
-        # 1. Boundary Conditions
-        # Apply to ghost cells?
-        # Here we reconstruct to interfaces.
-        # We need ghost cells for reconstruction.
-        # Let's create a padded U with ghost cells.
-        ng = 2
-        U_padded = np.zeros((self.nr + 2*ng, 3))
-        U_padded[ng:-ng] = self.U
-        
         # Inner BC (Time dependent)
-        rho_bc, v_bc, T_bc = bc_func(self.time + dt) # Use t+dt or t? Pyro uses t.
-        # Actually pyro wrapper uses t + t_offset.
-        # Let's use t.
+        rho_bc, v_bc, T_bc = bc_func(self.time + dt)
         
         p_bc = rho_bc * 1.380649e-16 * T_bc / 1.67262192e-24
         q_bc = np.array([rho_bc, v_bc, p_bc])
         U_bc = prim_to_cons(q_bc, self.gamma)
         
-        for i in range(ng):
-            U_padded[i] = U_bc # Inflow BC
-            
-        # Outer BC (Outflow)
-        for i in range(ng):
-            U_padded[-1-i] = U_padded[-1-ng] # Zero gradient
-            
-        # 2. Reconstruction
-        # Geometry factor for spherical: 2/r
-        # We need r for padded grid
-        r_padded = np.zeros(self.nr + 2*ng)
-        r_padded[ng:-ng] = self.r
-        # Extrapolate r
-        dr_inner = self.r[1] - self.r[0]
-        for i in range(ng):
-            r_padded[ng-1-i] = self.r[0] - (i+1)*dr_inner
-            r_padded[-ng+i] = self.r[-1] + (i+1)*dr_inner
-            
-        geom_factor = 2.0 / r_padded
-        dx_padded = np.zeros(self.nr + 2*ng)
-        dx_padded[:] = np.mean(self.dx) # Approx
-        
-        q_int_l, q_int_r = reconstruct_states(U_padded, self.gamma, dx_padded, dt, geom_factor)
-        
-        # 3. Riemann Solver (Fluxes)
-        # We only care about interfaces 0 to nr (nr+1 interfaces)
-        # Interface i corresponds to index i in fluxes (between cell i-1 and i)
-        # In padded grid:
-        # Real cell 0 is at index ng.
-        # Interface 0 (left of cell 0) is between ng-1 and ng.
-        # Interface nr (right of cell nr-1) is between ng+nr-1 and ng+nr.
-        
-        # q_int_l[i] is left of interface i (from cell i-1)
-        # q_int_r[i] is right of interface i (from cell i)
-        
-        # We need fluxes at interfaces ng to ng+nr
-        fluxes = solve_riemann_fluxes(q_int_l[ng:ng+self.nr+1], q_int_r[ng:ng+self.nr+1], self.gamma)
-        
-        # 4. Update Conserved Variables
-        # dU/dt = -1/r^2 d/dr (r^2 F) + S
-        # Finite Volume: U_new = U_old - dt/V * (A_r F_r - A_l F_l) + dt * S
-        # A = r^2 (approx)
-        # V = r^2 dr (approx)
-        # Or better: A_i+1/2 = r_int[i+1]**2
-        # V_i = 1/3 * (r_int[i+1]**3 - r_int[i]**3)
-        
-        A = self.r_int**2
-        V = 1.0/3.0 * (self.r_int[1:]**3 - self.r_int[:-1]**3)
-        
-        # Flux divergence
-        flux_div = np.zeros((self.nr, 3))
-        for i in range(self.nr):
-            flux_div[i] = (A[i+1] * fluxes[i+1] - A[i] * fluxes[i]) / V[i]
-            
-        # Source Terms
-        # Gravity: S_mom = rho * g, S_ener = rho * v * g
-        # Geometric source for momentum: 2 * p / r (due to spherical coords)
-        # Wait, pyro handles geometric source in reconstruction (dloga) AND in update?
-        # In simulation.py:
-        # S[:, :, ivars.ixmom] += U[:, :, ivars.iymom]**2 / ... (centrifugal, 0 in 1D)
-        # But pressure term?
-        # In unsplit_fluxes.py:
-        # "apply non-conservative pressure gradient for momentum in spherical geometry"
-        # This is for transverse direction?
-        # For radial direction, the pressure term is in the flux divergence if written as div(rho u u + p).
-        # But there is a source term 2p/r in the momentum equation if written in non-conservative form?
-        # In conservative form:
-        # d(rho u)/dt + 1/r^2 d/dr(r^2 (rho u^2 + p)) = 2p/r + rho g
-        # Yes, there is a 2p/r source term.
-        
-        S = np.zeros((self.nr, 3))
-        for i in range(self.nr):
-            rho = max(self.U[i, 0], SMALL_RHO)
-            v = self.U[i, 1] / rho
-            p = get_gamma_law_pressure(rho, (self.U[i, 2] - 0.5 * rho * v**2) / rho, self.gamma)
-            p = max(p, SMALL_P)
-            
-            # Gravity
-            # grav_acc = self.grav / self.r[i]**2
-            # S[i, 1] += rho * grav_acc
-            # S[i, 2] += rho * v * grav_acc
-            
-            # Geometric pressure term
-            S[i, 1] += 2.0 * p / self.r[i]
-            
-        # Update
-        self.U = self.U - dt * flux_div + dt * S
+        self.U = _step_jit(self.U, self.r, self.r_int, self.dx, dt, self.gamma, U_bc)
         self.time += dt
         
         return self.U
