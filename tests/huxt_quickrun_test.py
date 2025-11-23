@@ -62,7 +62,7 @@ print(dirs)
 simtime = 10 *u.day
 # Set up HUXt
 cr=1920
-vr_in = Hin.get_MAS_long_profile(cr, 0.0*u.deg)
+vr_in = np.ones(128)*400*u.km/u.s #Hin.get_MAS_long_profile(cr, 0.0*u.deg)
 
 
 
@@ -111,6 +111,7 @@ model_incomp = H.HUXt(cr_num=cr,
                     compressible=False, solver ='upwind')
 model_incomp.solve(cme_list)#, streak_carr=lon_grid)
 HA.plot_earth_timeseries(model_incomp)
+ts_upwind = HA.get_observer_timeseries(model_incomp)
 
 model_comp_cgf = H.HUXt(cr_num=cr,
                         v_boundary=vr_in, #lon_start=350*u.deg, lon_stop = 10*u.deg,
@@ -119,14 +120,15 @@ model_comp_cgf = H.HUXt(cr_num=cr,
                     compressible=True, solver ='cgf')
 model_comp_cgf.solve(cme_list)#, streak_carr=lon_grid)
 HA.plot_earth_timeseries(model_comp_cgf)
+ts_cgf = HA.get_observer_timeseries(model_comp_cgf)
 
-model_comp_pluto = H.HUXt(cr_num=cr,
-                        v_boundary=vr_in, #lon_start=350*u.deg, lon_stop = 10*u.deg,
-                        lon_out=0.0*u.rad,
-                        simtime=simtime, dt_scale=4, 
-                    compressible=True, solver ='pluto')
-model_comp_pluto.solve(cme_list)#, streak_carr=lon_grid)
-HA.plot_earth_timeseries(model_comp_pluto)
+# model_comp_pluto = H.HUXt(cr_num=cr,
+#                         v_boundary=vr_in, #lon_start=350*u.deg, lon_stop = 10*u.deg,
+#                         lon_out=0.0*u.rad,
+#                         simtime=simtime, dt_scale=4, 
+#                     compressible=True, solver ='pluto')
+# model_comp_pluto.solve(cme_list)#, streak_carr=lon_grid)
+# HA.plot_earth_timeseries(model_comp_pluto)
 #HA.plot_timeseries(model_comp_cgf, 0.2*u.AU, lon=0.0)
 #HA.plot(model_comp_cgf, time=t_interest)
 # HA.animate(model_comp, tag = 'compressible_with_CME')

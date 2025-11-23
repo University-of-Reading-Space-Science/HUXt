@@ -1,6 +1,6 @@
 """
 PLUTO 1D Spherical Solar Wind Wrapper
-Matches PyroCustomBCWrapper interface for HUXt integration
+Wrapper for HUXt integration
 """
 import os
 import shutil
@@ -18,7 +18,7 @@ AU = 1.496e13                  # cm
 class PLUTOCustomBCWrapper:
     """
     Wrapper for PLUTO 1D spherical hydrodynamics solver.
-    Matches PyroCustomBCWrapper interface for time-dependent boundary conditions.
+    Handles time-dependent boundary conditions.
     
     Since PLUTO is a batch C code, this wrapper:
     1. Creates a temporary working directory
