@@ -1113,7 +1113,9 @@ class HUXt:
             # HCS particles: inject at each polarity change
             if self.track_b and n_hcs_max > 0:
                 hcs_times = []
-                b_input = self.input_b_ts[:, i].value
+                b_input = self.input_b_ts[:, i]
+                if hasattr(b_input, 'value'):
+                    b_input = b_input.value
                 for t in range(1, len(b_input)):
                     if b_input[t] - b_input[t-1] != 0:  # Polarity change
                         t_hcs = self.model_time[t].value if hasattr(self.model_time[t], 'value') else self.model_time[t]
@@ -1607,7 +1609,9 @@ class HUXt:
                         # HCS particles: inject at each polarity change
                         if self.track_b and n_hcs_max > 0:
                             hcs_times = []
-                            b_input = self.input_b_ts[:, i].value
+                            b_input = self.input_b_ts[:, i]
+                            if hasattr(b_input, 'value'):
+                                b_input = b_input.value
                             for t in range(1, len(b_input)):
                                 if b_input[t] - b_input[t-1] != 0:  # Polarity change
                                     t_hcs = self.model_time[t].value if hasattr(self.model_time[t], 'value') else self.model_time[t]
