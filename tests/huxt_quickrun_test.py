@@ -54,6 +54,7 @@ data_path=dirs['example_inputs']
 print(data_path)
 filepath = os.path.join(data_path, 'wsa_gong_2024050906.fits')
 vr_in = Hin.get_WSA_long_profile(filepath, lat=0.0 * u.deg)
+br_in = Hin.get_WSA_br_long_profile(filepath, lat=0.0 * u.deg)
 
 dirs = H._setup_dirs_()
 print(dirs)
@@ -104,7 +105,7 @@ lon_grid = np.arange(dlon/2, 2*np.pi-dlon/2 + 0.0001, dlon)*u.rad
 t_interest = 2.01*u.day
 
 
-model_incomp = H.HUXt(v_boundary=vr_in, #lon_start=350*u.deg, lon_stop = 10*u.deg, 
+model_incomp = H.HUXt(v_boundary=vr_in, b_boundary=br_in, #lon_start=350*u.deg, lon_stop = 10*u.deg, 
                       #lon_out=0.0*u.rad,
                       simtime=simtime, dt_scale=4, 
                     compressible=False, solver ='upwind')
@@ -114,7 +115,7 @@ HA.plot_earth_timeseries(model_incomp, plot_omni=False)
 ts_upwind = HA.get_observer_timeseries(model_incomp)
 HA.plot(model_incomp, time=t_interest)
 
-model_comp_cgf = H.HUXt(v_boundary=vr_in, #lon_start=350*u.deg, lon_stop = 10*u.deg,
+model_comp_cgf = H.HUXt(v_boundary=vr_in, b_boundary=br_in,#lon_start=350*u.deg, lon_stop = 10*u.deg,
                         #lon_out=0.0*u.rad,
                         simtime=simtime, dt_scale=4, 
                     compressible=True, solver ='cgf')

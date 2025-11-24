@@ -641,7 +641,6 @@ class HUXt:
             compressible: Boolean flag to use compressible solver instead of incompressible (default False).
             solver: String specifying the numerical solver to use. Options:
                    'upwind' (default): First-order upwind scheme (Godunov-type)
-                   'hll': HLL (Harten-Lax-van Leer) Riemann solver for shock capturing
                    'cgf': Colella-Glaz-Ferguson solver (compressible only)
                    'pluto': PLUTO spherical hydrodynamics solver (HLL+RK3, compressible only)
             parallel: Boolean flag to enable parallel computation across longitude slices (default True).
@@ -666,7 +665,7 @@ class HUXt:
         self.__version__ = get_version()
         
         # Validate and store solver choice
-        valid_solvers = ['upwind', 'hll', 'cgf', 'pluto']
+        valid_solvers = ['upwind', 'cgf', 'pluto']
         if solver not in valid_solvers:
             raise ValueError(f"Invalid solver '{solver}'. Must be one of: {valid_solvers}")
         
@@ -680,7 +679,7 @@ class HUXt:
         
         # Check CGF solver availability if CGF solver is requested
         if solver == 'cgf':
-            print("✓ CGF solver (HUXt-native) available")
+            print("[OK] CGF solver (HUXt-native) available")
         
         self.solver = solver
         
@@ -1021,6 +1020,27 @@ class HUXt:
         """
         Process a single longitude slice in the HUXt simulation.
         This helper function is used for parallel execution across longitudes.
+        Routes to the appropriate solver (solve_radial for upwind/pluto, solve_radial_cgf for cgf).
+        
+        Args:
+            i: Longitude index to process
+            n_cme: Number of CMEs
+            n_hcs_max: Maximum number of HCS particles
+            streak_times: Streakline timing data
+            
+        Returns:
+            Tuple of (i, v, cme_r_bounds, cme_v_bounds, hcs_r, streak_r, rho_out, temp_out)
+        """
+        if self.solver == 'cgf':
+            # CGF solver uses solve_radial_cgf with particle tracking
+            return self._process_longitude_cgf(i, n_cme, n_hcs_max, streak_times)
+        else:
+            # Upwind and PLUTO solvers use solve_radial
+            return self._process_longitude_builtin(i, n_cme, n_hcs_max, streak_times)
+    
+    def _process_longitude_builtin(self, i, n_cme, n_hcs_max, streak_times):
+        """
+        Process a longitude using the built-in solve_radial (upwind/pluto solvers).
         
         Args:
             i: Longitude index to process
@@ -1063,21 +1083,21 @@ class HUXt:
         
         return (i, v, cme_r_bounds, cme_v_bounds, hcs_r, streak_r, rho_out, temp_out)
     
-    def process_longitude_cgf(self, i, n_cme, n_hcs_max, streak_times, rgrid_km):
+    def _process_longitude_cgf(self, i, n_cme, n_hcs_max, streak_times):
         """
-        Process a single longitude slice using the CGF solver.
-        This helper function is used for parallel execution across longitudes.
+        Process a longitude using solve_radial_cgf (CGF solver).
         
         Args:
             i: Longitude index to process
             n_cme: Number of CMEs
             n_hcs_max: Maximum number of HCS particles
             streak_times: Streakline timing data
-            rgrid_km: Radial grid in km
             
         Returns:
-            Dictionary with results for this longitude
+            Tuple of (i, v, cme_r_bounds, cme_v_bounds, hcs_r, streak_r, rho_out, temp_out)
         """
+        # Compute radial grid in km for CGF solver
+        rgrid_km = (self.rrel.value - self.rrel.value[0]) * 695700.0 + self.r[0].to('km').value
         # Get boundary conditions for this longitude
         v_bc_kms = self.input_v_ts[:, i].value  # km/s
         rho_bc_kgm3 = self.input_rho_ts[:, i].value  # kg/m³
@@ -1086,6 +1106,7 @@ class HUXt:
         # Set up particle tracking for this longitude
         num_particles = 0
         particle_injection_rate = None
+        hcs_polarities = []  # Initialize HCS polarities list
         
         if self.track_cmes or self.track_b or self.track_streak:
             num_particles = {}
@@ -1111,15 +1132,22 @@ class HUXt:
                         particle_injection_rate[f'cme_{cme_id}_trailing'] = [t_trailing]
             
             # HCS particles: inject at each polarity change
+            # Also track the polarity direction for each crossing
             if self.track_b and n_hcs_max > 0:
                 hcs_times = []
                 b_input = self.input_b_ts[:, i]
                 if hasattr(b_input, 'value'):
                     b_input = b_input.value
                 for t in range(1, len(b_input)):
-                    if b_input[t] - b_input[t-1] != 0:  # Polarity change
+                    diff = b_input[t] - b_input[t-1]
+                    if diff != 0:  # Polarity change
                         t_hcs = self.model_time[t].value if hasattr(self.model_time[t], 'value') else self.model_time[t]
                         hcs_times.append(t_hcs)
+                        # Store polarity direction: +1 if B increases, -1 if B decreases
+                        if diff > 0:
+                            hcs_polarities.append(1.0)
+                        else:
+                            hcs_polarities.append(-1.0)
                 
                 if len(hcs_times) > 0:
                     num_particles['hcs'] = len(hcs_times)
@@ -1170,25 +1198,24 @@ class HUXt:
         )
         
         # Extract particle positions at output times
-        cme_particles_r_out = None
-        hcs_particles_r_out = None
-        streak_particles_r_out = None
+        cme_particles_r_out = np.full((n_cme, self.nt_out, 2), np.nan)
+        cme_particles_v_out = np.full((n_cme, self.nt_out, 2), np.nan)  # CGF doesn't track velocity, fill with NaN
+        hcs_particles_r_out = np.full((n_hcs_max, self.nt_out, 2), np.nan)
+        
+        # Initialize streakline array
+        if self.track_streak:
+            streak_data = streak_times[i, :, :, 0]
+            n_streaks = streak_data.shape[0]
+            n_rots = streak_data.shape[1]
+            streak_particles_r_out = np.full((self.nt_out, n_streaks, n_rots), np.nan)
+        else:
+            streak_particles_r_out = np.full((self.nt_out, 1, 1), np.nan)
         
         if particle_data is not None and 'groups' in particle_data:
             groups = particle_data['groups']
             
             # Get time_out as plain array (strip units if present)
             time_out_sec = self.time_out.value if hasattr(self.time_out, 'value') else self.time_out
-            
-            # Initialize arrays
-            cme_particles_r_out = np.full((n_cme, self.nt_out, 2), np.nan)
-            if n_hcs_max > 0:
-                hcs_particles_r_out = np.full((n_hcs_max, self.nt_out, 2), np.nan)
-            if self.track_streak:
-                streak_data = streak_times[i, :, :, 0]
-                n_streaks = streak_data.shape[0]
-                n_rots = streak_data.shape[1]
-                streak_particles_r_out = np.full((self.nt_out, n_streaks, n_rots), np.nan)
             
             # Process CME particles
             if self.track_cmes:
@@ -1233,7 +1260,12 @@ class HUXt:
                         r_out = np.interp(time_out_sec, t_valid, r_valid,
                                          left=np.nan, right=np.nan)
                         hcs_particles_r_out[ihcs, :, 0] = r_out
-                        hcs_particles_r_out[ihcs, :, 1] = 1.0  # Placeholder for polarity
+                        
+                        # Store polarity sign in second component
+                        if ihcs < len(hcs_polarities):
+                            hcs_particles_r_out[ihcs, :, 1] = hcs_polarities[ihcs]
+                        else:
+                            hcs_particles_r_out[ihcs, :, 1] = np.nan
             
             # Process streakline particles
             if self.track_streak:
@@ -1251,15 +1283,9 @@ class HUXt:
                                                  left=np.nan, right=np.nan)
                                 streak_particles_r_out[:, istreak, irot] = r_out
         
-        return {
-            'lon_idx': i,
-            'v': v_out_kms,
-            'rho': rho_out_kgm3,
-            'temp': temp_out_K,
-            'cme_particles_r': cme_particles_r_out,
-            'hcs_particles_r': hcs_particles_r_out,
-            'streak_particles_r': streak_particles_r_out
-        }
+        # Return tuple consistent with builtin solver format
+        return (i, v_out_kms, cme_particles_r_out, cme_particles_v_out, 
+                hcs_particles_r_out, streak_particles_r_out, rho_out_kgm3, temp_out_K)
     
     def set_gamma(self, new_gamma):
         """
@@ -1513,7 +1539,7 @@ class HUXt:
             streak_times = np.ones((self.nlon, 1, 1, 1)) * np.nan
 
         # ======================================================================
-        # CGF SOLVER - Handle separately from built-in solvers
+        # Print solver information
         # ======================================================================
         if self.solver == 'cgf':
             import time
@@ -1528,260 +1554,15 @@ class HUXt:
             if self.v_boundary.value.max() - self.v_boundary.value.min() > 1.0:
                 print(f"  ** Spatial structure detected in v_boundary **")
             
-            # CGF solver requires separate handling - call solver for each longitude
-            # Convert HUXt radial grid to km for solve_radial_cgf
-            rgrid_km = (self.rrel.value - self.rrel.value[0]) * 695700.0 + self.r[0].to('km').value
-            
             if self.parallel:
-                # NOTE: Benchmarking shows parallel execution is SLOWER than serial for CGF solver
-                # due to high solver initialization overhead. This option is kept for compatibility
-                # but is not recommended. Serial execution is typically 25-30% faster.
-                
                 print(f"\n⚠ WARNING: Parallel execution for CGF solver is typically SLOWER than serial")
                 print(f"  Recommended: Set parallel=False for better performance")
-                print(f"\nProcessing {self.lon.size} longitudes in parallel...")
-                
-                # Use threading with limited workers to minimize overhead
-                # Even so, parallel will likely be slower than serial
-                backend = 'threading'
-                n_jobs = min(self.lon.size, 4)  # Limit to 4 workers
-                print(f"  Using 'threading' backend with {n_jobs} workers")
-                
-                results = Parallel(n_jobs=n_jobs, backend=backend, verbose=0)(
-                    delayed(self.process_longitude_cgf)(i, n_cme, n_hcs_max, streak_times, rgrid_km)
-                    for i in range(self.lon.size)
-                )
-                
-                # Unpack results into grids
-                for result in results:
-                    i = result['lon_idx']
-                    self.v_grid[:, :, i] = result['v'] * self.kms
-                    self.rho_grid[:, :, i] = result['rho'] * (u.kg / u.m**3)
-                    self.temp_grid[:, :, i] = result['temp'] * u.K
-                    
-                    if result['cme_particles_r'] is not None:
-                        self.cme_particles_r[:, :, :, i] = result['cme_particles_r']
-                    if result['hcs_particles_r'] is not None:
-                        self.hcs_particles_r[:, :, :, i] = result['hcs_particles_r']
-                    if result['streak_particles_r'] is not None:
-                        self.streak_particles_r[:, :, :, i] = result['streak_particles_r']
-            else:
-                # Serial execution
-                print(f"\nProcessing {self.lon.size} longitudes serially...")
-                for i in range(self.lon.size):
-                    print(f"  Longitude {i+1}/{self.lon.size}")
-
-                    # Get boundary conditions for this longitude
-                    v_bc_kms = self.input_v_ts[:, i].value  # km/s
-                    rho_bc_kgm3 = self.input_rho_ts[:, i].value  # kg/m³
-                    T_bc_K = self.input_temp_ts[:, i].value  # K
-
-                    # Set up particle tracking for this longitude
-                    num_particles = 0
-                    particle_injection_rate = None
-
-                    if self.track_cmes or self.track_b or self.track_streak:
-                        num_particles = {}
-                        particle_injection_rate = {}
-
-                        # CME particles: track leading and trailing edges
-                        if self.track_cmes and n_cme > 0:
-                            for cme_id in range(n_cme):
-                                # Find times when this CME crosses this longitude
-                                cme_mask = (self.input_iscme_ts[:, i] == cme_id + 1)
-                                if np.any(cme_mask):
-                                    # Leading edge injected at start of CME
-                                    leading_idx = np.where(cme_mask)[0][0]
-                                    t_leading = self.model_time[leading_idx].value if hasattr(self.model_time[leading_idx], 'value') else self.model_time[leading_idx]
-
-                                    # Trailing edge injected at end of CME
-                                    trailing_idx = np.where(cme_mask)[0][-1]
-                                    t_trailing = self.model_time[trailing_idx].value if hasattr(self.model_time[trailing_idx], 'value') else self.model_time[trailing_idx]
-
-                                    # Only inject particles during simulation period (t >= 0), not during spin-up
-                                    if t_leading >= 0:
-                                        num_particles[f'cme_{cme_id}_leading'] = 1
-                                        particle_injection_rate[f'cme_{cme_id}_leading'] = [t_leading]
-                                    if t_trailing >= 0:
-                                        num_particles[f'cme_{cme_id}_trailing'] = 1
-                                        particle_injection_rate[f'cme_{cme_id}_trailing'] = [t_trailing]
-
-                        # HCS particles: inject at each polarity change
-                        if self.track_b and n_hcs_max > 0:
-                            hcs_times = []
-                            b_input = self.input_b_ts[:, i]
-                            if hasattr(b_input, 'value'):
-                                b_input = b_input.value
-                            for t in range(1, len(b_input)):
-                                if b_input[t] - b_input[t-1] != 0:  # Polarity change
-                                    t_hcs = self.model_time[t].value if hasattr(self.model_time[t], 'value') else self.model_time[t]
-                                    hcs_times.append(t_hcs)
-
-                            if len(hcs_times) > 0:
-                                num_particles['hcs'] = len(hcs_times)
-                                particle_injection_rate['hcs'] = hcs_times
-
-                        # Streakline particles: inject according to streak_times
-                        if self.track_streak:
-                            # streak_times has shape (nlon, n_streaks, n_rots, 2)
-                            # where last dim is [time_index, rotation_number]
-                            streak_data = streak_times[i, :, :, 0]  # Get time indices for this longitude
-                            n_streaks = streak_data.shape[0]
-                            n_rots = streak_data.shape[1]
-
-                            for istreak in range(n_streaks):
-                                for irot in range(n_rots):
-                                    time_idx = streak_data[istreak, irot]
-                                    if not np.isnan(time_idx):
-                                        streak_name = f'streak_{istreak}_rot_{irot}'
-                                        t_inject = self.model_time[int(time_idx)]
-                                        t_inject = t_inject.value if hasattr(t_inject, 'value') else t_inject
-                                        num_particles[streak_name] = 1
-                                        particle_injection_rate[streak_name] = [t_inject]
-
-                        # If no particles were actually added, revert to no tracking
-                        if len(num_particles) == 0:
-                            num_particles = 0
-                            particle_injection_rate = None
-
-                    # Call consolidated CGF solver function with particle tracking
-                    # Strip units from time arrays for CGF solver
-                    model_time_sec = self.model_time.value if hasattr(self.model_time, 'value') else self.model_time
-                    time_out_sec = self.time_out.value if hasattr(self.time_out, 'value') else self.time_out
-                    
-                    v_out_kms, rho_out_kgm3, temp_out_K, particle_data = solve_radial_cgf(
-                        v_bc_kms=v_bc_kms,
-                        rho_bc_kgm3=rho_bc_kgm3,
-                        T_bc_K=T_bc_K,
-                        model_time=model_time_sec,
-                        time_out=time_out_sec,
-                        r_grid=rgrid_km,
-                        gamma=self.gamma,
-                        nt_out=self.nt_out,
-                        nr=self.nr,
-                        verbose=False,  # Suppress detailed solver output in parallel mode
-                        create_diagnostic_plot=False,  # No plots in parallel mode
-                        num_particles=num_particles,
-                        particle_injection_rate=particle_injection_rate
-                    )
-                    
-                    # Store results in HUXt grids with units
-                    self.v_grid[:, :, i] = v_out_kms * self.kms
-                    self.rho_grid[:, :, i] = rho_out_kgm3 * (u.kg / u.m**3)
-                    self.temp_grid[:, :, i] = temp_out_K * u.K
-
-                    # Extract particle positions at output times and store in HUXt arrays
-                    if particle_data is not None and 'groups' in particle_data:
-                        groups = particle_data['groups']
-
-                        # Get time_out as plain array (strip units if present)
-                        time_out_sec = self.time_out.value if hasattr(self.time_out, 'value') else self.time_out
-
-                        # Process CME particles
-                        if self.track_cmes:
-                            for cme_id in range(n_cme):
-                                leading_key = f'cme_{cme_id}_leading'
-                                trailing_key = f'cme_{cme_id}_trailing'
-
-                                if leading_key in groups:
-                                    # Interpolate particle position to output times
-                                    r_traj = groups[leading_key]['r'][0, :]  # Shape: (n_timesteps,) in km
-                                    t_traj = groups[leading_key]['t'][0, :]  # Shape: (n_timesteps,) in seconds
-
-                                    # Remove NaNs from trajectory
-                                    valid_mask = ~np.isnan(r_traj)
-                                    if np.any(valid_mask):
-                                        r_valid = r_traj[valid_mask]
-                                        t_valid = t_traj[valid_mask]
-
-                                        # Interpolate to output times (both plain arrays now)
-                                        r_out = np.interp(time_out_sec, t_valid, r_valid, 
-                                                         left=np.nan, right=np.nan)
-                                        self.cme_particles_r[cme_id, :, 0, i] = r_out
-                    
-                                if trailing_key in groups:
-                                    r_traj = groups[trailing_key]['r'][0, :]
-                                    t_traj = groups[trailing_key]['t'][0, :]
-                                    valid_mask = ~np.isnan(r_traj)
-                                    if np.any(valid_mask):
-                                        r_valid = r_traj[valid_mask]
-                                        t_valid = t_traj[valid_mask]
-                                        r_out = np.interp(time_out_sec, t_valid, r_valid,
-                                                         left=np.nan, right=np.nan)
-                                        self.cme_particles_r[cme_id, :, 1, i] = r_out
-
-                        # Process HCS particles
-                        if self.track_b and 'hcs' in groups:
-                            hcs_group = groups['hcs']
-                            n_hcs_this_lon = hcs_group['n_particles']
-                            
-                            # Re-identify HCS crossings to get polarities
-                            hcs_polarities = []
-                            b_input = self.input_b_ts[:, i]
-                            if hasattr(b_input, 'value'):
-                                b_input = b_input.value
-                            
-                            for t in range(1, len(b_input)):
-                                diff = b_input[t] - b_input[t-1]
-                                if diff != 0:
-                                    t_hcs = self.model_time[t].value if hasattr(self.model_time[t], 'value') else self.model_time[t]
-                                    if t_hcs >= 0:
-                                        if diff > 0:
-                                            hcs_polarities.append(1.0)
-                                        else:
-                                            hcs_polarities.append(-1.0)
-
-                            for ihcs in range(min(n_hcs_this_lon, n_hcs_max)):
-                                r_traj = hcs_group['r'][ihcs, :]
-                                t_traj = hcs_group['t'][ihcs, :]
-                                valid_mask = ~np.isnan(r_traj)
-                                if np.any(valid_mask):
-                                    r_valid = r_traj[valid_mask]
-                                    t_valid = t_traj[valid_mask]
-
-                                    r_out = np.interp(time_out_sec, t_valid, r_valid,
-                                                     left=np.nan, right=np.nan)
-                                    self.hcs_particles_r[ihcs, :, 0, i] = r_out
-                                    
-                                    # Store polarity sign in second component
-                                    if ihcs < len(hcs_polarities):
-                                        self.hcs_particles_r[ihcs, :, 1, i] = hcs_polarities[ihcs]
-                                    else:
-                                        self.hcs_particles_r[ihcs, :, 1, i] = np.nan
-
-                        # Process streakline particles
-                        if self.track_streak:
-                            for istreak in range(n_streaks):
-                                for irot in range(n_rots):
-                                    streak_name = f'streak_{istreak}_rot_{irot}'
-                                    if streak_name in groups:
-                                        r_traj = groups[streak_name]['r'][0, :]
-                                        t_traj = groups[streak_name]['t'][0, :]
-                                        valid_mask = ~np.isnan(r_traj)
-                                        if np.any(valid_mask):
-                                            r_valid = r_traj[valid_mask]
-                                            t_valid = t_traj[valid_mask]
-
-                                            r_out = np.interp(time_out_sec, t_valid, r_valid,
-                                                             left=np.nan, right=np.nan)
-                                            self.streak_particles_r[:, :, :, i] = r_out
-                
-            
-            solve_time = time.time() - solve_start
-            print("\n" + "="*70)
-            print("CGF SOLVER COMPLETE")
-            print("="*70)
-            print(f"Total time: {solve_time:.2f} seconds ({solve_time/60:.2f} minutes)")
-            print(f"Time per longitude: {solve_time/self.lon.size:.2f} seconds")
             print("="*70 + "\n")
-            
-            # Skip the normal longitude loop - CGF solver handled everything
-            pass
         
         # ======================================================================
-        # PLUTO SOLVER PATH
+        # PLUTO SOLVER PATH (separate execution - does not use unified loop)
         # ======================================================================
-        elif self.solver == 'pluto':
+        if self.solver == 'pluto':
             import time
             
             try:
@@ -1883,52 +1664,55 @@ class HUXt:
                 raise RuntimeError(f"PLUTO solver failed: {str(e)}") from e
         
         # ======================================================================
-        # Solve the time series at each longitude (BUILT-IN SOLVERS)
+        # Solve the time series at each longitude (UPWIND and CGF SOLVERS)
         # ======================================================================
         # Note: Grids are already in Fortran order from initialization, which makes
         # the [:, :, i] slices contiguous in memory for cache-efficient access
+        # This section handles upwind and cgf solvers using unified process_longitude
+        # PLUTO solver has its own complete loop above and skips this section
 
-        elif self.parallel:
-            # Parallel execution using joblib
-            results = Parallel(n_jobs=-1, backend='threading')(
-                delayed(self.process_longitude)(i, n_cme, n_hcs_max, streak_times) 
-                for i in range(self.lon.size)
-            )
-            
-            # Unpack results into grids
-            for i, v, cme_r_bounds, cme_v_bounds, hcs_r, streak_r, rho_out, temp_out in results:
-                self.v_grid[:, :, i] = v * self.kms
-                self.cme_particles_r[:, :, :, i] = cme_r_bounds * u.dimensionless_unscaled
-                self.cme_particles_v[:, :, :, i] = cme_v_bounds * u.dimensionless_unscaled
-                if self.track_b:
-                    self.hcs_particles_r[:, :, :, i] = hcs_r * u.dimensionless_unscaled
-                if self.track_streak:
-                    self.streak_particles_r[:, :, :, i] = streak_r * u.dimensionless_unscaled
-                
-                # Save density and temperature output for compressible solver
-                if self.compressible:
-                    self.rho_grid[:, :, i] = rho_out * (u.kg / u.m**3)
-                    self.temp_grid[:, :, i] = temp_out * u.K
-        else:
-            # Serial execution (original loop)
-            for i in range(self.lon.size):
-                i, v, cme_r_bounds, cme_v_bounds, hcs_r, streak_r, rho_out, temp_out = self.process_longitude(
-                    i, n_cme, n_hcs_max, streak_times
+        if self.solver != 'pluto':
+            if self.parallel:
+                # Parallel execution using joblib
+                results = Parallel(n_jobs=-1, backend='threading')(
+                    delayed(self.process_longitude)(i, n_cme, n_hcs_max, streak_times) 
+                    for i in range(self.lon.size)
                 )
                 
-                # Save the output at each longitude
-                self.v_grid[:, :, i] = v * self.kms
-                self.cme_particles_r[:, :, :, i] = cme_r_bounds * u.dimensionless_unscaled
-                self.cme_particles_v[:, :, :, i] = cme_v_bounds * u.dimensionless_unscaled
-                if self.track_b:
-                    self.hcs_particles_r[:, :, :, i] = hcs_r * u.dimensionless_unscaled
-                if self.track_streak:
-                    self.streak_particles_r[:, :, :, i] = streak_r * u.dimensionless_unscaled
-                
-                # Save density and temperature output for compressible solver
-                if self.compressible:
-                    self.rho_grid[:, :, i] = rho_out * (u.kg / u.m**3)
-                    self.temp_grid[:, :, i] = temp_out * u.K
+                # Unpack results into grids
+                for i, v, cme_r_bounds, cme_v_bounds, hcs_r, streak_r, rho_out, temp_out in results:
+                    self.v_grid[:, :, i] = v * self.kms
+                    self.cme_particles_r[:, :, :, i] = cme_r_bounds * u.dimensionless_unscaled
+                    self.cme_particles_v[:, :, :, i] = cme_v_bounds * u.dimensionless_unscaled
+                    if self.track_b:
+                        self.hcs_particles_r[:, :, :, i] = hcs_r * u.dimensionless_unscaled
+                    if self.track_streak:
+                        self.streak_particles_r[:, :, :, i] = streak_r * u.dimensionless_unscaled
+                    
+                    # Save density and temperature output for compressible solver
+                    if self.compressible:
+                        self.rho_grid[:, :, i] = rho_out * (u.kg / u.m**3)
+                        self.temp_grid[:, :, i] = temp_out * u.K
+            else:
+                # Serial execution (original loop)
+                for i in range(self.lon.size):
+                    i, v, cme_r_bounds, cme_v_bounds, hcs_r, streak_r, rho_out, temp_out = self.process_longitude(
+                        i, n_cme, n_hcs_max, streak_times
+                    )
+                    
+                    # Save the output at each longitude
+                    self.v_grid[:, :, i] = v * self.kms
+                    self.cme_particles_r[:, :, :, i] = cme_r_bounds * u.dimensionless_unscaled
+                    self.cme_particles_v[:, :, :, i] = cme_v_bounds * u.dimensionless_unscaled
+                    if self.track_b:
+                        self.hcs_particles_r[:, :, :, i] = hcs_r * u.dimensionless_unscaled
+                    if self.track_streak:
+                        self.streak_particles_r[:, :, :, i] = streak_r * u.dimensionless_unscaled
+                    
+                    # Save density and temperature output for compressible solver
+                    if self.compressible:
+                        self.rho_grid[:, :, i] = rho_out * (u.kg / u.m**3)
+                        self.temp_grid[:, :, i] = temp_out * u.K
 
         # Update CMEs positions by tracking through the solution.
         if self.track_cmes:

@@ -5,6 +5,14 @@ from numba import njit
 SMALL_RHO = 1e-30
 SMALL_P = 1e-30
 
+# Physical constants (CGS units)
+K_B_CGS = 1.380649e-16      # erg/K
+M_P_CGS = 1.67262192e-24    # g
+K_B_SI = 1.38064852e-23     # J/K  
+M_P_SI = 1.67262192e-27     # kg
+KM_TO_CM = 1e5               # cm/km
+KGM3_TO_GCM3 = 1e-3         # g/cm³ per kg/m³
+
 @njit(cache=True)
 def get_gamma_law_pressure(rho, eint, gamma):
     """
@@ -716,4 +724,134 @@ class CGFSolver:
                 results['particles'] = {'groups': particle_groups}
                 
         return results
+
+
+@njit(cache=True)
+def _cgf_step_(v_up, v_dn, rho_up, rho_dn, temp_up, temp_dn, dtdr, r_grid, gamma):
+    """
+    Compute one timestep using CGF Riemann solver for compressible flow.
+    This function matches the signature of _upwind_step_compressible_ to enable
+    drop-in replacement in solve_radial_upwind.
+    
+    Args:
+        v_up: Upwind velocity values (km/s), shape (nr-1,)
+        v_dn: Downwind velocity values (km/s), shape (nr-1,)
+        rho_up: Upwind density values (kg/m³), shape (nr-1,)
+        rho_dn: Downwind density values (kg/m³), shape (nr-1,)
+        temp_up: Upwind temperature values (K), shape (nr-1,)
+        temp_dn: Downwind temperature values (K), shape (nr-1,)
+        dtdr: Time step / radial step (s/km)
+        r_grid: Radial grid values (km), shape (nr-1,)
+        gamma: Adiabatic index
+        
+    Returns:
+        v_next: Updated velocity (km/s), shape (nr-1,)
+        rho_next: Updated density (kg/m³), shape (nr-1,)
+        temp_next: Updated temperature (K), shape (nr-1,)
+    """
+    
+    # Convert units for CGS calculation
+    # v: km/s -> cm/s
+    v_up_cgs = v_up * KM_TO_CM
+    v_dn_cgs = v_dn * KM_TO_CM
+    
+    # rho: kg/m³ -> g/cm³
+    rho_up_cgs = rho_up * KGM3_TO_GCM3
+    rho_dn_cgs = rho_dn * KGM3_TO_GCM3
+    
+    # r: km -> cm
+    r_cgs = r_grid * KM_TO_CM
+    
+    # Calculate dr in cm
+    dr_cgs = (r_grid[1] - r_grid[0]) * KM_TO_CM if len(r_grid) > 1 else r_cgs[0] * 0.1
+    
+    # Calculate dt in seconds
+    dt = dtdr * dr_cgs / KM_TO_CM
+    
+    nr = len(v_up)
+    v_next = np.zeros(nr)
+    rho_next = np.zeros(nr)
+    temp_next = np.zeros(nr)
+    
+    # Loop over cells
+    for i in range(nr):
+        # Pressure from equation of state: P = ρ k_B T / m_p
+        p_up = rho_up_cgs[i] * K_B_CGS * temp_up[i] / M_P_CGS
+        p_dn = rho_dn_cgs[i] * K_B_CGS * temp_dn[i] / M_P_CGS
+        
+        # Ensure positive pressure
+        p_up = max(p_up, SMALL_P)
+        p_dn = max(p_dn, SMALL_P)
+        
+        # Internal energy per unit mass: e = P / [(gamma-1) * rho]
+        e_up = p_up / ((gamma - 1.0) * rho_up_cgs[i])
+        e_dn = p_dn / ((gamma - 1.0) * rho_dn_cgs[i])
+        
+        # Conserved variables: [rho, rho*v, E]
+        # Total energy: E = rho * e + 0.5 * rho * v^2
+        U_up = np.array([
+            rho_up_cgs[i],
+            rho_up_cgs[i] * v_up_cgs[i],
+            rho_up_cgs[i] * e_up + 0.5 * rho_up_cgs[i] * v_up_cgs[i]**2
+        ])
+        
+        U_dn = np.array([
+            rho_dn_cgs[i],
+            rho_dn_cgs[i] * v_dn_cgs[i],
+            rho_dn_cgs[i] * e_dn + 0.5 * rho_dn_cgs[i] * v_dn_cgs[i]**2
+        ])
+        
+        # Solve Riemann problem to get interface state
+        U_star = riemann_cgf(gamma, U_dn, U_up)  # Note: dn is "left", up is "right"
+        
+        # Compute fluxes
+        rho_star = max(U_star[0], SMALL_RHO)
+        v_star = U_star[1] / rho_star
+        p_star = get_gamma_law_pressure(rho_star, (U_star[2] - 0.5 * rho_star * v_star**2) / rho_star, gamma)
+        p_star = max(p_star, SMALL_P)
+        
+        F_mass = U_star[1]  # rho * v
+        F_mom = U_star[1] * v_star + p_star  # rho * v^2 + p
+        F_energy = (U_star[2] + p_star) * v_star  # (E + p) * v
+        
+        # Geometric source terms for spherical coordinates
+        # S_mom = 2*p/r (pressure gradient in spherical geometry)
+        # S_energy = 0 (no geometric source for energy in this formulation)
+        r_cell = r_cgs[i]
+        S_mom = 2.0 * p_up / r_cell
+        
+        # Update using finite volume method
+        # U_new = U_old - dt/V * (A_right*F_right - A_left*F_left) + dt*S
+        # For simplicity in upwind context, use: U_new = U - dt/dr * (F - F_left) + dt*S
+        # where F_left ≈ F from downwind cell
+        
+        # Flux difference (upwind approximation)
+        dF_mass = F_mass - rho_dn_cgs[i] * v_dn_cgs[i]
+        dF_mom = F_mom - (rho_dn_cgs[i] * v_dn_cgs[i]**2 + p_dn)
+        dF_energy = F_energy - ((rho_dn_cgs[i] * e_dn + 0.5 * rho_dn_cgs[i] * v_dn_cgs[i]**2 + p_dn) * v_dn_cgs[i])
+        
+        # Update conserved variables
+        U_new_mass = rho_up_cgs[i] - (dt / dr_cgs) * dF_mass
+        U_new_mom = U_up[1] - (dt / dr_cgs) * dF_mom + dt * S_mom
+        U_new_energy = U_up[2] - (dt / dr_cgs) * dF_energy
+        
+        # Convert back to primitives
+        rho_new_cgs = max(U_new_mass, SMALL_RHO)
+        v_new_cgs = U_new_mom / rho_new_cgs
+        e_new = (U_new_energy - 0.5 * rho_new_cgs * v_new_cgs**2) / rho_new_cgs
+        p_new = get_gamma_law_pressure(rho_new_cgs, e_new, gamma)
+        p_new = max(p_new, SMALL_P)
+        temp_new = p_new * M_P_CGS / (rho_new_cgs * K_B_CGS)
+        
+        # Convert back to HUXt units
+        v_next[i] = v_new_cgs / KM_TO_CM  # cm/s -> km/s
+        rho_next[i] = rho_new_cgs / KGM3_TO_GCM3  # g/cm³ -> kg/m³
+        temp_next[i] = temp_new  # K
+        
+        # Apply physical bounds
+        v_next[i] = max(100.0, min(v_next[i], 3000.0))
+        temp_next[i] = max(1e3, min(temp_next[i], 1e8))
+        rho_next[i] = max(1e-30, rho_next[i])
+    
+    return v_next, rho_next, temp_next
 

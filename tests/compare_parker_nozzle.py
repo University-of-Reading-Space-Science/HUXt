@@ -113,7 +113,7 @@ def run_huxt_solver(solver_name, v0, rho0, T0, gamma, r_min=30, r_max=220,
     Run a HUXt compressible solver with given initial conditions.
     
     Args:
-        solver_name: 'upwind', 'hll', 'hll_fv', 'mol', or 'cgf'
+        solver_name: 'upwind', 'cgf', or 'pluto'
         v0: Initial velocity (km/s)
         rho0: Initial density (kg/m^3)
         T0: Initial temperature (K)
@@ -195,7 +195,7 @@ if __name__ == "__main__":
     )
     
     # Run HUXt solvers
-    solvers = ['upwind', 'hll', 'hll_fv']
+    solvers = ['upwind', 'cgf']
     models = {}
     
     simtime = 5  # days - long enough to reach steady state
@@ -266,8 +266,8 @@ if __name__ == "__main__":
     
     colors = {
         'upwind': 'C0',
-        'hll': 'C2',
-        'hll_fv': 'C3'
+        'cgf': 'C2',
+        'pluto': 'C3'
     }
     
     # Left column: Absolute values
