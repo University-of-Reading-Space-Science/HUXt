@@ -1716,6 +1716,22 @@ class HUXt:
                         if self.track_b and 'hcs' in groups:
                             hcs_group = groups['hcs']
                             n_hcs_this_lon = hcs_group['n_particles']
+                            
+                            # Re-identify HCS crossings to get polarities
+                            hcs_polarities = []
+                            b_input = self.input_b_ts[:, i]
+                            if hasattr(b_input, 'value'):
+                                b_input = b_input.value
+                            
+                            for t in range(1, len(b_input)):
+                                diff = b_input[t] - b_input[t-1]
+                                if diff != 0:
+                                    t_hcs = self.model_time[t].value if hasattr(self.model_time[t], 'value') else self.model_time[t]
+                                    if t_hcs >= 0:
+                                        if diff > 0:
+                                            hcs_polarities.append(1.0)
+                                        else:
+                                            hcs_polarities.append(-1.0)
 
                             for ihcs in range(min(n_hcs_this_lon, n_hcs_max)):
                                 r_traj = hcs_group['r'][ihcs, :]
@@ -1728,9 +1744,12 @@ class HUXt:
                                     r_out = np.interp(time_out_sec, t_valid, r_valid,
                                                      left=np.nan, right=np.nan)
                                     self.hcs_particles_r[ihcs, :, 0, i] = r_out
+                                    
                                     # Store polarity sign in second component
-                                    # (Determine from b_input at injection time)
-                                    self.hcs_particles_r[ihcs, :, 1, i] = 1.0  # Placeholder
+                                    if ihcs < len(hcs_polarities):
+                                        self.hcs_particles_r[ihcs, :, 1, i] = hcs_polarities[ihcs]
+                                    else:
+                                        self.hcs_particles_r[ihcs, :, 1, i] = np.nan
 
                         # Process streakline particles
                         if self.track_streak:

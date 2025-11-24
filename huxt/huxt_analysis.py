@@ -318,7 +318,7 @@ def animate(model, tag, duration=10, fps=20, plotHCS=True, trace_earth_connectio
 
 @u.quantity_input(time=u.day)
 def plot_compressible(model, time, save=False, tag='', fighandle=np.nan, minimalplot=False, 
-                      annotateplot=True, plot_rmax=None):
+                      annotateplot=True, plot_rmax=None, plotHCS=True):
     """
     Make three contour plots on polar axes of the compressible solar wind solution at a specific time.
     Shows velocity, density, and temperature in separate subplots.
@@ -332,6 +332,7 @@ def plot_compressible(model, time, save=False, tag='', fighandle=np.nan, minimal
         minimalplot: Boolean, if True removes colorbar, planets, spacecraft, and labels.
         annotateplot: Boolean, whether to include text and legends
         plot_rmax: float (no units, but in Rs). Limit outer boundary to help with field lines during CMEs
+        plotHCS: Boolean, if True plots heliospheric current sheet coordinates
     Returns:
         fig: Figure handle.
         axes: Array of axes handles [ax_v, ax_rho, ax_T].
@@ -461,6 +462,14 @@ def plot_compressible(model, time, save=False, tag='', fighandle=np.nan, minimal
                 cme_r = np.append(cme_r, cme_r[0])
                 for ax in axes:
                     ax.plot(cme_lons, cme_r, '-', color=cme_colors[cid], linewidth=3)
+
+    # plot any HCS that have been traced
+    if plotHCS and hasattr(model, 'b_grid'):
+        for i in range(0, len(model.hcs_particles_r[:, 0, 0, 0])):
+            r = model.hcs_particles_r[i, id_t, 0, :] * u.km.to(u.solRad)
+            lons = model.lon
+            for ax in axes:
+                ax.plot(lons, r, 'w.')
 
     # Plot any tracked streaklines
     if model.track_streak:
