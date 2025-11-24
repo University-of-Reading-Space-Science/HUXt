@@ -8,8 +8,92 @@ Test script to verify CGF solver spin-up and Parker solution approximation.
 
 import numpy as np
 import astropy.units as u
+from astropy.constants import k_B, m_p
+from scipy.optimize import bisect
 import matplotlib.pyplot as plt
 import huxt.huxt as H
+
+# ==============================================================================
+# Analytical Parker Nozzle Solution
+# ==============================================================================
+
+def compute_parker_nozzle_solution(r_grid, U0, n_rho0, T0, gamma=1.5):
+    """
+    Compute the analytical Parker nozzle solution for solar wind expansion.
+    
+    Args:
+        r_grid: Radial grid in solar radii (or consistent units if careful)
+        U0: Initial velocity (km/s)
+        n_rho0: Initial number density (cm^-3)
+        T0: Initial temperature (K)
+        gamma: Adiabatic index
+    
+    Returns:
+        U, n_rho, T, rho: Velocity, number density, temperature, mass density
+    """
+    # Convert to proper units
+    U0 = U0 * (u.km / u.s)
+    n_rho0 = n_rho0 / (u.cm ** 3)
+    m_rho0 = (m_p * n_rho0).to(u.kg / u.m**3)
+    T0 = T0 * u.K
+    R_gas = k_B / m_p  # Specific gas constant
+    
+    # Compute Mach number at inner boundary
+    M0 = (U0 / np.sqrt((gamma * R_gas * T0))).to(u.dimensionless_unscaled)
+    
+    # Compute stagnation (total) conditions
+    T_t = T0 * (1 + ((gamma - 1)/2)*(M0*M0))
+    p_t = (m_rho0 * R_gas * T0) * ((1 + ((gamma - 1)/2)*(M0*M0)) ** (gamma/(gamma - 1)))
+    rho_t = m_rho0 * ((1 + ((gamma - 1)/2)*(M0*M0)) ** (1/(gamma - 1)))
+    
+    # Compute reference area at sonic point (A*)
+    A0 = r_grid[0]**2  # Area at inner boundary
+    
+    def A_norm_calc(M, gamma):
+        """Normalized area-Mach relation for quasi-1D nozzle flow"""
+        a = 2 / (gamma + 1)
+        b = (gamma - 1) / 2
+        c = (gamma + 1) / (2*(gamma - 1))
+        A_norm = (1/M) * (a*(1 + b*M*M))**c
+        return A_norm
+    
+    A0_norm = A_norm_calc(M0.value, gamma)
+    A_star = A0 / A0_norm  # Reference area at sonic point
+    
+    # For each radius, compute area ratio and solve for supersonic Mach number
+    A = r_grid**2
+    A_norm = A / A_star
+    
+    def invert_A_for_M(M, gamma, A_n):
+        """Root finding function to invert A(M) relation"""
+        return A_norm_calc(M, gamma) - A_n
+    
+    m_min = 1 + 1e-12  # Just above sonic
+    m_max = 1e4  # High supersonic
+    
+    M = np.zeros(len(r_grid))
+    for i, a_n in enumerate(A_norm):
+        try:
+            M[i] = bisect(invert_A_for_M, m_min, m_max, args=(gamma, a_n))
+        except ValueError:
+            # Fallback if bisect fails (e.g. very close to sonic point or numerical issues)
+            # For solar wind, we are usually well supersonic.
+            M[i] = np.nan
+
+    # Compute static properties from isentropic relations
+    T = T_t / (1 + ((gamma - 1)/2)*(M*M))
+    p = p_t * (T/T_t) ** (gamma/(gamma - 1))
+    rho = rho_t * (T/T_t) ** (1/(gamma - 1))
+    
+    # Convert to output units
+    rho = rho.to(u.kg / u.m**3)
+    n_rho = (rho / m_p).to(1/u.cm**3)
+    
+    # Compute velocity from Mach number
+    c = np.sqrt(gamma * R_gas * T)
+    U = (M * c).to(u.km / u.s)
+    
+    return U.value, n_rho.value, T.value, rho.value
 
 def test_cgf_parker_spinup():
     # Setup parameters
@@ -46,38 +130,81 @@ def test_cgf_parker_spinup():
         print(f"FAIL: Output starts at {model.time_out[0]} (spin-up included?).")
 
     # 2. Parker Solution Approximation
-    # For constant V, rho should scale as 1/r^2.
-    # However, the CGF solver solves the Euler equations with pressure gradients.
-    # A hot solar wind will accelerate (v increases with r), so rho will drop faster than 1/r^2
-    # to conserve mass flux (rho * v * r^2 = const).
-    # So we expect some deviation from the simple 1/r^2 (constant v) scaling.
     print("\n--- Parker Solution Check ---")
     
-    # Get final state
-    r = model.r.to(u.km).value
-    v = model.v_grid[-1, :, 0].value # km/s
-    rho = model.rho_grid[-1, :, 0].value # kg/m^3
+    # Get final state from model
+    r_km = model.r.to(u.km).value
+    v_model = model.v_grid[-1, :, 0].value # km/s
+    rho_model = model.rho_grid[-1, :, 0].value # kg/m^3
+    T_model = model.temp_grid[-1, :, 0].value # K
     
-    # Expected scaling for CONSTANT velocity
-    rho_0 = rho[0]
-    r_0 = r[0]
-    rho_theory_const_v = rho_0 * (r_0 / r)**2
+    # Initial conditions at inner boundary
+    v0 = v_model[0]
+    rho0 = rho_model[0]
+    T0 = T_model[0]
+    
+    # Convert rho0 to n_rho0 (cm^-3) for the analytical function
+    m_p_kg = 1.6726219e-27
+    n_rho0 = (rho0 / m_p_kg) / 1e6 # m^-3 -> cm^-3
+    
+    # Compute analytical Parker solution
+    # Note: r_grid needs to be in consistent units. The function uses r_grid[0] to define A0.
+    # It treats r as just a coordinate, so units cancel in A/A* ratio as long as consistent.
+    # But we pass r_km.
+    
+    # HUXt uses gamma = 1.5 by default for polytropic solar wind?
+    # Let's check what gamma HUXt uses.
+    # HUXt defaults to gamma=1.5 in huxt.py constants or init?
+    # Actually, HUXt usually sets polytropic index alpha.
+    # For CGF solver, we pass gamma. Let's assume gamma=1.5 (standard for solar wind models in HUXt context often).
+    # Wait, CGF solver default gamma is 5/3 (1.667) in cgf_solver.py __init__.
+    # But HUXt might override it.
+    # Let's check model.gamma
+    gamma = model.gamma
+    print(f"Using gamma = {gamma}")
+
+    v_parker, n_rho_parker, T_parker, rho_parker = compute_parker_nozzle_solution(
+        r_km, v0, n_rho0, T0, gamma=gamma
+    )
     
     # Plot
     fig, ax = plt.subplots(3, 1, figsize=(10, 12))
     
-    ax[0].plot(r/1.5e8, v, label='Model V')
+    # Velocity
+    ax[0].plot(r_km/1.5e8, v_model, 'b-', label='CGF Model')
+    ax[0].plot(r_km/1.5e8, v_parker, 'r--', label='Analytical Parker')
     ax[0].set_ylabel('Velocity (km/s)')
-    ax[0].set_title('Radial Velocity Profile (Expect slight acceleration due to pressure)')
+    ax[0].set_title('Radial Velocity Profile')
+    ax[0].legend()
     ax[0].grid(True)
     
-    ax[1].plot(r/1.5e8, rho, label='Model Density')
-    ax[1].plot(r/1.5e8, rho_theory_const_v, '--', label='1/r^2 Theory (Const V)')
+    # Density
+    ax[1].plot(r_km/1.5e8, rho_model, 'b-', label='CGF Model')
+    ax[1].plot(r_km/1.5e8, rho_parker, 'r--', label='Analytical Parker')
     ax[1].set_ylabel('Density (kg/m^3)')
+    ax[1].set_xlabel('Radius (AU)')
     ax[1].set_yscale('log')
     ax[1].legend()
     ax[1].grid(True)
     ax[1].set_title('Density Profile')
+    
+    # Temperature
+    ax[2].plot(r_km/1.5e8, T_model, 'b-', label='CGF Model')
+    ax[2].plot(r_km/1.5e8, T_parker, 'r--', label='Analytical Parker')
+    ax[2].set_ylabel('Temperature (K)')
+    ax[2].set_xlabel('Radius (AU)')
+    ax[2].legend()
+    ax[2].grid(True)
+    ax[2].set_title('Temperature Profile')
+
+    # Calculate error
+    # Ignore NaNs in Parker solution (if any)
+    valid = ~np.isnan(v_parker)
+    v_err = np.mean(np.abs(v_model[valid] - v_parker[valid]) / v_parker[valid]) * 100
+    rho_err = np.mean(np.abs(rho_model[valid] - rho_parker[valid]) / rho_parker[valid]) * 100
+    
+    print(f"Mean Velocity Error: {v_err:.2f}%")
+    print(f"Mean Density Error: {rho_err:.2f}%")
 
     # 3. Mass Flux Conservation
     print("\n--- Mass Flux Conservation ---")
@@ -86,12 +213,12 @@ def test_cgf_parker_spinup():
     
     # Convert to consistent units
     # r in m
-    r_m = r * 1000.0
+    r_m = r_km * 1000.0
     # v in m/s
-    v_ms = v * 1000.0
+    v_ms = v_model * 1000.0
     # rho in kg/m^3
     
-    flux = 4 * np.pi * r_m**2 * rho * v_ms
+    flux = 4 * np.pi * r_m**2 * rho_model * v_ms
     
     mean_flux = np.mean(flux)
     std_flux = np.std(flux)
@@ -107,7 +234,7 @@ def test_cgf_parker_spinup():
         print("WARNING: Mass flux deviation > 3%.")
 
     # Plot Mass Flux
-    ax[2].plot(r/1.5e8, flux)
+    ax[2].plot(r_km/1.5e8, flux)
     ax[2].axhline(mean_flux, color='r', linestyle='--', label='Mean')
     ax[2].set_ylabel('Mass Flux (kg/s)')
     ax[2].set_xlabel('Radius (AU)')

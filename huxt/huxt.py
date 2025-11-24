@@ -3006,7 +3006,7 @@ def _pluto_step_euler(v_grid, rho_grid, temp_grid, r_grid, dt, gamma=GAMMA_PLUTO
 
 def solve_radial_cgf(v_bc_kms, rho_bc_kgm3, T_bc_K, model_time, time_out, 
                      r_grid, gamma, nt_out, nr, verbose=False, create_diagnostic_plot=False,
-                     num_particles=0, particle_injection_rate=None):
+                     num_particles=0, particle_injection_rate=None, solver_instance=None):
     """
     Solve 1D radial solar wind expansion using the HUXt-native CGF Riemann solver.
     
@@ -3043,6 +3043,8 @@ def solve_radial_cgf(v_bc_kms, rho_bc_kgm3, T_bc_K, model_time, time_out,
     particle_injection_rate : array-like or dict, optional
         Injection times (seconds) for particles in model_time coordinates.
         If num_particles is dict, this must also be dict with matching keys.
+    solver_instance : CGFSolver, optional
+        Pre-initialized CGFSolver instance to reuse. If None, a new one is created.
     
     Returns
     -------
@@ -3096,12 +3098,15 @@ def solve_radial_cgf(v_bc_kms, rho_bc_kgm3, T_bc_K, model_time, time_out,
         return float(np.interp(t, model_time_seconds, T_bc_K))
     
     # Initialize solver
-    solver = CGFSolver(
-        r_grid=r_grid_cm,
-        gamma=gamma,
-        cfl=0.7,
-        verbose=verbose
-    )
+    if solver_instance is None:
+        solver = CGFSolver(
+            r_grid=r_grid_cm,
+            gamma=gamma,
+            cfl=0.7,
+            verbose=verbose
+        )
+    else:
+        solver = solver_instance
     
     # Run simulation
     results = solver.solve(

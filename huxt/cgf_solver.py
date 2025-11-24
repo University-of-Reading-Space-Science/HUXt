@@ -157,7 +157,33 @@ def riemann_cgf(gamma, U_l, U_r):
             return U_star
 
 @njit(cache=True)
-def reconstruct_states(U, gamma, dx, dt, geometry_factor=None):
+def _advect_particles_jit(r_p, active, r_grid, v_grid, dt, r_min, r_max):
+    n_p = len(r_p)
+    for i in range(n_p):
+        if active[i]:
+            r = r_p[i]
+            if r < r_min or r > r_max:
+                active[i] = False
+                continue
+            
+            # RK2
+            # 1. Predictor
+            # Linear interpolation for v at r
+            # We assume r_grid is sorted.
+            # np.interp is supported in Numba
+            v_p = np.interp(r, r_grid, v_grid)
+            r_mid = r + 0.5 * v_p * dt
+            
+            if r_mid < r_min or r_mid > r_max:
+                v_mid = v_p
+            else:
+                v_mid = np.interp(r_mid, r_grid, v_grid)
+            
+            r_new = r + v_mid * dt
+            r_p[i] = r_new
+
+@njit(cache=True)
+def reconstruct_states(U, gamma, dx, dt, geom_factor, q, dq, q_int_l, q_int_r):
     """
     Reconstruct left and right states at interfaces using PLM (Piecewise Linear Method).
     Simplified from pyro's interface.states.
@@ -168,12 +194,21 @@ def reconstruct_states(U, gamma, dx, dt, geometry_factor=None):
     nvar = 3
     
     # Convert to primitive
-    q = np.zeros((nr, nvar))
     for i in range(nr):
-        q[i] = cons_to_prim(U[i], gamma)
+        rho = max(U[i, 0], SMALL_RHO)
+        mom = U[i, 1]
+        ener = U[i, 2]
+        v = mom / rho
+        eint = (ener - 0.5 * rho * v**2) / rho
+        p = rho * eint * (gamma - 1.0)
+        p = max(p, SMALL_P)
+        
+        q[i, 0] = rho
+        q[i, 1] = v
+        q[i, 2] = p
         
     # Slopes (dq)
-    dq = np.zeros((nr, nvar))
+    dq[:] = 0.0
     
     # MC Limiter (Monotonized Central)
     for i in range(1, nr-1):
@@ -188,46 +223,17 @@ def reconstruct_states(U, gamma, dx, dt, geometry_factor=None):
                 dq[i, n] = 0.0
                 
     # Predict states to interfaces (half-step evolution)
-    q_l = np.zeros((nr+1, nvar)) # Left state at i+1/2
-    q_r = np.zeros((nr+1, nvar)) # Right state at i+1/2
-    
-    # We compute q_l[i+1] (left side of interface i+1/2) and q_r[i] (right side of interface i-1/2)
-    # But standard convention: q_l[i] is left state at interface i, q_r[i] is right state at interface i.
-    # Let's stick to: q_l[i] is state at left of interface i (from cell i-1)
-    #                 q_r[i] is state at right of interface i (from cell i)
-    
-    # Pyro convention:
-    # q_l[i+1] is left state at interface i+1/2 (from cell i)
-    # q_r[i] is right state at interface i-1/2 (from cell i)
-    
-    # Let's use:
     # q_int_l[i] : state at left of interface i (from cell i-1)
     # q_int_r[i] : state at right of interface i (from cell i)
     
-    q_int_l = np.zeros((nr+1, nvar))
-    q_int_r = np.zeros((nr+1, nvar))
+    q_int_l[:] = 0.0
+    q_int_r[:] = 0.0
     
     for i in range(nr):
         rho = q[i, 0]
         u = q[i, 1]
         p = q[i, 2]
         cs = np.sqrt(gamma * p / rho)
-        
-        # Characteristic tracing
-        # Eigenvalues: u-c, u, u+c
-        
-        # For left interface of cell i (i-1/2), we project from center to left
-        # For right interface of cell i (i+1/2), we project from center to right
-        
-        # Simplified PLM prediction
-        # q_L_{i+1/2} = q_i + 0.5 * (1 - max(lambda, 0)*dt/dx) * dq_i
-        # q_R_{i-1/2} = q_i - 0.5 * (1 + min(lambda, 0)*dt/dx) * dq_i
-        
-        # We need to do this characteristic-wise, but component-wise is often used in simple solvers.
-        # Pyro does characteristic projection.
-        
-        # Let's use component-wise for simplicity if acceptable, but characteristic is better.
-        # Given the complexity, I'll use component-wise with max wave speed for now.
         
         dtdx = dt / dx[i]
         
@@ -242,60 +248,101 @@ def reconstruct_states(U, gamma, dx, dt, geometry_factor=None):
         lambda_min = min(u - cs, 0.0)
         factor_r = 0.5 * (1.0 + lambda_min * dtdx)
         q_int_r[i] = q[i] - factor_r * dq[i]
-        
-        # Source terms for spherical geometry (dloga)
-        # if geometry_factor is not None:
-            # dloga = 2/r
-            # Source term: -0.5 * dt * u * dloga * dq/d... no
-            # Pyro: rho_source = -0.5 * dt * dloga * rho * u
-            # q_l[i+1, rho] += rho_source
-            
-            # dloga = geometry_factor[i]
-            # rho_source = -0.5 * dt * dloga * rho * u
-            
-            # q_int_l[i+1, 0] += rho_source
-            # q_int_r[i, 0] += rho_source
-            
-            # Pressure correction
-            # q_int_l[i+1, 2] += rho_source * cs**2
-            # q_int_r[i, 2] += rho_source * cs**2
 
     return q_int_l, q_int_r
 
 @njit(cache=True)
-def solve_riemann_fluxes(q_l, q_r, gamma):
+def solve_riemann_fluxes(q_l, q_r, gamma, fluxes):
     """
     Compute fluxes at all interfaces.
     """
     n_interfaces = q_l.shape[0]
-    fluxes = np.zeros((n_interfaces, 3))
     
     for i in range(n_interfaces):
-        # Convert to conserved
-        U_l = prim_to_cons(q_l[i], gamma)
-        U_r = prim_to_cons(q_r[i], gamma)
+        # Left state
+        rho_l = q_l[i, 0]
+        v_l = q_l[i, 1]
+        p_l = q_l[i, 2]
+        mom_l = rho_l * v_l
+        rhoe_l = p_l / (gamma - 1.0)
+        ener_l = rhoe_l + 0.5 * rho_l * v_l**2
         
-        # Solve Riemann problem (HLLC)
-        # Note: riemann_cgf here is actually HLLC implementation
-        U_star = riemann_cgf(gamma, U_l, U_r)
+        # Right state
+        rho_r = q_r[i, 0]
+        v_r = q_r[i, 1]
+        p_r = q_r[i, 2]
+        mom_r = rho_r * v_r
+        rhoe_r = p_r / (gamma - 1.0)
+        ener_r = rhoe_r + 0.5 * rho_r * v_r**2
         
-        # Compute flux from star state
-        # F = [rho*v, rho*v^2 + p, (E+p)*v]
-        rho = U_star[0]
-        mom = U_star[1]
-        ener = U_star[2]
+        # HLLC Riemann Solver
+        # Wave speeds
+        cs_l = np.sqrt(gamma * p_l / rho_l)
+        cs_r = np.sqrt(gamma * p_r / rho_r)
         
-        if rho <= SMALL_RHO:
-            v = 0.0
-            p = 0.0
+        S_l = min(v_l - cs_l, v_r - cs_r)
+        S_r = max(v_l + cs_l, v_r + cs_r)
+        
+        # Flux variables
+        f_rho = 0.0
+        f_mom = 0.0
+        f_ener = 0.0
+        
+        if S_l >= 0:
+            # F_l
+            f_rho = mom_l
+            f_mom = mom_l * v_l + p_l
+            f_ener = (ener_l + p_l) * v_l
+        elif S_r <= 0:
+            # F_r
+            f_rho = mom_r
+            f_mom = mom_r * v_r + p_r
+            f_ener = (ener_r + p_r) * v_r
         else:
-            v = mom / rho
-            eint = (ener - 0.5 * rho * v**2) / rho
-            p = get_gamma_law_pressure(rho, eint, gamma)
+            # Star state
+            denom = rho_l * (S_l - v_l) - rho_r * (S_r - v_r)
+            if abs(denom) < 1e-12:
+                S_c = 0.0
+            else:
+                S_c = (p_r - p_l + rho_l * v_l * (S_l - v_l) - rho_r * v_r * (S_r - v_r)) / denom
             
-        fluxes[i, 0] = mom
-        fluxes[i, 1] = mom * v + p
-        fluxes[i, 2] = (ener + p) * v
+            if S_c >= 0:
+                # Left star state
+                factor = rho_l * (S_l - v_l) / (S_l - S_c)
+                
+                ustar_rho = factor
+                ustar_mom = factor * S_c
+                ustar_ener = factor * (ener_l/rho_l + (S_c - v_l) * (S_c + p_l/(rho_l*(S_l - v_l))))
+                
+                # F_l
+                fl_rho = mom_l
+                fl_mom = mom_l * v_l + p_l
+                fl_ener = (ener_l + p_l) * v_l
+                
+                f_rho = fl_rho + S_l * (ustar_rho - rho_l)
+                f_mom = fl_mom + S_l * (ustar_mom - mom_l)
+                f_ener = fl_ener + S_l * (ustar_ener - ener_l)
+                
+            else:
+                # Right star state
+                factor = rho_r * (S_r - v_r) / (S_r - S_c)
+                
+                ustar_rho = factor
+                ustar_mom = factor * S_c
+                ustar_ener = factor * (ener_r/rho_r + (S_c - v_r) * (S_c + p_r/(rho_r*(S_r - v_r))))
+                
+                # F_r
+                fr_rho = mom_r
+                fr_mom = mom_r * v_r + p_r
+                fr_ener = (ener_r + p_r) * v_r
+                
+                f_rho = fr_rho + S_r * (ustar_rho - rho_r)
+                f_mom = fr_mom + S_r * (ustar_mom - mom_r)
+                f_ener = fr_ener + S_r * (ustar_ener - ener_r)
+        
+        fluxes[i, 0] = f_rho
+        fluxes[i, 1] = f_mom
+        fluxes[i, 2] = f_ener
         
     return fluxes
 
@@ -346,12 +393,16 @@ def _get_dt_jit(U, gamma, dx, cfl):
     return dt
 
 @njit(cache=True)
-def _step_jit(U, r, r_int, dx, dt, gamma, U_bc):
+def _step_jit(U, r, r_int, dx, dt, gamma, U_bc, 
+              U_padded, r_padded, dx_padded, geom_factor,
+              A, V,
+              q, dq, q_int_l, q_int_r, 
+              fluxes, flux_div, S):
     nr = U.shape[0]
     ng = 2
     
     # 1. Boundary Conditions (Ghost cells)
-    U_padded = np.zeros((nr + 2*ng, 3))
+    # U_padded is pre-allocated
     U_padded[ng:-ng] = U
     
     # Inner BC
@@ -363,34 +414,25 @@ def _step_jit(U, r, r_int, dx, dt, gamma, U_bc):
         U_padded[-1-i] = U_padded[-1-ng]
         
     # 2. Reconstruction
-    # Geometry factor for spherical: 2/r
-    r_padded = np.zeros(nr + 2*ng)
-    r_padded[ng:-ng] = r
-    dr_inner = r[1] - r[0]
-    for i in range(ng):
-        r_padded[ng-1-i] = r[0] - (i+1)*dr_inner
-        r_padded[-ng+i] = r[-1] + (i+1)*dr_inner
-        
-    geom_factor = 2.0 / r_padded
-    dx_padded = np.zeros(nr + 2*ng)
-    dx_mean = np.mean(dx)
-    dx_padded[:] = dx_mean
+    # r_padded, geom_factor, dx_padded are pre-computed and passed in
     
-    q_int_l, q_int_r = reconstruct_states(U_padded, gamma, dx_padded, dt, geom_factor)
+    # Pass scratch arrays to reconstruct_states
+    reconstruct_states(U_padded, gamma, dx_padded, dt, geom_factor, q, dq, q_int_l, q_int_r)
     
     # 3. Riemann Solver
     # Interfaces ng to ng+nr
-    fluxes = solve_riemann_fluxes(q_int_l[ng:ng+nr+1], q_int_r[ng:ng+nr+1], gamma)
+    # Pass scratch arrays to solve_riemann_fluxes
+    solve_riemann_fluxes(q_int_l[ng:ng+nr+1], q_int_r[ng:ng+nr+1], gamma, fluxes)
     
     # 4. Update
-    A = r_int**2
-    V = 1.0/3.0 * (r_int[1:]**3 - r_int[:-1]**3)
+    # A and V are pre-computed and passed in
     
-    flux_div = np.zeros((nr, 3))
+    # flux_div is pre-allocated
     for i in range(nr):
         flux_div[i] = (A[i+1] * fluxes[i+1] - A[i] * fluxes[i]) / V[i]
         
-    S = np.zeros((nr, 3))
+    # S is pre-allocated
+    S[:] = 0.0 # Reset S
     for i in range(nr):
         rho = max(U[i, 0], SMALL_RHO)
         v = U[i, 1] / rho
@@ -433,6 +475,42 @@ class CGFSolver:
         self.M_sun = 1.989e33 # g
         self.grav = -self.G * self.M_sun # Negative for inward gravity
         
+        # Scratch arrays for JIT
+        ng = 2
+        n_padded = self.nr + 2*ng
+        self.U_padded = np.zeros((n_padded, 3))
+        
+        # Pre-compute static geometry arrays
+        self.r_padded = np.zeros(n_padded)
+        self.r_padded[ng:-ng] = self.r
+        dr_inner = self.r[1] - self.r[0]
+        for i in range(ng):
+            self.r_padded[ng-1-i] = self.r[0] - (i+1)*dr_inner
+            self.r_padded[-ng+i] = self.r[-1] + (i+1)*dr_inner
+            
+        self.geom_factor = 2.0 / self.r_padded
+        
+        self.dx_padded = np.zeros(n_padded)
+        dx_mean = np.mean(self.dx)
+        self.dx_padded[:] = dx_mean
+        
+        # Pre-compute volume terms
+        self.A = self.r_int**2
+        self.V = 1.0/3.0 * (self.r_int[1:]**3 - self.r_int[:-1]**3)
+        
+        # For reconstruct_states
+        self.q_scratch = np.zeros((n_padded, 3))
+        self.dq_scratch = np.zeros((n_padded, 3))
+        self.q_int_l_scratch = np.zeros((n_padded + 1, 3))
+        self.q_int_r_scratch = np.zeros((n_padded + 1, 3))
+        
+        # For solve_riemann_fluxes (called with slice of size nr + 1)
+        self.fluxes_scratch = np.zeros((self.nr + 1, 3))
+        
+        # For _step_jit
+        self.flux_div_scratch = np.zeros((self.nr, 3))
+        self.S_scratch = np.zeros((self.nr, 3))
+        
     def set_initial_conditions(self, rho, v, T):
         """
         Set initial conditions from primitive variables.
@@ -462,7 +540,11 @@ class CGFSolver:
         q_bc = np.array([rho_bc, v_bc, p_bc])
         U_bc = prim_to_cons(q_bc, self.gamma)
         
-        self.U = _step_jit(self.U, self.r, self.r_int, self.dx, dt, self.gamma, U_bc)
+        self.U = _step_jit(self.U, self.r, self.r_int, self.dx, dt, self.gamma, U_bc,
+                           self.U_padded, self.r_padded, self.dx_padded, self.geom_factor,
+                           self.A, self.V,
+                           self.q_scratch, self.dq_scratch, self.q_int_l_scratch, self.q_int_r_scratch,
+                           self.fluxes_scratch, self.flux_div_scratch, self.S_scratch)
         self.time += dt
         
         return self.U
