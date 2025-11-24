@@ -108,7 +108,7 @@ t_interest = 2.01*u.day
 model_incomp = H.HUXt(v_boundary=vr_in, b_boundary=br_in, #lon_start=350*u.deg, lon_stop = 10*u.deg, 
                       #lon_out=0.0*u.rad,
                       simtime=simtime, dt_scale=4, 
-                    compressible=False, solver ='upwind')
+                    solver ='upwind')
 model_incomp.solve(cme_list)#, streak_carr=lon_grid)
 #model_incomp.solve([])
 HA.plot_earth_timeseries(model_incomp, plot_omni=False)
@@ -118,7 +118,7 @@ HA.plot(model_incomp, time=t_interest)
 model_comp_cgf = H.HUXt(v_boundary=vr_in, b_boundary=br_in,#lon_start=350*u.deg, lon_stop = 10*u.deg,
                         #lon_out=0.0*u.rad,
                         simtime=simtime, dt_scale=4, 
-                    compressible=True, solver ='cgf')
+                    solver ='cgf')
 model_comp_cgf.solve(cme_list)#, streak_carr=lon_grid)
 #model_comp_cgf.solve([])
 HA.plot_earth_timeseries(model_comp_cgf, plot_omni=False)
