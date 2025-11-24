@@ -1615,9 +1615,7 @@ class HUXt:
                             for t in range(1, len(b_input)):
                                 if b_input[t] - b_input[t-1] != 0:  # Polarity change
                                     t_hcs = self.model_time[t].value if hasattr(self.model_time[t], 'value') else self.model_time[t]
-                                    # Only inject HCS particles during simulation period (t >= 0)
-                                    if t_hcs >= 0:
-                                        hcs_times.append(t_hcs)
+                                    hcs_times.append(t_hcs)
 
                             if len(hcs_times) > 0:
                                 num_particles['hcs'] = len(hcs_times)
