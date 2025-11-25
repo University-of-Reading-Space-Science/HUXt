@@ -60,7 +60,7 @@ dirs = H._setup_dirs_()
 print(dirs)
 
 
-simtime = 6*u.day
+simtime = 1.1*u.day
 # Set up HUXt
 #cr=1920
 #vr_in = np.ones(128)*400*u.km/u.s #Hin.get_MAS_long_profile(cr, 0.0*u.deg)
@@ -102,14 +102,14 @@ lon_grid = np.arange(dlon/2, 2*np.pi-dlon/2 + 0.0001, dlon)*u.rad
 # model_comp.solve(cme_list, streak_carr=lon_grid)
 # HA.plot_earth_timeseries(model_comp)
 
-t_interest = 2.01*u.day
+t_interest = 1*u.day
 
 
 model_incomp = H.HUXt(v_boundary=vr_in, b_boundary=br_in, #lon_start=350*u.deg, lon_stop = 10*u.deg, 
                       #lon_out=0.0*u.rad,
                       simtime=simtime, dt_scale=4, 
                     solver ='upwind')
-model_incomp.solve(cme_list)#, streak_carr=lon_grid)
+model_incomp.solve(cme_list, streak_carr=lon_grid)
 #model_incomp.solve([])
 HA.plot_earth_timeseries(model_incomp, plot_omni=False)
 ts_upwind = HA.get_observer_timeseries(model_incomp)
@@ -119,7 +119,7 @@ model_comp_cgf = H.HUXt(v_boundary=vr_in, b_boundary=br_in,#lon_start=350*u.deg,
                         #lon_out=0.0*u.rad,
                         simtime=simtime, dt_scale=4, 
                     solver ='cgf')
-model_comp_cgf.solve(cme_list)#, streak_carr=lon_grid)
+model_comp_cgf.solve(cme_list, streak_carr=lon_grid)
 #model_comp_cgf.solve([])
 HA.plot_earth_timeseries(model_comp_cgf, plot_omni=False)
 ts_cgf = HA.get_observer_timeseries(model_comp_cgf)

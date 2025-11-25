@@ -1269,8 +1269,9 @@ class HUXt:
                     for irot in range(n_rots):
                         streak_name = f'streak_{istreak}_rot_{irot}'
                         if streak_name in groups:
-                            r_traj = groups[streak_name]['r'][0, :]
-                            t_traj = groups[streak_name]['t'][0, :]
+                            # CGF solver returns 1D trajectory arrays (already converted in solve_radial_cgf)
+                            r_traj = groups[streak_name]['r']
+                            t_traj = groups[streak_name]['t']
                             valid_mask = ~np.isnan(r_traj)
                             if np.any(valid_mask):
                                 r_valid = r_traj[valid_mask]
@@ -2462,9 +2463,10 @@ def solve_radial_cgf(v_bc_kms, rho_bc_kgm3, T_bc_K, model_time, time_out,
             for group_name, group_data in particle_data_cgs['groups'].items():
                 # Convert positions from cm to km
                 # group_data['r'] is now a padded numpy array (from cgf_solver)
-                r_cgs = group_data['r']
-                v_cgs = group_data['v']
-                t_sec = group_data['t']
+                # Ensure they are numpy arrays (cgf_solver may return lists)
+                r_cgs = np.asarray(group_data['r'])
+                v_cgs = np.asarray(group_data['v'])
+                t_sec = np.asarray(group_data['t'])
                 
                 if r_cgs.size == 0:
                     r_km = np.array([])
@@ -2485,9 +2487,10 @@ def solve_radial_cgf(v_bc_kms, rho_bc_kgm3, T_bc_K, model_time, time_out,
                 }
         else:
             # Single group mode - convert positions to km
-            r_cgs = particle_data_cgs['r']
-            v_cgs = particle_data_cgs['v']
-            t_sec = particle_data_cgs['t']
+            # Ensure they are numpy arrays (cgf_solver may return lists)
+            r_cgs = np.asarray(particle_data_cgs['r'])
+            v_cgs = np.asarray(particle_data_cgs['v'])
+            t_sec = np.asarray(particle_data_cgs['t'])
             
             if r_cgs.size == 0:
                 r_km = np.array([])
