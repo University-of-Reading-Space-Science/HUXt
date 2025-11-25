@@ -1220,8 +1220,9 @@ class HUXt:
                     trailing_key = f'cme_{cme_id}_trailing'
                     
                     if leading_key in groups:
-                        r_traj = groups[leading_key]['r'][0, :]
-                        t_traj = groups[leading_key]['t'][0, :]
+                        # CGF solver returns 1D trajectory arrays
+                        r_traj = groups[leading_key]['r']
+                        t_traj = groups[leading_key]['t']
                         valid_mask = ~np.isnan(r_traj)
                         if np.any(valid_mask):
                             r_valid = r_traj[valid_mask]
@@ -1231,8 +1232,9 @@ class HUXt:
                             cme_particles_r_out[cme_id, :, 0] = r_out
                     
                     if trailing_key in groups:
-                        r_traj = groups[trailing_key]['r'][0, :]
-                        t_traj = groups[trailing_key]['t'][0, :]
+                        # CGF solver returns 1D trajectory arrays
+                        r_traj = groups[trailing_key]['r']
+                        t_traj = groups[trailing_key]['t']
                         valid_mask = ~np.isnan(r_traj)
                         if np.any(valid_mask):
                             r_valid = r_traj[valid_mask]
@@ -1242,26 +1244,27 @@ class HUXt:
                             cme_particles_r_out[cme_id, :, 1] = r_out
             
             # Process HCS particles
-            if self.track_b and 'hcs' in groups:
-                hcs_group = groups['hcs']
-                n_hcs_this_lon = hcs_group['n_particles']
-                
-                for ihcs in range(min(n_hcs_this_lon, n_hcs_max)):
-                    r_traj = hcs_group['r'][ihcs, :]
-                    t_traj = hcs_group['t'][ihcs, :]
-                    valid_mask = ~np.isnan(r_traj)
-                    if np.any(valid_mask):
-                        r_valid = r_traj[valid_mask]
-                        t_valid = t_traj[valid_mask]
-                        r_out = np.interp(time_out_sec, t_valid, r_valid,
-                                         left=np.nan, right=np.nan)
-                        hcs_particles_r_out[ihcs, :, 0] = r_out
-                        
-                        # Store polarity sign in second component
-                        if ihcs < len(hcs_polarities):
-                            hcs_particles_r_out[ihcs, :, 1] = hcs_polarities[ihcs]
-                        else:
-                            hcs_particles_r_out[ihcs, :, 1] = np.nan
+            if self.track_b:
+                # For HCS, CGF solver stores each particle separately as hcs_X
+                for ihcs in range(n_hcs_max):
+                    hcs_key = f'hcs_{ihcs}'
+                    if hcs_key in groups:
+                        # CGF solver returns 1D trajectory arrays
+                        r_traj = groups[hcs_key]['r']
+                        t_traj = groups[hcs_key]['t']
+                        valid_mask = ~np.isnan(r_traj)
+                        if np.any(valid_mask):
+                            r_valid = r_traj[valid_mask]
+                            t_valid = t_traj[valid_mask]
+                            r_out = np.interp(time_out_sec, t_valid, r_valid,
+                                             left=np.nan, right=np.nan)
+                            hcs_particles_r_out[ihcs, :, 0] = r_out
+                            
+                            # Store polarity sign in second component
+                            if ihcs < len(hcs_polarities):
+                                hcs_particles_r_out[ihcs, :, 1] = hcs_polarities[ihcs]
+                            else:
+                                hcs_particles_r_out[ihcs, :, 1] = np.nan
             
             # Process streakline particles
             if self.track_streak:
@@ -3449,7 +3452,6 @@ def load_HUXt_run(filepath):
             'frame': frame,
             'track_cmes': track_cmes,
             'accel_limit': accel_limit,
-            'compressible': compressible,
             'solver': solver
         }
         
@@ -3457,8 +3459,12 @@ def load_HUXt_run(filepath):
             constructor_kwargs['b_boundary'] = b_boundary
             
         if compressible:
-            constructor_kwargs['rho_boundary'] = rho_boundary
-            constructor_kwargs['temp_boundary'] = temp_boundary
+            # Note: compressible boundaries are provided but model doesn't have compressible flag
+            # They will be handled after model creation
+            if 'rho_boundary' in locals():
+                constructor_kwargs['rho_boundary'] = rho_boundary
+            if 'temp_boundary' in locals():
+                constructor_kwargs['temp_boundary'] = temp_boundary
         
         if nlon == 1:
             constructor_kwargs['lon_out'] = lon
