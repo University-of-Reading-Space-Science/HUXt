@@ -1245,13 +1245,22 @@ class HUXt:
             
             # Process HCS particles
             if self.track_b:
-                # For HCS, CGF solver stores each particle separately as hcs_X
-                for ihcs in range(n_hcs_max):
-                    hcs_key = f'hcs_{ihcs}'
-                    if hcs_key in groups:
-                        # CGF solver returns 1D trajectory arrays
-                        r_traj = groups[hcs_key]['r']
-                        t_traj = groups[hcs_key]['t']
+                # Try both storage formats: single 'hcs' group or individual 'hcs_X' groups
+                if 'hcs' in groups:
+                    # Original format: single 'hcs' group with 2D arrays
+                    hcs_group = groups['hcs']
+                    n_hcs_this_lon = hcs_group['n_particles']
+                    
+                    for ihcs in range(min(n_hcs_this_lon, n_hcs_max)):
+                        # Try 2D indexing first (built-in solver format)
+                        try:
+                            r_traj = hcs_group['r'][ihcs, :]
+                            t_traj = hcs_group['t'][ihcs, :]
+                        except (IndexError, TypeError):
+                            # If 2D indexing fails, try 1D (CGF solver format)
+                            r_traj = hcs_group['r']
+                            t_traj = hcs_group['t']
+                        
                         valid_mask = ~np.isnan(r_traj)
                         if np.any(valid_mask):
                             r_valid = r_traj[valid_mask]
@@ -1265,6 +1274,27 @@ class HUXt:
                                 hcs_particles_r_out[ihcs, :, 1] = hcs_polarities[ihcs]
                             else:
                                 hcs_particles_r_out[ihcs, :, 1] = np.nan
+                else:
+                    # New format: individual 'hcs_X' groups (CGF solver)
+                    for ihcs in range(n_hcs_max):
+                        hcs_key = f'hcs_{ihcs}'
+                        if hcs_key in groups:
+                            # CGF solver returns 1D trajectory arrays
+                            r_traj = groups[hcs_key]['r']
+                            t_traj = groups[hcs_key]['t']
+                            valid_mask = ~np.isnan(r_traj)
+                            if np.any(valid_mask):
+                                r_valid = r_traj[valid_mask]
+                                t_valid = t_traj[valid_mask]
+                                r_out = np.interp(time_out_sec, t_valid, r_valid,
+                                                 left=np.nan, right=np.nan)
+                                hcs_particles_r_out[ihcs, :, 0] = r_out
+                                
+                                # Store polarity sign in second component
+                                if ihcs < len(hcs_polarities):
+                                    hcs_particles_r_out[ihcs, :, 1] = hcs_polarities[ihcs]
+                                else:
+                                    hcs_particles_r_out[ihcs, :, 1] = np.nan
             
             # Process streakline particles
             if self.track_streak:
