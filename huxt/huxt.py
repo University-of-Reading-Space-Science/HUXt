@@ -13,8 +13,8 @@ import numpy as np
 from numba import jit
 from pathlib import Path
 from sunpy.coordinates import sun
-from huxt.cgf_solver import CGFSolver
-from huxt.cgf_solver import CGFSolver
+from huxt.cgf_solver import CGFSolver  # HLLC solver (kept as CGFSolver for backward compat)
+from huxt.compressible_solvers import CompressibleSolver, create_solver as create_compressible_solver
 
 
 def _check_pluto_availability():
@@ -640,8 +640,12 @@ class HUXt:
             accel_limit: Boolean flag to determine if acceleration is switched for speeds above 650 km/s
             solver: String specifying the numerical solver to use. Options:
                    'upwind' (default): First-order upwind scheme (Godunov-type, incompressible)
-                   'cgf': Colella-Glaz-Ferguson solver (compressible)
+                   'hllc': HLLC Riemann solver with PLM reconstruction (compressible) [recommended]
+                   'hll': HLL Riemann solver with PLM reconstruction (compressible, faster)
+                   'roe': Roe Riemann solver with PLM reconstruction (compressible, most accurate)
+                   'rusanov': Rusanov/Lax-Friedrichs solver with PLM reconstruction (compressible, most robust)
                    'pluto': PLUTO spherical hydrodynamics solver (HLL+RK3, compressible)
+                   'cgf': Alias for 'hllc' (legacy name, kept for backward compatibility)
             parallel: Boolean flag to enable parallel computation across longitude slices (default True).
                      Uses joblib threading backend for parallelization. Set to False for debugging
                      or if running on a single-core system.
@@ -664,7 +668,12 @@ class HUXt:
         self.__version__ = get_version()
         
         # Validate and store solver choice
-        valid_solvers = ['upwind', 'cgf', 'pluto']
+        # Map legacy 'cgf' to 'hllc'
+        if solver == 'cgf':
+            solver = 'hllc'
+            print("[Note] 'cgf' solver renamed to 'hllc' - using HLLC Riemann solver")
+        
+        valid_solvers = ['upwind', 'hllc', 'hll', 'roe', 'rusanov', 'pluto']
         if solver not in valid_solvers:
             raise ValueError(f"Invalid solver '{solver}'. Must be one of: {valid_solvers}")
         
@@ -676,15 +685,17 @@ class HUXt:
             else:
                 print(f"✓ {pluto_msg}")
         
-        # Check CGF solver availability if CGF solver is requested
-        if solver == 'cgf':
-            print("[OK] CGF solver (HUXt-native) available")
+        # Check compressible solver availability
+        compressible_solvers = ['hllc', 'hll', 'roe', 'rusanov']
+        if solver in compressible_solvers:
+            riemann_names = {'hllc': 'HLLC', 'hll': 'HLL', 'roe': 'Roe', 'rusanov': 'Rusanov'}
+            print(f"[OK] {riemann_names[solver]} Riemann solver (HUXt-native) available")
         
         self.solver = solver
         
         # Auto-determine compressible mode based on solver choice
-        # upwind is incompressible, cgf and pluto are compressible
-        compressible = solver in ['cgf', 'pluto']
+        # upwind is incompressible, all others are compressible
+        compressible = solver in compressible_solvers + ['pluto']
         
         # Store parallel computation flag
         self.parallel = parallel
@@ -1018,7 +1029,7 @@ class HUXt:
         """
         Process a single longitude slice in the HUXt simulation.
         This helper function is used for parallel execution across longitudes.
-        Routes to the appropriate solver (solve_radial for upwind/pluto, solve_radial_cgf for cgf).
+        Routes to the appropriate solver based on self.solver setting.
         
         Args:
             i: Longitude index to process
@@ -1029,9 +1040,12 @@ class HUXt:
         Returns:
             Tuple of (i, v, cme_r_bounds, cme_v_bounds, hcs_r, streak_r, rho_out, temp_out)
         """
-        if self.solver == 'cgf':
-            # CGF solver uses solve_radial_cgf with particle tracking
-            return self._process_longitude_cgf(i, n_cme, n_hcs_max, streak_times)
+        # Compressible Riemann solvers: hllc, hll, roe, rusanov
+        compressible_riemann_solvers = ['hllc', 'hll', 'roe', 'rusanov']
+        
+        if self.solver in compressible_riemann_solvers:
+            # Use solve_radial_compressible with selected Riemann solver
+            return self._process_longitude_compressible(i, n_cme, n_hcs_max, streak_times)
         else:
             # Upwind and PLUTO solvers use solve_radial
             return self._process_longitude_builtin(i, n_cme, n_hcs_max, streak_times)
@@ -1079,9 +1093,11 @@ class HUXt:
         
         return (i, v, cme_r_bounds, cme_v_bounds, hcs_r, streak_r, rho_out, temp_out)
     
-    def _process_longitude_cgf(self, i, n_cme, n_hcs_max, streak_times):
+    def _process_longitude_compressible(self, i, n_cme, n_hcs_max, streak_times):
         """
-        Process a longitude using solve_radial_cgf (CGF solver).
+        Process a longitude using the compressible solver with selected Riemann solver.
+        
+        Uses self.solver to determine which Riemann solver to use (hllc, hll, roe, rusanov).
         
         Args:
             i: Longitude index to process
@@ -1092,7 +1108,7 @@ class HUXt:
         Returns:
             Tuple of (i, v, cme_r_bounds, cme_v_bounds, hcs_r, streak_r, rho_out, temp_out)
         """
-        # Compute radial grid in km for CGF solver
+        # Compute radial grid in km for compressible solver
         rgrid_km = (self.rrel.value - self.rrel.value[0]) * 695700.0 + self.r[0].to('km').value
         # Get boundary conditions for this longitude
         v_bc_kms = self.input_v_ts[:, i].value  # km/s
@@ -1173,12 +1189,12 @@ class HUXt:
                 num_particles = 0
                 particle_injection_rate = None
         
-        # Call consolidated CGF solver function with particle tracking
-        # Strip units from time arrays for CGF solver
+        # Call compressible solver function with selected Riemann solver and particle tracking
+        # Strip units from time arrays for solver
         model_time_sec = self.model_time.value if hasattr(self.model_time, 'value') else self.model_time
         time_out_sec = self.time_out.value if hasattr(self.time_out, 'value') else self.time_out
         
-        v_out_kms, rho_out_kgm3, temp_out_K, particle_data = solve_radial_cgf(
+        v_out_kms, rho_out_kgm3, temp_out_K, particle_data = solve_radial_compressible(
             v_bc_kms=v_bc_kms,
             rho_bc_kgm3=rho_bc_kgm3,
             T_bc_K=T_bc_K,
@@ -1188,6 +1204,7 @@ class HUXt:
             gamma=self.gamma,
             nt_out=self.nt_out,
             nr=self.nr,
+            riemann=self.solver,  # Pass the Riemann solver choice
             verbose=False,  # Suppress detailed solver output in parallel mode
             num_particles=num_particles,
             particle_injection_rate=particle_injection_rate
@@ -1195,7 +1212,7 @@ class HUXt:
         
         # Extract particle positions at output times
         cme_particles_r_out = np.full((n_cme, self.nt_out, 2), np.nan)
-        cme_particles_v_out = np.full((n_cme, self.nt_out, 2), np.nan)  # CGF doesn't track velocity, fill with NaN
+        cme_particles_v_out = np.full((n_cme, self.nt_out, 2), np.nan)  # Compressible solver doesn't track velocity, fill with NaN
         hcs_particles_r_out = np.full((n_hcs_max, self.nt_out, 2), np.nan)
         
         # Initialize streakline array
@@ -1220,7 +1237,7 @@ class HUXt:
                     trailing_key = f'cme_{cme_id}_trailing'
                     
                     if leading_key in groups:
-                        # CGF solver returns 1D trajectory arrays
+                        # Compressible solver returns 1D trajectory arrays
                         r_traj = groups[leading_key]['r']
                         t_traj = groups[leading_key]['t']
                         valid_mask = ~np.isnan(r_traj)
@@ -1232,7 +1249,7 @@ class HUXt:
                             cme_particles_r_out[cme_id, :, 0] = r_out
                     
                     if trailing_key in groups:
-                        # CGF solver returns 1D trajectory arrays
+                        # Compressible solver returns 1D trajectory arrays
                         r_traj = groups[trailing_key]['r']
                         t_traj = groups[trailing_key]['t']
                         valid_mask = ~np.isnan(r_traj)
@@ -1257,7 +1274,7 @@ class HUXt:
                             r_traj = hcs_group['r'][ihcs, :]
                             t_traj = hcs_group['t'][ihcs, :]
                         except (IndexError, TypeError):
-                            # If 2D indexing fails, try 1D (CGF solver format)
+                            # If 2D indexing fails, try 1D (compressible solver format)
                             r_traj = hcs_group['r']
                             t_traj = hcs_group['t']
                         
@@ -1275,11 +1292,11 @@ class HUXt:
                             else:
                                 hcs_particles_r_out[ihcs, :, 1] = np.nan
                 else:
-                    # New format: individual 'hcs_X' groups (CGF solver)
+                    # New format: individual 'hcs_X' groups (compressible solver)
                     for ihcs in range(n_hcs_max):
                         hcs_key = f'hcs_{ihcs}'
                         if hcs_key in groups:
-                            # CGF solver returns 1D trajectory arrays
+                            # Compressible solver returns 1D trajectory arrays
                             r_traj = groups[hcs_key]['r']
                             t_traj = groups[hcs_key]['t']
                             valid_mask = ~np.isnan(r_traj)
@@ -1302,7 +1319,7 @@ class HUXt:
                     for irot in range(n_rots):
                         streak_name = f'streak_{istreak}_rot_{irot}'
                         if streak_name in groups:
-                            # CGF solver returns 1D trajectory arrays (already converted in solve_radial_cgf)
+                            # Compressible solver returns 1D trajectory arrays (already converted in solve_radial_compressible)
                             r_traj = groups[streak_name]['r']
                             t_traj = groups[streak_name]['t']
                             valid_mask = ~np.isnan(r_traj)
@@ -1571,13 +1588,15 @@ class HUXt:
         # ======================================================================
         # Print solver information
         # ======================================================================
-        if self.solver == 'cgf':
+        compressible_riemann_solvers = ['hllc', 'hll', 'roe', 'rusanov']
+        if self.solver in compressible_riemann_solvers:
             import time
             solve_start = time.time()
             
             print("\n" + "="*70)
-            print("USING CGF SOLVER")
+            print(f"USING COMPRESSIBLE SOLVER: {self.solver.upper()}")
             print("="*70)
+            print(f"Riemann solver: {self.solver}")
             print(f"Frame: {self.frame}")
             print(f"Parallel: {self.parallel}")
             print(f"v_boundary: {len(self.v_boundary)} longitudes, range [{self.v_boundary.value.min():.1f}, {self.v_boundary.value.max():.1f}] km/s")
@@ -1585,7 +1604,7 @@ class HUXt:
                 print(f"  ** Spatial structure detected in v_boundary **")
             
             if self.parallel:
-                print(f"\n⚠ WARNING: Parallel execution for CGF solver is typically SLOWER than serial")
+                print(f"\n⚠ WARNING: Parallel execution for compressible solver is typically SLOWER than serial")
                 print(f"  Recommended: Set parallel=False for better performance")
             print("="*70 + "\n")
         
@@ -1693,11 +1712,11 @@ class HUXt:
                 raise RuntimeError(f"PLUTO solver failed: {str(e)}") from e
         
         # ======================================================================
-        # Solve the time series at each longitude (UPWIND and CGF SOLVERS)
+        # Solve the time series at each longitude (UPWIND and COMPRESSIBLE SOLVERS)
         # ======================================================================
         # Note: Grids are already in Fortran order from initialization, which makes
         # the [:, :, i] slices contiguous in memory for cache-efficient access
-        # This section handles upwind and cgf solvers using unified process_longitude
+        # This section handles upwind and compressible solvers using unified process_longitude
         # PLUTO solver has its own complete loop above and skips this section
 
         if self.solver != 'pluto':
@@ -2334,7 +2353,7 @@ def zerototwopi(angles):
 
 
 # ============================================================================
-# CGF Solver Integration
+# Compressible Solver Integration
 # ============================================================================
 
 
@@ -2533,6 +2552,211 @@ def solve_radial_cgf(v_bc_kms, rho_bc_kgm3, T_bc_K, model_time, time_out,
                 r_km = r_cgs / KM_TO_CM
                 v_km = v_cgs / KM_TO_CM
                 # t_sec is already in seconds
+            
+            particle_data = {
+                'r': r_km,  # km
+                'v': v_km,  # km/s
+                't': t_sec,  # seconds
+                't_inject': particle_data_cgs['t_inject'],  # seconds
+                'active': particle_data_cgs['active'],
+            }
+    
+    return v_out_kms, rho_out_kgm3, temp_out, particle_data
+
+
+def solve_radial_compressible(v_bc_kms, rho_bc_kgm3, T_bc_K, model_time, time_out, 
+                               r_grid, gamma, nt_out, nr, riemann='hllc', verbose=False,
+                               num_particles=0, particle_injection_rate=None, solver_instance=None):
+    """
+    Solve 1D radial solar wind expansion using a compressible solver with selectable Riemann solver.
+    
+    This function wraps the CompressibleSolver class with proper unit conversions and 
+    time handling for integration with HUXt.
+    
+    Parameters
+    ----------
+    v_bc_kms : array_like
+        Time series of inner boundary velocity (km/s), shape (nt_model,)
+    rho_bc_kgm3 : array_like
+        Time series of inner boundary density (kg/m³), shape (nt_model,)
+    T_bc_K : array_like
+        Time series of inner boundary temperature (K), shape (nt_model,)
+    model_time : array_like
+        Full model time grid including spin-up (seconds), shape (nt_model,)
+    time_out : array_like
+        Output time grid (seconds), shape (nt_out,)
+    r_grid : array_like
+        Radial grid positions (km), shape (nr,)
+    gamma : float
+        Adiabatic index
+    nt_out : int
+        Number of output time steps
+    nr : int
+        Number of radial grid points
+    riemann : str, optional
+        Riemann solver to use: 'hllc', 'hll', 'roe', 'rusanov'. Default 'hllc'.
+    verbose : bool, optional
+        If True, print detailed diagnostics. Default False.
+    num_particles : int or dict, optional
+        Number of test particles to track. If 0 (default), no tracking.
+        Dict with keys 'cme_leading', 'cme_trailing', 'hcs', 'streak_*' supported.
+    particle_injection_rate : array-like or dict, optional
+        Injection times (seconds) for particles in model_time coordinates.
+        If num_particles is dict, this must also be dict with matching keys.
+    solver_instance : CompressibleSolver, optional
+        Pre-initialized solver instance to reuse. If None, a new one is created.
+    
+    Returns
+    -------
+    v_out : ndarray
+        Velocity at output times (km/s), shape (nt_out, nr)
+    rho_out : ndarray
+        Density at output times (kg/m³), shape (nt_out, nr)
+    temp_out : ndarray
+        Temperature at output times (K), shape (nt_out, nr)
+    particle_data : dict or None
+        Particle trajectory data if num_particles > 0, otherwise None.
+        Contains 'groups' dict with particle positions in km at all times
+    
+    Notes
+    -----
+    - Supports multiple Riemann solvers: HLLC, HLL, Roe, Rusanov (Lax-Friedrichs)
+    - Uses PCM (piecewise constant) reconstruction for stability
+    - Initializes with Parker nozzle solution for smooth startup
+    """
+    # Physical constants (CGS)
+    AU = 1.496e13  # cm
+    PROTON_MASS = 1.67262192e-24  # grams
+    KM_TO_CM = 1e5  # cm/km
+    
+    # Strip units from times if needed
+    model_time_seconds = model_time.value if hasattr(model_time, 'value') else model_time
+    time_out_seconds = time_out.value if hasattr(time_out, 'value') else time_out
+    
+    # Convert to CGS
+    v_bc_cgs = v_bc_kms * KM_TO_CM  # cm/s
+    rho_bc_cgs = rho_bc_kgm3 * 0.001  # kg/m³ to g/cm³
+    
+    # Convert HUXt radial grid to cm
+    r_grid_cm = r_grid * KM_TO_CM
+    
+    # Create output time grid for solver - include spin-up snapshots
+    spinup_time_seconds = time_out_seconds[0] - model_time_seconds[0]
+    n_spinup_snaps = max(5, int(spinup_time_seconds / 86400))  # At least 5, or ~1 per day
+    spinup_sampled = np.linspace(model_time_seconds[0], time_out_seconds[0], n_spinup_snaps, endpoint=False)
+    t_grid_combined = np.concatenate([spinup_sampled, time_out_seconds])
+    
+    # Boundary condition functions (MUST return plain floats, no units)
+    def v_bc_func(t):
+        return float(np.interp(t, model_time_seconds, v_bc_cgs))
+    
+    def rho_bc_func(t):
+        return float(np.interp(t, model_time_seconds, rho_bc_cgs))
+    
+    def T_bc_func(t):
+        return float(np.interp(t, model_time_seconds, T_bc_K))
+    
+    # Initialize solver with selected Riemann solver
+    # Method string format: '{riemann}-{reconstruction}' e.g. 'hllc-pcm'
+    if solver_instance is None:
+        method = f"{riemann}-pcm"  # Use PCM reconstruction for stability
+        solver = create_compressible_solver(
+            r_grid=r_grid_cm,
+            gamma=gamma,
+            method=method,
+            cfl=0.7,
+            verbose=verbose
+        )
+    else:
+        solver = solver_instance
+    
+    # Run simulation
+    results = solver.solve(
+        t_grid=t_grid_combined,
+        v_bc_func=v_bc_func,
+        rho_bc_func=rho_bc_func,
+        T_bc_func=T_bc_func,
+        num_particles=num_particles,
+        particle_injection_rate=particle_injection_rate
+    )
+    
+    # Extract output times (skip spin-up)
+    n_spinup = len(spinup_sampled)
+    
+    # Skip spin-up snapshots, extract only output times
+    v_out_cgs = results['v'][n_spinup:]
+    rho_out_cgs = results['rho'][n_spinup:]
+    temp_out_K = results['T'][n_spinup:]
+    
+    # If solver returned fewer points than expected, interpolate
+    if v_out_cgs.shape[0] != nt_out:
+        if verbose:
+            print(f"  Warning: solver returned {v_out_cgs.shape[0]} points, expected {nt_out}, interpolating...")
+        
+        v_interp = np.zeros((nt_out, nr))
+        rho_interp = np.zeros((nt_out, nr))
+        temp_interp = np.zeros((nt_out, nr))
+        
+        # Skip spin-up times to get only output times
+        solver_out_times = results['t'][n_spinup:]
+        
+        for ir in range(nr):
+            v_interp[:, ir] = np.interp(time_out_seconds, solver_out_times, v_out_cgs[:, ir])
+            rho_interp[:, ir] = np.interp(time_out_seconds, solver_out_times, rho_out_cgs[:, ir])
+            temp_interp[:, ir] = np.interp(time_out_seconds, solver_out_times, temp_out_K[:, ir])
+        
+        v_out_cgs = v_interp
+        rho_out_cgs = rho_interp
+        temp_out_K = temp_interp
+    
+    # Convert to HUXt units
+    v_out_kms = v_out_cgs / KM_TO_CM  # cm/s -> km/s
+    rho_out_kgm3 = rho_out_cgs / 0.001  # g/cm³ -> kg/m³
+    temp_out = temp_out_K  # K (no conversion)
+    
+    # Extract and convert particle data if present
+    particle_data = None
+    if 'particles' in results:
+        particle_data_cgs = results['particles']
+        
+        if isinstance(num_particles, dict):
+            # Multi-group mode - convert positions to km
+            particle_data = {'groups': {}}
+            for group_name, group_data in particle_data_cgs['groups'].items():
+                # Convert positions from cm to km
+                r_cgs = np.asarray(group_data['r'])
+                v_cgs = np.asarray(group_data['v'])
+                t_sec = np.asarray(group_data['t'])
+                
+                if r_cgs.size == 0:
+                    r_km = np.array([])
+                    v_km = np.array([])
+                    t_sec = np.array([])
+                else:
+                    r_km = r_cgs / KM_TO_CM
+                    v_km = v_cgs / KM_TO_CM
+                
+                particle_data['groups'][group_name] = {
+                    'r': r_km,  # km
+                    'v': v_km,  # km/s
+                    't': t_sec,  # seconds
+                    't_inject': group_data['t_inject'],  # seconds
+                    'active': group_data['active'],
+                    'n_particles': group_data['n_particles'],
+                }
+        else:
+            # Single group mode - convert positions to km
+            r_cgs = np.asarray(particle_data_cgs['r'])
+            v_cgs = np.asarray(particle_data_cgs['v'])
+            t_sec = np.asarray(particle_data_cgs['t'])
+            
+            if r_cgs.size == 0:
+                r_km = np.array([])
+                v_km = np.array([])
+                t_sec = np.array([])
+            else:
+                r_km = r_cgs / KM_TO_CM
+                v_km = v_cgs / KM_TO_CM
             
             particle_data = {
                 'r': r_km,  # km
