@@ -1565,10 +1565,6 @@ class HUXt:
             print(f"Riemann solver: {self.solver}")
             print(f"Frame: {self.frame}")
             print(f"Parallel: {self.parallel}")
-            print(f"v_boundary: {len(self.v_boundary)} longitudes, range [{self.v_boundary.value.min():.1f}, {self.v_boundary.value.max():.1f}] km/s")
-            if self.v_boundary.value.max() - self.v_boundary.value.min() > 1.0:
-                print(f"  ** Spatial structure detected in v_boundary **")
-            
             if self.parallel:
                 print(f"\n⚠ WARNING: Parallel execution for compressible solver is typically SLOWER than serial")
                 print(f"  Recommended: Set parallel=False for better performance")
