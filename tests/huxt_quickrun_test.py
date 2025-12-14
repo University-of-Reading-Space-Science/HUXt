@@ -1,5 +1,10 @@
+import os
+os.environ['KMP_DUPLICATE_LIB_OK'] = 'TRUE'
+
 import numpy as np
 import astropy.units as u
+import matplotlib
+matplotlib.use('TkAgg')  # Set backend explicitly for Windows
 import matplotlib.pyplot as plt
 import datetime
 import os
@@ -8,6 +13,11 @@ import huxt.huxt as H
 import huxt.huxt_analysis as HA
 import huxt.huxt_inputs as Hin
 
+print("="*60)
+print("SCRIPT STARTED - huxt_quickrun_test.py")
+print("="*60)
+print(f"Matplotlib backend: {matplotlib.get_backend()}")
+plt.ion()  # Turn on interactive mode
 """
 # Form longitudinal boundary conditions - background wind of 400 km/s with two fast streams.
 v_boundary = np.ones(128) * 400 * (u.km/u.s)
@@ -104,27 +114,44 @@ lon_grid = np.arange(dlon/2, 2*np.pi-dlon/2 + 0.0001, dlon)*u.rad
 
 t_interest = 1*u.day
 
-
+print("\n" + "="*60)
+print("Starting incompressible model (upwind solver)...")
+print("="*60)
 model_incomp = H.HUXt(v_boundary=vr_in, b_boundary=br_in, #lon_start=350*u.deg, lon_stop = 10*u.deg, 
                       #lon_out=0.0*u.rad,
                       simtime=simtime, dt_scale=4, 
                     solver ='upwind')
+print("Model initialized. Starting solve...")
 model_incomp.solve(cme_list, streak_carr=lon_grid)
+print("Solve complete!")
 #model_incomp.solve([])
+print("Creating plot 1: Earth timeseries (incompressible)...")
 HA.plot_earth_timeseries(model_incomp, plot_omni=False)
+print(f"  -> Created figure(s). Current figures: {plt.get_fignums()}")
 ts_upwind = HA.get_observer_timeseries(model_incomp)
+print("Creating plot 2: Spatial plot (incompressible)...")
 HA.plot(model_incomp, time=t_interest)
+print(f"  -> Created figure(s). Current figures: {plt.get_fignums()}")
 
+print("\n" + "="*60)
+print("Starting compressible model (HLLC solver)...")
+print("="*60)
 model_comp_cgf = H.HUXt(v_boundary=vr_in, b_boundary=br_in,#lon_start=350*u.deg, lon_stop = 10*u.deg,
                         #lon_out=0.0*u.rad,
                         simtime=simtime, dt_scale=4, 
                     solver ='hllc')
+print("Model initialized. Starting solve...")
 model_comp_cgf.solve(cme_list, streak_carr=lon_grid)
+print("Solve complete!")
 #model_comp_cgf.solve([])
+print("Creating plot 3: Earth timeseries (compressible)...")
 HA.plot_earth_timeseries(model_comp_cgf, plot_omni=False)
+print(f"  -> Created figure(s). Current figures: {plt.get_fignums()}")
 ts_cgf = HA.get_observer_timeseries(model_comp_cgf)
 
+print("Creating plot 4: Compressible spatial plot...")
 HA.plot_compressible(model_comp_cgf, time=t_interest)
+print(f"  -> Created figure(s). Current figures: {plt.get_fignums()}")
 
 # model_comp_pluto = H.HUXt(cr_num=cr,
 #                         v_boundary=vr_in, #lon_start=350*u.deg, lon_stop = 10*u.deg,
@@ -139,9 +166,13 @@ HA.plot_compressible(model_comp_cgf, time=t_interest)
 
 
 
-# Use block=True to ensure plot windows stay open until closed by user
+# Display all plots
+print(f"\nTotal figures created: {len(plt.get_fignums())}")
+print("Figure numbers:", plt.get_fignums())
+print("\nAttempting to display plots...")
 plt.show(block=True)
-
+print("\nPlots displayed. Press Enter to close all plots and exit...")
+input()
 
 #HA.plot(model_incomp, t_interest)
 #HA.animate(model_incomp, tag =  'incompressible_with_CME')

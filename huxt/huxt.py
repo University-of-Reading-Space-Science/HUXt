@@ -13,33 +13,9 @@ import numpy as np
 from numba import jit
 from pathlib import Path
 from sunpy.coordinates import sun
-from huxt.cgf_solver import CGFSolver  # HLLC solver (kept as CGFSolver for backward compat)
 from huxt.compressible_solvers import CompressibleSolver, create_solver as create_compressible_solver
 
 
-def _check_pluto_availability():
-    """
-    Check if PLUTO is available on the system.
-    
-    Returns:
-        tuple: (bool, str) - (is_available, message)
-    """
-    pluto_exe = shutil.which('pluto')
-    if pluto_exe:
-        return True, f"PLUTO found at {pluto_exe}"
-    
-    pluto_dir = os.environ.get('PLUTO_DIR')
-    if pluto_dir:
-        pluto_exe_path = os.path.join(pluto_dir, 'Bin', 'pluto')
-        if os.path.exists(pluto_exe_path) or os.path.exists(pluto_exe_path + '.exe'):
-            return True, f"PLUTO found at {pluto_exe_path}"
-        else:
-            return False, f"PLUTO_DIR set to {pluto_dir}, but executable not found in Bin/ directory"
-    
-    return False, ("PLUTO not found on system. To use PLUTO solvers:\n"
-                   "  1. Download and build PLUTO from http://plutocode.ph.unito.it/\n"
-                   "  2. Set PLUTO_DIR environment variable to PLUTO installation directory\n"
-                   "  3. See PLUTO_SETUP.md for detailed instructions")
 
 
 class Observer:
@@ -644,8 +620,6 @@ class HUXt:
                    'hll': HLL Riemann solver with PLM reconstruction (compressible, faster)
                    'roe': Roe Riemann solver with PLM reconstruction (compressible, most accurate)
                    'rusanov': Rusanov/Lax-Friedrichs solver with PLM reconstruction (compressible, most robust)
-                   'pluto': PLUTO spherical hydrodynamics solver (HLL+RK3, compressible)
-                   'cgf': Alias for 'hllc' (legacy name, kept for backward compatibility)
             parallel: Boolean flag to enable parallel computation across longitude slices (default True).
                      Uses joblib threading backend for parallelization. Set to False for debugging
                      or if running on a single-core system.
@@ -673,17 +647,9 @@ class HUXt:
             solver = 'hllc'
             print("[Note] 'cgf' solver renamed to 'hllc' - using HLLC Riemann solver")
         
-        valid_solvers = ['upwind', 'hllc', 'hll', 'roe', 'rusanov', 'pluto']
+        valid_solvers = ['upwind', 'hllc', 'hll', 'roe', 'rusanov']
         if solver not in valid_solvers:
             raise ValueError(f"Invalid solver '{solver}'. Must be one of: {valid_solvers}")
-        
-        # Check PLUTO availability if PLUTO solver is requested
-        if solver == 'pluto':
-            pluto_available, pluto_msg = _check_pluto_availability()
-            if not pluto_available:
-                raise RuntimeError(f"PLUTO solver requested but not available.\n{pluto_msg}")
-            else:
-                print(f"✓ {pluto_msg}")
         
         # Check compressible solver availability
         compressible_solvers = ['hllc', 'hll', 'roe', 'rusanov']
@@ -695,7 +661,7 @@ class HUXt:
         
         # Auto-determine compressible mode based on solver choice
         # upwind is incompressible, all others are compressible
-        compressible = solver in compressible_solvers + ['pluto']
+        compressible = solver in compressible_solvers
         
         # Store parallel computation flag
         self.parallel = parallel
@@ -1047,12 +1013,12 @@ class HUXt:
             # Use solve_radial_compressible with selected Riemann solver
             return self._process_longitude_compressible(i, n_cme, n_hcs_max, streak_times)
         else:
-            # Upwind and PLUTO solvers use solve_radial
+            # Upwind solver uses solve_radial
             return self._process_longitude_builtin(i, n_cme, n_hcs_max, streak_times)
     
     def _process_longitude_builtin(self, i, n_cme, n_hcs_max, streak_times):
         """
-        Process a longitude using the built-in solve_radial (upwind/pluto solvers).
+        Process a longitude using the built-in solve_radial (upwind solver).
         
         Args:
             i: Longitude index to process
@@ -1609,117 +1575,16 @@ class HUXt:
             print("="*70 + "\n")
         
         # ======================================================================
-        # PLUTO SOLVER PATH (separate execution - does not use unified loop)
-        # ======================================================================
-        if self.solver == 'pluto':
-            import time
-            
-            try:
-                print("\n" + "="*70)
-                print("USING PLUTO 1D HYDRODYNAMICS SOLVER")
-                print("="*70)
-                print(f"PLUTO directory: {os.getenv('PLUTO_DIR', 'Not set')}")
-                print(f"Solving {self.lon.size} longitudes serially...")
-                print("="*70 + "\n")
-                
-                solve_start = time.time()
-                
-                # PLUTO solver always runs serially (each longitude is independent)
-                for i in range(self.lon.size):
-                    lon_start = time.time()
-                    if self.lon.size == 1:
-                        lon_deg = self.lon.value
-                    else:
-                        lon_deg = self.lon[i].value
-                    print(f"\nProcessing longitude {i+1}/{self.lon.size} ({lon_deg:.2f} degrees)...")
-                    
-                    # Get boundary conditions for this longitude
-                    # Handle both multi-longitude and single-longitude cases
-                    if self.lon.size == 1:
-                        # Single longitude case - input_v_ts might be (time,) or (time, 1)
-                        if len(self.input_v_ts.shape) == 1:
-                            v_bc_kms = self.input_v_ts.to(u.km / u.s).value
-                            rho_bc_kgm3 = self.input_rho_ts.to(u.kg / u.m**3).value
-                            T_bc_K = self.input_temp_ts.to(u.K).value
-                        else:
-                            v_bc_kms = self.input_v_ts[:, i].to(u.km / u.s).value
-                            rho_bc_kgm3 = self.input_rho_ts[:, i].to(u.kg / u.m**3).value
-                            T_bc_K = self.input_temp_ts[:, i].to(u.K).value
-                    else:
-                        # Multiple longitudes
-                        v_bc_kms = self.input_v_ts[:, i].to(u.km / u.s).value
-                        rho_bc_kgm3 = self.input_rho_ts[:, i].to(u.kg / u.m**3).value
-                        T_bc_K = self.input_temp_ts[:, i].to(u.K).value
-                    
-                    # Debug: Check if BC contains CME data
-                    print(f"  BC velocity range: {v_bc_kms.min():.1f} - {v_bc_kms.max():.1f} km/s")
-                    print(f"  BC density range: {rho_bc_kgm3.min():.2e} - {rho_bc_kgm3.max():.2e} kg/m³")
-                    print(f"  Number of CMEs in model: {len(self.cmes)}")
-                    
-                    # Call solve_radial_pluto
-                    # Strip units from time arrays
-                    model_time_sec = self.model_time.value if hasattr(self.model_time, 'value') else self.model_time
-                    time_out_sec = self.time_out.value if hasattr(self.time_out, 'value') else self.time_out
-                    
-                    # Convert HUXt radial grid to km
-                    rgrid_km = (self.rrel.value - self.rrel.value[0]) * 695700.0 + self.r[0].to('km').value
-                    
-                    v_out_kms, rho_out_kgm3, temp_out_K, particle_data = solve_radial_pluto(
-                        v_bc_kms=v_bc_kms,
-                        rho_bc_kgm3=rho_bc_kgm3,
-                        T_bc_K=T_bc_K,
-                        model_time=model_time_sec,
-                        time_out=time_out_sec,
-                        r_grid=rgrid_km,
-                        gamma=self.gamma,
-                        nt_out=self.nt_out,
-                        nr=self.nr,
-                        verbose=False,
-                        num_particles=0,  # Not implemented for PLUTO yet
-                        particle_injection_rate=None
-                    )
-
-                    # Store results in HUXt grids with units
-                    self.v_grid[:, :, i] = v_out_kms * self.kms
-                    self.rho_grid[:, :, i] = rho_out_kgm3 * (u.kg / u.m**3)
-                    self.temp_grid[:, :, i] = temp_out_K * u.K
-            
-                solve_time = time.time() - solve_start
-                print("\n" + "="*70)
-                print("PLUTO SOLVER COMPLETE")
-                print("="*70)
-                print(f"Total time: {solve_time:.2f} seconds ({solve_time/60:.2f} minutes)")
-                print(f"Time per longitude: {solve_time/self.lon.size:.2f} seconds")
-                print("="*70)
-                print("\nNOTE: Particle tracking not yet implemented for PLUTO solver")
-                print("      (particle positions set to NaN)")
-                print("="*70 + "\n")
-                    
-            except Exception as e:
-                print("\n" + "="*70)
-                print("ERROR IN PLUTO SOLVER")
-                print("="*70)
-                print(f"Error type: {type(e).__name__}")
-                print(f"Error message: {str(e)}")
-                print("="*70)
-                print("\nPossible issues:")
-                print("1. PLUTO executable not found - check PLUTO_DIR environment variable")
-                print("2. PLUTO was not built correctly - see PLUTO_SETUP.md for build instructions")
-                print("3. Input parameters are invalid or out of physical range")
-                print("4. Disk space or memory issues")
-                print("\nFor more help, see PLUTO_SETUP.md")
-                print("="*70)
-                raise RuntimeError(f"PLUTO solver failed: {str(e)}") from e
-        
-        # ======================================================================
         # Solve the time series at each longitude (UPWIND and COMPRESSIBLE SOLVERS)
+        # ======================================================================
+        # ======================================================================
+        # Solve the time series at each longitude (ALL SOLVERS)
         # ======================================================================
         # Note: Grids are already in Fortran order from initialization, which makes
         # the [:, :, i] slices contiguous in memory for cache-efficient access
-        # This section handles upwind and compressible solvers using unified process_longitude
-        # PLUTO solver has its own complete loop above and skips this section
+        # This section handles all solvers using unified process_longitude
 
-        if self.solver != 'pluto':
+        if True:  # Always execute
             if self.parallel:
                 # Parallel execution using joblib
                 results = Parallel(n_jobs=-1, backend='threading')(
@@ -2358,212 +2223,6 @@ def zerototwopi(angles):
 
 
 
-def solve_radial_cgf(v_bc_kms, rho_bc_kgm3, T_bc_K, model_time, time_out, 
-                     r_grid, gamma, nt_out, nr, verbose=False,
-                     num_particles=0, particle_injection_rate=None, solver_instance=None):
-    """
-    Solve 1D radial solar wind expansion using the HUXt-native CGF Riemann solver.
-    
-    This function wraps the CGFSolver class with proper unit conversions and 
-    time handling for integration with HUXt.
-    
-    Parameters
-    ----------
-    v_bc_kms : array_like
-        Time series of inner boundary velocity (km/s), shape (nt_model,)
-    rho_bc_kgm3 : array_like
-        Time series of inner boundary density (kg/m³), shape (nt_model,)
-    T_bc_K : array_like
-        Time series of inner boundary temperature (K), shape (nt_model,)
-    model_time : array_like
-        Full model time grid including spin-up (seconds), shape (nt_model,)
-    time_out : array_like
-        Output time grid (seconds), shape (nt_out,)
-    r_grid : array_like
-        Radial grid positions (km), shape (nr,)
-    gamma : float
-        Adiabatic index
-    nt_out : int
-        Number of output time steps
-    nr : int
-        Number of radial grid points
-    verbose : bool, optional
-        If True, print detailed diagnostics. Default False.
-    num_particles : int or dict, optional
-        Number of test particles to track. If 0 (default), no tracking.
-        Dict with keys 'cme_leading', 'cme_trailing', 'hcs', 'streak_*' supported.
-    particle_injection_rate : array-like or dict, optional
-        Injection times (seconds) for particles in model_time coordinates.
-        If num_particles is dict, this must also be dict with matching keys.
-    solver_instance : CGFSolver, optional
-        Pre-initialized CGFSolver instance to reuse. If None, a new one is created.
-    
-    Returns
-    -------
-    v_out : ndarray
-        Velocity at output times (km/s), shape (nt_out, nr)
-    rho_out : ndarray
-        Density at output times (kg/m³), shape (nt_out, nr)
-    temp_out : ndarray
-        Temperature at output times (K), shape (nt_out, nr)
-    particle_data : dict or None
-        Particle trajectory data if num_particles > 0, otherwise None.
-        Contains 'groups' dict with particle positions in km at all times
-    
-    Notes
-    -----
-    - Uses PLUTO's HLL Riemann solver with WENO3 reconstruction
-    - Initializes with Parker nozzle solution for smooth startup
-    - Achieves excellent mass flux conservation (~0.06%)
-    - Runs as external C binary via subprocess
-    """
-    # Physical constants (CGS)
-    AU = 1.496e13  # cm
-    PROTON_MASS = 1.67262192e-24  # grams
-    KM_TO_CM = 1e5  # cm/km
-    
-    # Strip units from times if needed
-    model_time_seconds = model_time.value if hasattr(model_time, 'value') else model_time
-    time_out_seconds = time_out.value if hasattr(time_out, 'value') else time_out
-    
-    # Convert to CGS
-    v_bc_cgs = v_bc_kms * KM_TO_CM  # cm/s
-    rho_bc_cgs = rho_bc_kgm3 * 0.001  # kg/m³ to g/cm³
-    
-    # Convert HUXt radial grid to cm
-    r_grid_cm = r_grid * KM_TO_CM
-    
-    # Create output time grid for solver - include spin-up snapshots
-    spinup_time_seconds = time_out_seconds[0] - model_time_seconds[0]
-    n_spinup_snaps = max(5, int(spinup_time_seconds / 86400))  # At least 5, or ~1 per day
-    spinup_sampled = np.linspace(model_time_seconds[0], time_out_seconds[0], n_spinup_snaps, endpoint=False)
-    t_grid_combined = np.concatenate([spinup_sampled, time_out_seconds])
-    
-    # Boundary condition functions (MUST return plain floats, no units)
-    def v_bc_func(t):
-        return float(np.interp(t, model_time_seconds, v_bc_cgs))
-    
-    def rho_bc_func(t):
-        return float(np.interp(t, model_time_seconds, rho_bc_cgs))
-    
-    def T_bc_func(t):
-        return float(np.interp(t, model_time_seconds, T_bc_K))
-    
-    # Initialize solver
-    if solver_instance is None:
-        solver = CGFSolver(
-            r_grid=r_grid_cm,
-            gamma=gamma,
-            cfl=0.7,
-            verbose=verbose
-        )
-    else:
-        solver = solver_instance
-    
-    # Run simulation
-    results = solver.solve(
-        t_grid=t_grid_combined,
-        v_bc_func=v_bc_func,
-        rho_bc_func=rho_bc_func,
-        T_bc_func=T_bc_func,
-        num_particles=num_particles,
-        particle_injection_rate=particle_injection_rate
-    )
-    
-    # Extract output times (skip spin-up)
-    n_spinup = len(spinup_sampled)
-    
-    # Skip spin-up snapshots, extract only output times
-    v_out_cgs = results['v'][n_spinup:]
-    rho_out_cgs = results['rho'][n_spinup:]
-    temp_out_K = results['T'][n_spinup:]
-    
-    # If solver returned fewer points than expected, interpolate
-    if v_out_cgs.shape[0] != nt_out:
-        if verbose:
-            print(f"  Warning: solver returned {v_out_cgs.shape[0]} points, expected {nt_out}, interpolating...")
-        
-        v_interp = np.zeros((nt_out, nr))
-        rho_interp = np.zeros((nt_out, nr))
-        temp_interp = np.zeros((nt_out, nr))
-        
-        # Skip spin-up times to get only output times
-        solver_out_times = results['t'][n_spinup:]
-        
-        for ir in range(nr):
-            v_interp[:, ir] = np.interp(time_out_seconds, solver_out_times, v_out_cgs[:, ir])
-            rho_interp[:, ir] = np.interp(time_out_seconds, solver_out_times, rho_out_cgs[:, ir])
-            temp_interp[:, ir] = np.interp(time_out_seconds, solver_out_times, temp_out_K[:, ir])
-        
-        v_out_cgs = v_interp
-        rho_out_cgs = rho_interp
-        temp_out_K = temp_interp
-    
-    # Convert to HUXt units
-    v_out_kms = v_out_cgs / KM_TO_CM  # cm/s -> km/s
-    rho_out_kgm3 = rho_out_cgs / 0.001  # g/cm³ -> kg/m³
-    temp_out = temp_out_K  # K (no conversion)
-    
-    # Extract and convert particle data if present
-    particle_data = None
-    if 'particles' in results:
-        particle_data_cgs = results['particles']
-        
-        if isinstance(num_particles, dict):
-            # Multi-group mode - convert positions to km
-            particle_data = {'groups': {}}
-            for group_name, group_data in particle_data_cgs['groups'].items():
-                # Convert positions from cm to km
-                # group_data['r'] is now a padded numpy array (from cgf_solver)
-                # Ensure they are numpy arrays (cgf_solver may return lists)
-                r_cgs = np.asarray(group_data['r'])
-                v_cgs = np.asarray(group_data['v'])
-                t_sec = np.asarray(group_data['t'])
-                
-                if r_cgs.size == 0:
-                    r_km = np.array([])
-                    v_km = np.array([])
-                    t_sec = np.array([])
-                else:
-                    r_km = r_cgs / KM_TO_CM
-                    v_km = v_cgs / KM_TO_CM
-                    # t_sec is already in seconds
-                
-                particle_data['groups'][group_name] = {
-                    'r': r_km,  # km
-                    'v': v_km,  # km/s
-                    't': t_sec,  # seconds
-                    't_inject': group_data['t_inject'],  # seconds
-                    'active': group_data['active'],
-                    'n_particles': group_data['n_particles'],
-                }
-        else:
-            # Single group mode - convert positions to km
-            # Ensure they are numpy arrays (cgf_solver may return lists)
-            r_cgs = np.asarray(particle_data_cgs['r'])
-            v_cgs = np.asarray(particle_data_cgs['v'])
-            t_sec = np.asarray(particle_data_cgs['t'])
-            
-            if r_cgs.size == 0:
-                r_km = np.array([])
-                v_km = np.array([])
-                t_sec = np.array([])
-            else:
-                r_km = r_cgs / KM_TO_CM
-                v_km = v_cgs / KM_TO_CM
-                # t_sec is already in seconds
-            
-            particle_data = {
-                'r': r_km,  # km
-                'v': v_km,  # km/s
-                't': t_sec,  # seconds
-                't_inject': particle_data_cgs['t_inject'],  # seconds
-                'active': particle_data_cgs['active'],
-            }
-    
-    return v_out_kms, rho_out_kgm3, temp_out, particle_data
-
-
 def solve_radial_compressible(v_bc_kms, rho_bc_kgm3, T_bc_K, model_time, time_out, 
                                r_grid, gamma, nt_out, nr, riemann='hllc', verbose=False,
                                num_particles=0, particle_injection_rate=None, solver_instance=None):
@@ -2769,257 +2428,6 @@ def solve_radial_compressible(v_bc_kms, rho_bc_kgm3, T_bc_K, model_time, time_ou
     return v_out_kms, rho_out_kgm3, temp_out, particle_data
 
 
-def solve_radial_pluto(v_bc_kms, rho_bc_kgm3, T_bc_K, model_time, time_out, 
-                       r_grid, gamma, nt_out, nr, verbose=False,
-                       num_particles=0, particle_injection_rate=None,
-                       pluto_dir=None, work_dir=None):
-    """
-    Solve 1D radial solar wind expansion using PLUTO's HLL Riemann solver.
-    
-    This function wraps the PLUTO solver with proper unit conversions and 
-    time handling for integration with HUXt. PLUTO provides a robust C-based
-    solver with excellent mass flux conservation (~0.06%).
-    
-    Parameters
-    ----------
-    v_bc_kms : array_like
-        Time series of inner boundary velocity (km/s), shape (nt_model,)
-    rho_bc_kgm3 : array_like
-        Time series of inner boundary density (kg/m³), shape (nt_model,)
-    T_bc_K : array_like
-        Time series of inner boundary temperature (K), shape (nt_model,)
-    model_time : array_like
-        Full model time grid including spin-up (seconds), shape (nt_model,)
-    time_out : array_like
-        Output time grid (seconds), shape (nt_out,)
-    r_grid : array_like
-        Radial grid positions (km), shape (nr,)
-    gamma : float
-        Adiabatic index
-    nt_out : int
-        Number of output time steps
-    nr : int
-        Number of radial grid points
-    verbose : bool, optional
-        If True, print detailed diagnostics. Default False.
-    num_particles : int or dict, optional
-        Number of test particles to track. If 0 (default), no tracking.
-        Dict with keys 'cme_leading', 'cme_trailing', 'hcs', 'streak_*' supported.
-    particle_injection_rate : array-like or dict, optional
-        Injection times (seconds) for particles in model_time coordinates.
-    pluto_dir : str, optional
-        Path to PLUTO installation. If None, uses environment variable or default.
-    work_dir : str, optional
-        Working directory for PLUTO. If None, creates temporary directory.
-    
-    Returns
-    -------
-    v_out : ndarray
-        Velocity at output times (km/s), shape (nt_out, nr)
-    rho_out : ndarray
-        Density at output times (kg/m³), shape (nt_out, nr)
-    temp_out : ndarray
-        Temperature at output times (K), shape (nt_out, nr)
-    particle_data : dict or None
-        Particle trajectory data if num_particles > 0, otherwise None.
-        Contains 'groups' dict with particle positions in km at all times
-    
-    Notes
-    -----
-    - Uses PLUTO's HLL Riemann solver with WENO3 reconstruction
-    - Initializes with Parker nozzle solution for smooth startup
-    - Achieves excellent mass flux conservation (~0.06%)
-    - Runs as external C binary via subprocess
-    """
-    from huxt.pluto_wrapper import PLUTOCustomBCWrapper
-    import os
-    
-    # Physical constants (CGS)
-    AU = 1.496e13  # cm
-    PROTON_MASS = 1.67262192e-24  # grams
-    KM_TO_CM = 1e5  # cm/km
-    KG_TO_G = 1000  # g/kg
-    M3_TO_CM3 = 1e6  # cm³/m³
-    
-    # Strip units from times if needed
-    if hasattr(model_time, 'value'):
-        model_time = model_time.value
-    if hasattr(time_out, 'value'):
-        time_out = time_out.value
-    
-    # Convert inputs to CGS (PLUTO native units)
-    r_grid_cm = r_grid * KM_TO_CM
-    v_bc_cms = v_bc_kms * KM_TO_CM
-    rho_bc_gcm3 = rho_bc_kgm3 * KG_TO_G / M3_TO_CM3
-    T_bc_K = np.asarray(T_bc_K)
-    
-    # Set PLUTO directory
-    if pluto_dir is None:
-        pluto_dir = os.environ.get('PLUTO_DIR', 
-                                    '/Users/vy902033/Library/CloudStorage/Dropbox/python_repos/HUXt5/PLUTO')
-    
-    if verbose:
-        print("="*70)
-        print("PLUTO 1D Spherical Solver")
-        print("="*70)
-        print(f"  Domain: {r_grid_cm[0]/AU:.3f} - {r_grid_cm[-1]/AU:.3f} AU ({nr} cells)")
-        print(f"  Time: {model_time[0]/86400:.2f} - {model_time[-1]/86400:.2f} days")
-        print(f"  Output times: {len(time_out)} snapshots")
-        print(f"  Boundary: v={v_bc_kms[0]:.1f}-{v_bc_kms[-1]:.1f} km/s")
-        print(f"  Boundary: ρ={rho_bc_kgm3[0]:.2e}-{rho_bc_kgm3[-1]:.2e} kg/m³")
-        print(f"  Boundary: T={T_bc_K[0]:.2e}-{T_bc_K[-1]:.2e} K")
-    
-    # Create PLUTO wrapper
-    # CFL=0.4 is conservative but stable for HLL+WENO3 with time-varying BCs
-    # Higher values (0.6-0.8) can cause negative velocities with strong gradients
-    wrapper = PLUTOCustomBCWrapper(
-        pluto_dir=pluto_dir,
-        gamma=gamma,
-        r_inner=r_grid_cm[0],
-        r_outer=r_grid_cm[-1],
-        nr=nr,
-        cfl=0.4,
-        t_offset=model_time[0],
-        work_dir=work_dir
-    )
-    
-    # Set time-varying boundary conditions using lookup tables
-    # This generates init.c with BC tables embedded and UserDefBoundary interpolation
-    # CRITICAL: Do NOT call _write_init_c() after this - it will overwrite the time-varying BC code!
-    wrapper.set_time_varying_bc(model_time, rho_bc_gcm3, v_bc_cms, T_bc_K)
-    
-    # DEBUG: Print work directory so we can inspect files
-    print(f"  **DEBUG: PLUTO work directory: {wrapper.work_dir}")
-    
-    # Compile PLUTO once with the time-varying BC code
-    wrapper._compile_pluto()
-    
-    # Run simulation
-    t_duration = model_time[-1] - model_time[0]
-    if verbose:
-        print(f"\n  Running PLUTO for {t_duration/86400:.2f} days...")
-    
-    import subprocess
-    result = subprocess.run(
-        ["./pluto"],
-        cwd=wrapper.work_dir,
-        capture_output=True,
-        text=True
-    )
-    
-    if verbose:
-        if result.returncode == 0:
-            print(f"  PLUTO completed successfully")
-        else:
-            print(f"  PLUTO warning (non-zero exit but may have output)")
-    
-    # Read outputs at requested times
-    import sys
-    sys.path.append(str(wrapper.pluto_dir / "Tools" / "pyPLUTO"))
-    import pyPLUTO.pload as pp
-    
-    output_files = sorted(wrapper.work_dir.glob("data.*.dbl"))
-    
-    if verbose:
-        print(f"  Found {len(output_files)} output files")
-    
-    # Read all outputs and interpolate to time_out
-    work_dir_str = str(wrapper.work_dir)
-    if not work_dir_str.endswith('/'):
-        work_dir_str += '/'
-    
-    # Storage for all timesteps
-    all_times = []
-    all_v = []
-    all_rho = []
-    all_T = []
-    
-    for output_file in output_files:
-        file_num = int(output_file.stem.split('.')[-1])
-        D = pp.pload(file_num, w_dir=work_dir_str)
-        
-        # Read time from dbl.out
-        with open(wrapper.work_dir / "dbl.out") as f:
-            lines = f.readlines()
-            if file_num < len(lines):
-                t_pluto = float(lines[file_num].split()[1])  # Simulation time
-                t_model = t_pluto + model_time[0]  # Convert to model time
-            else:
-                continue
-        
-        all_times.append(t_model)
-        all_v.append(D.vx1.squeeze())
-        all_rho.append(D.rho.squeeze())
-        
-        # Calculate temperature
-        P = D.prs.squeeze()
-        rho = D.rho.squeeze()
-        T = P * PROTON_MASS / (rho * 1.380649e-16)  # k_B in CGS
-        all_T.append(T)
-    
-    all_times = np.array(all_times)
-    all_v = np.array(all_v)
-    all_rho = np.array(all_rho)
-    all_T = np.array(all_T)
-    
-    v_out_cgs = all_v
-    rho_out_cgs = all_rho
-    
-    # Debug: Check PLUTO outputs at MULTIPLE radial points to see if CME is present
-    v_r0 = all_v[:, 0] / KM_TO_CM  # cm/s -> km/s, innermost cell
-    v_r1 = all_v[:, 1] / KM_TO_CM if all_v.shape[1] > 1 else v_r0
-    v_r2 = all_v[:, 2] / KM_TO_CM if all_v.shape[1] > 2 else v_r0
-    print(f"\n  DEBUG: PLUTO outputs at multiple radial points:")
-    print(f"    Number of outputs: {len(all_times)}")
-    print(f"    Time range: {all_times[0]/86400:.3f} to {all_times[-1]/86400:.3f} days (model time)")
-    print(f"    Velocity at r[0]: {v_r0.min():.1f} - {v_r0.max():.1f} km/s")
-    print(f"    Velocity at r[1]: {v_r1.min():.1f} - {v_r1.max():.1f} km/s")
-    print(f"    Velocity at r[2]: {v_r2.min():.1f} - {v_r2.max():.1f} km/s")
-    print(f"    Velocity at ALL r: {(all_v/KM_TO_CM).min():.1f} - {(all_v/KM_TO_CM).max():.1f} km/s")
-    
-    # Find when CME should appear (t ~ 0 days in model time)
-    cme_time_idx = np.argmin(np.abs(all_times))
-    print(f"    At t~0 (CME launch): v[r=0] = {v_r0[cme_time_idx]:.1f}, v[r=1] = {v_r1[cme_time_idx]:.1f} km/s")
-    print(f"    Times near t=0: {all_times[max(0,cme_time_idx-2):cme_time_idx+3]/86400}")
-    print(f"    Velocities[r=0] near t=0: {v_r0[max(0,cme_time_idx-2):cme_time_idx+3]}")
-    
-    if verbose:
-        print(f"\n  PLUTO output times (model time): {len(all_times)} snapshots")
-        print(f"    Range: {all_times[0]/86400:.3f} to {all_times[-1]/86400:.3f} days")
-        print(f"    First few: {all_times[:5]/86400}")
-        print(f"  time_out range: {time_out[0]/86400:.3f} to {time_out[-1]/86400:.3f} days")
-    
-    # Interpolate to output times
-    v_out = np.zeros((nt_out, nr))
-    rho_out = np.zeros((nt_out, nr))
-    temp_out = np.zeros((nt_out, nr))
-    
-    for i in range(nr):
-        v_out[:, i] = np.interp(time_out, all_times, v_out_cgs[:, i])
-        rho_out[:, i] = np.interp(time_out, all_times, rho_out_cgs[:, i])
-        temp_out[:, i] = np.interp(time_out, all_times, all_T[:, i])
-    
-    # Convert back to HUXt units
-    v_out_kms = v_out / KM_TO_CM  # cm/s -> km/s
-    rho_out_kgm3 = rho_out * M3_TO_CM3 / KG_TO_G  # g/cm³ -> kg/m³
-    temp_out_K = temp_out  # Already in K
-    
-    # Particle tracking not yet implemented for PLUTO
-    particle_data = None
-    if num_particles != 0:
-        if verbose:
-            print("  Warning: Particle tracking not yet implemented for PLUTO solver")
-    
-    if verbose:
-        print(f"\n  Output shape: {v_out_kms.shape}")
-        print(f"  Velocity range: {v_out_kms.min():.1f} - {v_out_kms.max():.1f} km/s")
-        print(f"  Density range: {rho_out_kgm3.min():.2e} - {rho_out_kgm3.max():.2e} kg/m³")
-        print(f"  Temperature range: {temp_out_K.min():.2e} - {temp_out_K.max():.2e} K")
-        print("="*70)
-    
-    return v_out_kms, rho_out_kgm3, temp_out_K, particle_data
-
-
 @jit(nopython=True, nogil=True)
 def solve_radial(vinput, binput, iscmeinput, model_time, rrel, params,
                  n_cme, n_hcs_max, streak_times, rhoinput=None, tempinput=None):
@@ -3219,7 +2627,7 @@ def solve_radial(vinput, binput, iscmeinput, model_time, rrel, params,
                 v[1:] = u_up_next
         
         else:
-            raise ValueError(f"Unknown solver: {solver}. Supported solvers: 'upwind', 'cgf', 'pluto'")
+            raise ValueError(f"Unknown solver: {solver}. Supported solvers: 'upwind', 'hllc', 'hll', 'roe', 'rusanov'")
 
         # Move the CME test particles forward
         if t > 0 and do_cme:

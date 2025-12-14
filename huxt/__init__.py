@@ -7,6 +7,3 @@ from huxt.compressible_solvers import (
     benchmark_solvers,
     list_available_methods,
 )
-
-# Backward compatibility: CGFSolver is also available
-from huxt.cgf_solver import CGFSolver
