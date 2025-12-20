@@ -1228,7 +1228,7 @@ def set_time_dependent_boundary(vgrid_Carr, time_grid, starttime, simtime, r_min
 
     # interpolate the solar wind speed onto the model grid 
     # variables to store the input conditions.
-    input_ambient_ts = np.nan * np.ones((model_time.size, nlon))
+    input_ambient_ts = np.nan * np.ones((model_time.size, nlon)) * (u.km / u.s)
     if do_b:
         input_ambient_ts_b = np.nan * np.ones((model_time.size, nlon))
 
@@ -1254,7 +1254,7 @@ def set_time_dependent_boundary(vgrid_Carr, time_grid, starttime, simtime, r_min
         v_b_shifted = v_boundary[id_sort]
         # interpolate back to the original grid
         v_boundary = np.interp(all_lons.value, lon_shifted, v_b_shifted, period=2 * np.pi)
-        input_ambient_ts[t, :] = v_boundary
+        input_ambient_ts[t, :] = v_boundary * (u.km / u.s)
 
         if do_b:
             b_boundary = bgrid_Carr[:, t_input]
@@ -1265,7 +1265,7 @@ def set_time_dependent_boundary(vgrid_Carr, time_grid, starttime, simtime, r_min
 
     # fill the nan values
     mask = np.isnan(input_ambient_ts)
-    input_ambient_ts[mask] = 400
+    input_ambient_ts[mask] = 400 * (u.km / u.s)
     if do_b:
         mask = np.isnan(input_ambient_ts_b)
         input_ambient_ts_b[mask] = 0

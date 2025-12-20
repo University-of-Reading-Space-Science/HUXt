@@ -829,13 +829,15 @@ class HUXt:
             id_sort = np.argsort(lon_shifted)
             lon_shifted = lon_shifted[id_sort]
             rho_b_shifted = self.rho_boundary[id_sort]
-            self.rho_boundary = np.interp(self.rho_boundary_lons.value, lon_shifted, rho_b_shifted, period=self.twopi)
+            rho_unit = self.rho_boundary.unit
+            self.rho_boundary = np.interp(self.rho_boundary_lons.value, lon_shifted, rho_b_shifted.value if hasattr(rho_b_shifted, 'value') else rho_b_shifted, period=self.twopi) * rho_unit
 
             lon_shifted = zerototwopi((self.temp_boundary_lons - self.cr_lon_init).value)
             id_sort = np.argsort(lon_shifted)
             lon_shifted = lon_shifted[id_sort]
             temp_b_shifted = self.temp_boundary[id_sort]
-            self.temp_boundary = np.interp(self.temp_boundary_lons.value, lon_shifted, temp_b_shifted, period=self.twopi)
+            temp_unit = self.temp_boundary.unit
+            self.temp_boundary = np.interp(self.temp_boundary_lons.value, lon_shifted, temp_b_shifted.value if hasattr(temp_b_shifted, 'value') else temp_b_shifted, period=self.twopi) * temp_unit
 
         # Compute the buffertime required to spin up HUXt, based on minimum speed on the inner boundary
         # and span of radial grid
@@ -919,7 +921,8 @@ class HUXt:
                 # Density scales as r^-2, so scale from 1 AU to r_min
                 scaling_factor = (self.r_1au / r_min)**2
                 default_rho = self.rho_sw_1au_inner * scaling_factor
-                self.input_rho_ts = np.ones_like(self.input_v_ts.value) * default_rho
+                # Create array with same shape as input_v_ts and proper units
+                self.input_rho_ts = np.ones(self.input_v_ts.shape) * default_rho
                 self.input_rho_ts_flag = True
 
             # Temperature time series
@@ -930,6 +933,7 @@ class HUXt:
                 # Create default temperature values based on V, same as for 1D case
                 # Calculate temperature using Lopez & Freeman (1986) velocity-temperature relation
                 # This accounts for the velocity at the inner boundary and uses physically-motivated scaling
+                # lopez_temperature_from_velocity handles Quantity arrays correctly
                 temp_from_velocity = lopez_temperature_from_velocity(self.input_v_ts, gamma=self.gamma)
                 self.input_temp_ts = temp_from_velocity
                 self.input_temp_ts_flag = True
