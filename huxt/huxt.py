@@ -227,12 +227,15 @@ class ConeCME:
             raise ValueError(f"profile_type must be 'square' or 'sinusoidal', not '{profile_type}'")
         self.profile_type = profile_type
         
+        # Get constants for density and temperature calculations
+        constants = huxt_constants()
+        r_1au = constants['r_1au']
+        rho_sw_1au = constants['rho_sw_1au']
+        
         # Set CME density and temperature
         if np.isnan(cme_density.value):
             # Calculate default solar wind density at initial_height
-            r_1au = 215.0 * u.solRad  # 1 AU in solar radii
-            rho_1au = 8.35e-21 * (u.kg / u.m**3)  # Solar wind density at 1 AU
-            sw_density_at_height = rho_1au * (r_1au / initial_height)**2
+            sw_density_at_height = rho_sw_1au * (r_1au / initial_height)**2
             # Apply density_fraction to ambient solar wind density
             self.cme_density = density_fraction * sw_density_at_height
         else:
@@ -639,6 +642,9 @@ class HUXt:
         self.alpha = constants['alpha']  # Scale parameter for residual SW acceleration (incompressible)
         self.r_accel = constants['r_accel']  # Spatial scale parameter for residual SW acceleration (incompressible)
         self.gamma = constants['gamma']  # Adiabatic index for compressible solver
+        self.r_1au = constants['r_1au']  # 1 AU in solar radii
+        self.rho_sw_1au = constants['rho_sw_1au']  # Typical solar wind density at 1 AU
+        self.rho_sw_1au_inner = constants['rho_sw_1au_inner']  # Higher density for inner boundary scaling
         self.__version__ = get_version()
         
         # Validate and store solver choice
@@ -752,12 +758,10 @@ class HUXt:
         if compressible:
             if np.all(np.isnan(rho_boundary)):
                 # Calculate realistic default density based on r_min
-                # Solar wind density at 1 AU is ~5 protons/cm³ = 8.35e-21 kg/m³
+                # Solar wind density at 1 AU is ~10 protons/cm³ = 16.35e-21 kg/m³
                 # Density scales as r^-2, so scale from 1 AU to r_min
-                r_1au = 215.0 * u.solRad  # 1 AU in solar radii
-                rho_1au = 16.35e-21 * (u.kg / u.m**3)  # Solar wind density at 1 AU
-                scaling_factor = (r_1au / r_min)**2
-                default_rho = rho_1au * scaling_factor
+                scaling_factor = (self.r_1au / r_min)**2
+                default_rho = self.rho_sw_1au_inner * scaling_factor
                 self.rho_boundary = np.ones(len(self.v_boundary_lons)) * default_rho
                 self.rho_boundary_lons = self.v_boundary_lons
             elif not np.all(np.isnan(rho_boundary)):
@@ -908,10 +912,26 @@ class HUXt:
             if not np.all(np.isnan(input_rho_ts)):
                 self.input_rho_ts = input_rho_ts[:, y_ind]
                 self.input_rho_ts_flag = True
+            elif compressible:
+                # Create default density values based on V, same as for 1D case
+                # Calculate realistic default density based on r_min
+                # Solar wind density at 1 AU is ~10 protons/cm³ = 16.35e-21 kg/m³
+                # Density scales as r^-2, so scale from 1 AU to r_min
+                scaling_factor = (self.r_1au / r_min)**2
+                default_rho = self.rho_sw_1au_inner * scaling_factor
+                self.input_rho_ts = np.ones_like(self.input_v_ts.value) * default_rho
+                self.input_rho_ts_flag = True
 
             # Temperature time series
             if not np.all(np.isnan(input_temp_ts)):
                 self.input_temp_ts = input_temp_ts[:, y_ind]
+                self.input_temp_ts_flag = True
+            elif compressible:
+                # Create default temperature values based on V, same as for 1D case
+                # Calculate temperature using Lopez & Freeman (1986) velocity-temperature relation
+                # This accounts for the velocity at the inner boundary and uses physically-motivated scaling
+                temp_from_velocity = lopez_temperature_from_velocity(self.input_v_ts, gamma=self.gamma)
+                self.input_temp_ts = temp_from_velocity
                 self.input_temp_ts_flag = True
 
         return
@@ -1930,12 +1950,18 @@ def huxt_constants():
     gamma = 1.5 # Adiabatic index for compressible solver (1.5 for solar wind?)
     synodic_period = 27.2753 * daysec  # Solar Synodic rotation period from Earth.
     sidereal_period = 25.38 * daysec  # Solar sidereal rotation period
+    
+    # Heliospheric distance and density constants
+    r_1au = 215.0 * u.solRad  # 1 AU in solar radii
+    rho_sw_1au = 8.35e-21 * (u.kg / u.m**3)  # Typical solar wind density at 1 AU (~5 protons/cm³)
+    rho_sw_1au_inner = 16.35e-21 * (u.kg / u.m**3)  # Higher density for inner boundary scaling (~10 protons/cm³)
 
     constants = {'twopi': twopi, 'daysec': daysec, 'kms': kms, 'alpha': alpha,
                  'gamma': gamma,
                  'r_accel': r_accel, 'synodic_period': synodic_period,
                  'sidereal_period': sidereal_period, 'v_max': v_max,
-                 'dr': dr, 'nlong': nlong, 'nlat': nlat}
+                 'dr': dr, 'nlong': nlong, 'nlat': nlat,
+                 'r_1au': r_1au, 'rho_sw_1au': rho_sw_1au, 'rho_sw_1au_inner': rho_sw_1au_inner}
 
     return constants
 

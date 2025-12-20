@@ -28,5 +28,6 @@ dist/
 
 # IDE and temporary files
 .vscode/
+.venv/
 .pytest_cache/
 .coverage
