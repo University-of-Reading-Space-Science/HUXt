@@ -1,5 +1,6 @@
+#<codecell> Imports
+
 import os
-os.environ['KMP_DUPLICATE_LIB_OK'] = 'TRUE'
 
 import numpy as np
 import astropy.units as u
@@ -8,10 +9,22 @@ matplotlib.use('TkAgg')  # Set backend explicitly for Windows
 import matplotlib.pyplot as plt
 import datetime
 import os
+import sys
+
+for path in ['', '.']:
+    while path in sys.path:
+        sys.path.remove(path)
+
+# Clear the cached (wrong) huxt import
+if 'huxt' in sys.modules:
+    del sys.modules['huxt']
 
 import huxt.huxt as H
 import huxt.huxt_analysis as HA
 import huxt.huxt_inputs as Hin
+import huxt.huxt_insitu as HI
+
+# <codecell> Upwind and compressible tests
 
 print("="*60)
 print("SCRIPT STARTED - huxt_quickrun_test.py")
@@ -176,3 +189,28 @@ input()
 
 #HA.plot(model_incomp, t_interest)
 #HA.animate(model_incomp, tag =  'incompressible_with_CME')
+
+
+
+#<codecell> InSitu-HUXt integration test
+
+
+print("="*60)
+print("InSitu-HUXt integration test")
+print("="*60)
+
+
+ftime = datetime.datetime(2022,12,1)
+is_model = HI.omniHUXt_forecast(ftime, simtime=27.27*u.day, 
+                        rmin=21.5*u.solRad, rmax=230*u.solRad, 
+                        dt_scale=4,
+                        omni_input=None, buffertime=5*u.day,
+                        run_2d=False)
+
+is_model.solve([])
+HA.plot_earth_timeseries(is_model)
+
+plt.show(block=True)
+print("\nPlots displayed. Press Enter to close all plots and exit...")
+input()
+# %%

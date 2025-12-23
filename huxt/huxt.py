@@ -2196,7 +2196,8 @@ def _setup_dirs_():
     cwd = os.path.abspath(os.path.dirname(__file__))
 
     dirs = {'ephemeris': os.path.join(cwd, 'data', 'ephemeris', 'ephemeris.hdf5'),
-            'example_inputs': os.path.join(cwd, 'data', 'example_inputs')}
+            'example_inputs': os.path.join(cwd, 'data', 'example_inputs'),
+            'insitu': os.path.join(cwd, 'data', 'insitu')}
 
     # Use appdirs to get platform-specific user data directory
     base_dir = Path(user_data_dir("huxt", ""))

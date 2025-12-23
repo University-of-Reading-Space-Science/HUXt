@@ -16,6 +16,7 @@ from appdirs import user_data_dir
 
 from . import huxt as h
 from . import huxt_inputs as hin
+from . import huxt_insitu as hinsitu
 
 mpl.rc("axes", labelsize=16)
 mpl.rc("ytick", labelsize=16)
@@ -1153,7 +1154,7 @@ def plot_earth_timeseries(model, plot_omni=True, save=False, tag=''):
 
     if plot_omni:
         # grab the omni data
-        data = hin.get_omni(starttime, endtime)
+        data = hinsitu.get_omni(starttime, endtime)
         # plot the period of interest
         mask = (data['datetime'] >= starttime) & (data['datetime'] <= endtime)
         plotdata = data[mask]
