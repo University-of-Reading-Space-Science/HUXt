@@ -757,12 +757,15 @@ class HUXt:
         # Handle rho and temp boundaries for compressible solver (rotation done later after cr_lon_init is set)
         if compressible:
             if np.all(np.isnan(rho_boundary)):
-                # Calculate realistic default density based on r_min
-                # Solar wind density at 1 AU is ~10 protons/cm³ = 16.35e-21 kg/m³
+                # Calculate density to maintain constant mass flux
+                # Mass flux ρv should be constant, so ρ ∝ 1/v
+                # Reference: density at 1 AU is ~10 protons/cm³ = 16.35e-21 kg/m³ at 400 km/s
                 # Density scales as r^-2, so scale from 1 AU to r_min
                 scaling_factor = (self.r_1au / r_min)**2
-                default_rho = self.rho_sw_1au_inner * scaling_factor
-                self.rho_boundary = np.ones(len(self.v_boundary_lons)) * default_rho
+                rho_ref = self.rho_sw_1au_inner * scaling_factor
+                v_ref = 400 * u.km / u.s
+                # Scale density inversely with velocity to maintain constant mass flux
+                self.rho_boundary = rho_ref * (v_ref / self.v_boundary)
                 self.rho_boundary_lons = self.v_boundary_lons
             elif not np.all(np.isnan(rho_boundary)):
                 assert rho_boundary.size < 4600  # this equates to about 9 mins
@@ -915,14 +918,16 @@ class HUXt:
                 self.input_rho_ts = input_rho_ts[:, y_ind]
                 self.input_rho_ts_flag = True
             elif compressible:
-                # Create default density values based on V, same as for 1D case
-                # Calculate realistic default density based on r_min
+                # Create default density values based on V to maintain constant mass flux
+                # Mass flux ρv should be constant, so ρ ∝ 1/v
+                # Calculate reference density at a reference velocity (400 km/s)
                 # Solar wind density at 1 AU is ~10 protons/cm³ = 16.35e-21 kg/m³
                 # Density scales as r^-2, so scale from 1 AU to r_min
                 scaling_factor = (self.r_1au / r_min)**2
-                default_rho = self.rho_sw_1au_inner * scaling_factor
-                # Create array with same shape as input_v_ts and proper units
-                self.input_rho_ts = np.ones(self.input_v_ts.shape) * default_rho
+                rho_ref = self.rho_sw_1au_inner * scaling_factor
+                v_ref = 400 * u.km / u.s
+                # Scale density inversely with velocity to maintain constant mass flux
+                self.input_rho_ts = rho_ref * (v_ref / self.input_v_ts)
                 self.input_rho_ts_flag = True
 
             # Temperature time series
