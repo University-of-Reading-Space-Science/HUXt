@@ -1398,7 +1398,7 @@ class HUXt:
                     earthpos = self.get_observer('EARTH')
                     # time and longitude from start of run
                     dt_t0 = (earthpos.time - self.time_init).to(u.s)
-                    dlon_t0 = earthpos.lon_hae - earth.lon_hae[0]
+                    dlon_t0 = earthpos.lon_hae - earthpos.lon_hae[0]
                     # find the CME hae longitude relative to the run start
                     cme_hae = np.interp(cme.t_launch.to(u.s).value,
                                         dt_t0.value, dlon_t0)

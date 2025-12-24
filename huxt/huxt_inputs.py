@@ -1110,7 +1110,7 @@ def consolidate_cme_lists(cmelist_list, t_thresh=0.1 * u.day, lon_thresh=10 * u.
 def set_time_dependent_boundary(vgrid_Carr, time_grid, starttime, simtime, r_min=215 * u.solRad, r_max=1290 * u.solRad,
                                 dt_scale=50, latitude=0 * u.deg, frame='sidereal', lon_start=0 * u.rad,
                                 lon_stop=2 * np.pi * u.rad, lon_out=np.nan, bgrid_Carr=np.nan, track_cmes=True,
-                                accel_limit=True):
+                                accel_limit=True, solver='upwind'):
     """
     A function to compute an explicitly time dependent inner boundary condition for HUXt, rather than due to
     synodic/sidereal rotation of static coronal structure.
@@ -1154,7 +1154,7 @@ def set_time_dependent_boundary(vgrid_Carr, time_grid, starttime, simtime, r_min
                        simtime=simtime, dt_scale=dt_scale,
                        cr_num=cr, cr_lon_init=cr_lon_init,
                        frame='synodic', track_cmes=track_cmes,
-                       accel_limit=accel_limit)
+                       accel_limit=accel_limit, solver=solver)
     else:
         model = h.HUXt(v_boundary=np.ones(nlon) * 400 * u.km / u.s,
                        lon_start=lon_start, lon_stop=lon_stop,
@@ -1163,7 +1163,7 @@ def set_time_dependent_boundary(vgrid_Carr, time_grid, starttime, simtime, r_min
                        simtime=simtime, dt_scale=dt_scale,
                        cr_num=cr, cr_lon_init=cr_lon_init,
                        frame=frame, track_cmes=track_cmes,
-                       accel_limit=accel_limit)
+                       accel_limit=accel_limit, solver=solver)
 
     # extract the values from the model class
     buffertime = model.buffertime  # standard buffer time seems insufficient
@@ -1246,7 +1246,8 @@ def set_time_dependent_boundary(vgrid_Carr, time_grid, starttime, simtime, r_min
                            input_b_ts=input_ambient_ts_b,
                            input_t_ts=model_time,
                            track_cmes=track_cmes,
-                           accel_limit=accel_limit)
+                           accel_limit=accel_limit,
+                           solver=solver)
         else:  # multiple longitudes
             model = h.HUXt(v_boundary=np.ones(128) * 400 * u.km / u.s,
                            simtime=simtime,
@@ -1259,7 +1260,8 @@ def set_time_dependent_boundary(vgrid_Carr, time_grid, starttime, simtime, r_min
                            input_b_ts=input_ambient_ts_b,
                            input_t_ts=model_time,
                            track_cmes=track_cmes,
-                           accel_limit=accel_limit)
+                           accel_limit=accel_limit,
+                           solver=solver)
 
     else:
         # set up the model class without B
@@ -1274,7 +1276,8 @@ def set_time_dependent_boundary(vgrid_Carr, time_grid, starttime, simtime, r_min
                            input_v_ts=input_ambient_ts,
                            input_t_ts=model_time,
                            track_cmes=track_cmes,
-                           accel_limit=accel_limit)
+                           accel_limit=accel_limit,
+                           solver=solver)
 
         else:  # multiple longitudes
             model = h.HUXt(v_boundary=np.ones(128) * 400 * u.km / u.s,
@@ -1287,7 +1290,8 @@ def set_time_dependent_boundary(vgrid_Carr, time_grid, starttime, simtime, r_min
                            input_v_ts=input_ambient_ts,
                            input_t_ts=model_time,
                            track_cmes=track_cmes,
-                           accel_limit=accel_limit)
+                           accel_limit=accel_limit,
+                           solver=solver)
 
     return model
 
@@ -1550,4 +1554,3 @@ def huxt_td_input_from_WSA_runs(datadir, start_dt, stop_dt, latitude, deacc=True
         brlongs[n, :] = np.interp(mjds, mjds_1d, brlongs_1d[n, :])
     
     return vlongs, brlongs, lon, mjds, times
-

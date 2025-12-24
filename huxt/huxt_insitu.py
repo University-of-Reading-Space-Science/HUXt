@@ -61,6 +61,12 @@ def get_omni(starttime, endtime):
     # Set invalid data points to NaN
     id_bad = omni['V'] == 9999.0
     omni.loc[id_bad, 'V'] = np.nan
+    
+    id_bad = omni['N'] == 999.9
+    omni.loc[id_bad, 'N'] = np.nan
+    
+    id_bad = omni['T'] == 9999999.0
+    omni.loc[id_bad, 'T'] = np.nan
 
     # create a BX_GSE field that is expected by some HUXt fucntions
     omni['BX_GSE'] = -omni['BR']
@@ -76,7 +82,7 @@ def get_omni(starttime, endtime):
 
 
 def generate_vCarr_from_OMNI(runstart, runend, nlon_grid=None, omni_input=None, dt=1 * u.day, ref_r=215 * u.solRad,
-                             corot_type='both'):
+                             corot_type='both', compressible=False):
     """
     A function to download OMNI data and generate V_carr and time_grid for use with set_time_dependent_boundary
 
@@ -88,10 +94,13 @@ def generate_vCarr_from_OMNI(runstart, runend, nlon_grid=None, omni_input=None, 
         dt: time resolution, in days is 1*u.day.
         ref_r: radial distance to produce v at, 215*u.solRad by default.
         corot_type: String that determines corot type (both, back, forward)
+        compressible: Boolean. If True, also return density and temperature arrays. Default is False.
     Returns:
         Time: Array of times as modified Julian days
         Vcarr: Array of solar wind speeds mapped as a function of Carr long and time
         bcarr: Array of Br mapped as a function of Carr long and time
+        ncarr: (if compressible=True) Array of density mapped as a function of Carr long and time
+        tcarr: (if compressible=True) Array of temperature mapped as a function of Carr long and time
     """
 
     # check the coro_type is one of the accepted values
@@ -173,6 +182,10 @@ def generate_vCarr_from_OMNI(runstart, runend, nlon_grid=None, omni_input=None, 
     # now remap these speeds back on to the original time steps
     omni_int['V_ref'] = np.interp(omni_int['Carr_lon_unwrap'], omni_temp['Carr_lon_ref'], omni_temp['V'])
     omni_int['Br_ref'] = np.interp(omni_int['Carr_lon_unwrap'], omni_temp['Carr_lon_ref'], -omni_temp['BX_GSE'])
+    
+    if compressible:
+        omni_int['N_ref'] = np.interp(omni_int['Carr_lon_unwrap'], omni_temp['Carr_lon_ref'], omni_temp['N'])
+        omni_int['T_ref'] = np.interp(omni_int['Carr_lon_unwrap'], omni_temp['Carr_lon_ref'], omni_temp['T'])
 
     # compute the longitudinal and time grids
     dphi_grid = 360 / nlon_grid
@@ -187,6 +200,15 @@ def generate_vCarr_from_OMNI(runstart, runend, nlon_grid=None, omni_input=None, 
     bgrid_carr_recon_back = np.ones((nlon_grid, len(time_grid))) * np.nan
     bgrid_carr_recon_forward = np.ones((nlon_grid, len(time_grid))) * np.nan
     bgrid_carr_recon_both = np.ones((nlon_grid, len(time_grid))) * np.nan
+    
+    if compressible:
+        ngrid_carr_recon_back = np.ones((nlon_grid, len(time_grid))) * np.nan
+        ngrid_carr_recon_forward = np.ones((nlon_grid, len(time_grid))) * np.nan
+        ngrid_carr_recon_both = np.ones((nlon_grid, len(time_grid))) * np.nan
+        
+        tgrid_carr_recon_back = np.ones((nlon_grid, len(time_grid))) * np.nan
+        tgrid_carr_recon_forward = np.ones((nlon_grid, len(time_grid))) * np.nan
+        tgrid_carr_recon_both = np.ones((nlon_grid, len(time_grid))) * np.nan
 
     for t in range(0, len(time_grid)):
         # find nearest time and current Carrington longitude
@@ -216,16 +238,42 @@ def generate_vCarr_from_OMNI(runstart, runend, nlon_grid=None, omni_input=None, 
 
         numerator = (dt_forward * bgrid_carr_recon_back[:, t] + dt_back * bgrid_carr_recon_forward[:, t])
         bgrid_carr_recon_both[:, t] = numerator / denominator
+        
+        if compressible:
+            ngrid_carr_recon_back[:, t] = np.interp(time_grid[t] - dt_back.value, omni_int['mjd'], omni_int['N_ref'],
+                                                    left=np.nan, right=np.nan)
+            ngrid_carr_recon_forward[:, t] = np.interp(time_grid[t] + dt_forward.value, omni_int['mjd'], omni_int['N_ref'],
+                                                       left=np.nan, right=np.nan)
+            numerator = (dt_forward * ngrid_carr_recon_back[:, t] + dt_back * ngrid_carr_recon_forward[:, t])
+            ngrid_carr_recon_both[:, t] = numerator / denominator
+            
+            tgrid_carr_recon_back[:, t] = np.interp(time_grid[t] - dt_back.value, omni_int['mjd'], omni_int['T_ref'],
+                                                    left=np.nan, right=np.nan)
+            tgrid_carr_recon_forward[:, t] = np.interp(time_grid[t] + dt_forward.value, omni_int['mjd'], omni_int['T_ref'],
+                                                       left=np.nan, right=np.nan)
+            numerator = (dt_forward * tgrid_carr_recon_back[:, t] + dt_back * tgrid_carr_recon_forward[:, t])
+            tgrid_carr_recon_both[:, t] = numerator / denominator
 
     # cut out the requested time
     mask = ((time_grid >= Time(runstart).mjd) & (time_grid <= Time(runend).mjd))
 
-    if corot_type == 'both':
-        return time_grid[mask], vgrid_carr_recon_both[:, mask], bgrid_carr_recon_both[:, mask]
-    elif corot_type == 'back':
-        return time_grid[mask], vgrid_carr_recon_back[:, mask], bgrid_carr_recon_back[:, mask]
-    elif corot_type == 'forward':
-        return time_grid[mask], vgrid_carr_recon_forward[:, mask], bgrid_carr_recon_forward[:, mask]
+    if compressible:
+        if corot_type == 'both':
+            return time_grid[mask], vgrid_carr_recon_both[:, mask], bgrid_carr_recon_both[:, mask], \
+                   ngrid_carr_recon_both[:, mask], tgrid_carr_recon_both[:, mask]
+        elif corot_type == 'back':
+            return time_grid[mask], vgrid_carr_recon_back[:, mask], bgrid_carr_recon_back[:, mask], \
+                   ngrid_carr_recon_back[:, mask], tgrid_carr_recon_back[:, mask]
+        elif corot_type == 'forward':
+            return time_grid[mask], vgrid_carr_recon_forward[:, mask], bgrid_carr_recon_forward[:, mask], \
+                   ngrid_carr_recon_forward[:, mask], tgrid_carr_recon_forward[:, mask]
+    else:
+        if corot_type == 'both':
+            return time_grid[mask], vgrid_carr_recon_both[:, mask], bgrid_carr_recon_both[:, mask]
+        elif corot_type == 'back':
+            return time_grid[mask], vgrid_carr_recon_back[:, mask], bgrid_carr_recon_back[:, mask]
+        elif corot_type == 'forward':
+            return time_grid[mask], vgrid_carr_recon_forward[:, mask], bgrid_carr_recon_forward[:, mask]
 
 
 def generate_vCarr_from_OMNI_DTW(runstart, runend, nlon=None, omni_input=None, res='24h', psi_days=7 * u.day,
@@ -888,6 +936,8 @@ def omniHUXt_forecast(ftime, simtime=27.27*u.day,
     boundary) to create a Carrington map of solar wind speed, applies a CNN
     correction for stream interaction effects, and initializes a HUXt model
     to forecast solar wind conditions at Earth.
+
+    Can be used for reconstructions too. Just set buffer time equal to simtime.
     
     Parameters
     ----------
@@ -895,7 +945,7 @@ def omniHUXt_forecast(ftime, simtime=27.27*u.day,
         Forecast initialization time. The model uses OMNI data from the
         previous ~27 days to construct the inner boundary condition.
     simtime : astropy.units.Quantity, optional
-        Total simulation duration. Default is 27.27 days (one Carrington rotation).
+        Total simulation duration, inc buffer. Default is 27.27 days (one Carrington rotation).
     rmin : astropy.units.Quantity, optional
         Inner boundary radius for the HUXt model. Default is 21.5 solar radii.
     rmax : astropy.units.Quantity, optional  
