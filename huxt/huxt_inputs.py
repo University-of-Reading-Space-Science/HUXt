@@ -763,6 +763,11 @@ def get_CorTom_vr_map(filepath):
         vr_map = copy.copy(cortom_data['velocity'])
         vr_colat = copy.copy(cortom_data['colat_rad'])
         vr_longs = copy.copy(cortom_data['lon_rad'])
+        
+        # Convert colatitude to latitude and flip so south pole at bottom
+        vr_lats = (np.pi / 2 - vr_colat)
+        vr_lats = np.flipud(vr_lats)
+        vr_map = np.flipud(vr_map)
 
     elif filepath.suffix == '.pkl':
         # Pickled Cortom output from local or UKMO API
@@ -773,10 +778,11 @@ def get_CorTom_vr_map(filepath):
         vr_colat = data['colat']
         vr_longs = data['lon']
         vr_map = np.swapaxes(vr_map, 0, 1)
+        
+        # Convert colatitude to latitude (no flip needed for pkl files)
+        vr_lats = (np.pi / 2 - vr_colat)
     else:
         raise ValueError(f"Filename must have extension of either dat or pkl: {filepath}")
-
-    vr_lats = (np.pi / 2 - vr_colat)
 
     # now rotate onto a 0 to 360 grid
     Nlon = len(vr_longs)
