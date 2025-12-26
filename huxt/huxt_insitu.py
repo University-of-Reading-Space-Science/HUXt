@@ -26,12 +26,11 @@ import urllib
 from urllib.request import urlopen, urlretrieve
 import json
 
-try:
-    import joblib
-    import onnxruntime as ort
-    ONNX_AVAILABLE = True
-except ImportError:
-    ONNX_AVAILABLE = False
+
+import joblib
+import onnxruntime as ort
+
+
 
 import huxt.huxt as H
 import huxt.huxt_inputs as Hin
@@ -986,9 +985,6 @@ def correct_inner_vlon_cnn_onnx(v_inner_array,
     Y_pred : np.ndarray
         Array of shape (128, N), CNN-corrected speed
     """
-    if not ONNX_AVAILABLE:
-        raise ImportError("joblib and onnxruntime are required for CNN correction. "
-                         "Install with: pip install joblib onnxruntime")
     
     if data_dir is None:
         data_dir = H._setup_dirs_()['insitu']
@@ -1148,11 +1144,8 @@ def omniHUXt_forecast(ftime, simtime=27.27*u.day,
     cr, cr_lon_init = datetime2huxtinputs(ftime - datetime.timedelta(days=buffertime.value))
     
     # Get Earth latitude - using get_earth_lat if available, otherwise default to 0
-    try:
-        from huxt.huxt_inputs import get_earth_lat
-        Elat = get_earth_lat(ftime)
-    except ImportError:
-        Elat = 0.0 * u.deg
+    Elat = get_earth_lat(ftime)
+
     
     if run_2d:
         model = H.HUXt(v_boundary=vcarr_rmin_back_cnn.flatten() * u.km/u.s, 
@@ -1396,11 +1389,7 @@ def omniHUXt_reconstruction(start_time, end_time,
     simtime = (Time(end_time).mjd - Time(start_time).mjd) * u.day
     
     # Get Earth latitude
-    try:
-        from huxt.huxt_inputs import get_earth_lat
-        Elat = get_earth_lat(start_time)
-    except ImportError:
-        Elat = 0.0 * u.deg
+    Elat = get_earth_lat(start_time)
     
     # Create HUXt model with time-dependent boundary
     if run_2d:
