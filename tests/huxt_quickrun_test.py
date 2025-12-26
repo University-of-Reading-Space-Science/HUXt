@@ -29,6 +29,8 @@ compressible_tests = True
 insitu_tests = False
 insitu_compressible_tests = False
 
+simtime = 4*u.day
+
 # <codecell> Upwind and compressible tests
 
 if standard_tests:
@@ -89,7 +91,7 @@ if standard_tests:
     print(dirs)
 
 
-    simtime = 1.1*u.day
+
     # Set up HUXt
     #cr=1920
     #vr_in = np.ones(128)*400*u.km/u.s #Hin.get_MAS_long_profile(cr, 0.0*u.deg)
@@ -116,7 +118,7 @@ if standard_tests:
     for t, l, w, v, thick in zip(times, lons, widths, speeds, thickness):
         cme = H.ConeCME(t_launch=t, longitude=l*u.deg, width=w*u.deg, v=v*u.km/u.s, 
                         thickness=thick*u.solRad, 
-                        density_fraction=0.1, temperature_fraction=0.01, profile_type='sinusoidal')
+                        density_fraction=0.1, temperature_fraction=0.1, profile_type='sinusoidal')
         cme_list.append(cme)
 
 

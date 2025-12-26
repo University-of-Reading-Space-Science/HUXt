@@ -153,8 +153,8 @@ class ConeCME:
         initial_height: Initiation height of the CME, in km. Defaults to HUXt inner boundary at 30 solar radii.
         radius: Initial radius of the CME, in km.
         thickness: Thickness of the CME cone, in km.
-        cme_density: Mass density of the CME in kg/m³. Defaults to 2x the solar wind density at initial_height.
-        cme_temperature: Temperature of the CME in Kelvin. Defaults to 2x the solar wind temperature at initial_height.
+        cme_density: Mass density of the CME in kg/m³. Defaults to x0.1 the solar wind density at initial_height.
+        cme_temperature: Temperature of the CME in Kelvin. Defaults x0.1 the solar wind temperature at initial_height.
         profile_type: Temporal profile shape ('square' or 'sinusoidal'). 
                      'square': step function from ambient to CME values
                      'sinusoidal': smooth sinusoidal pulse from ambient to CME values and back
@@ -176,7 +176,7 @@ class ConeCME:
                  width=30.0 * u.deg, thickness=0.0 * u.solRad, initial_height=30 * u.solRad, cme_expansion=False,
                  cme_fixed_duration=True, fixed_duration=12 * 60 * 60 * u.s, 
                  cme_density=np.nan * (u.kg / u.m**3), cme_temperature=np.nan * u.K, 
-                 density_fraction=2.0, temperature_fraction=2.0,
+                 density_fraction=0.1, temperature_fraction=0.1,
                  profile_type='square',
                  label=None):
 
