@@ -1461,6 +1461,15 @@ class HUXt:
                     print(f'Warning: CME speed of {cme.v} is close to CFL limit of {v_max}. Simulation may be unstable')
 
         # ======================================================================
+        # Create ambient (pre-CME) density and temperature time series
+        # ======================================================================
+        # Store copies of the ambient conditions before CMEs are added
+        # This ensures CME perturbations are multiples of ambient values
+        if self.compressible:
+            self.ambient_rho_ts = self.input_rho_ts.copy()
+            self.ambient_temp_ts = self.input_temp_ts.copy()
+        
+        # ======================================================================
         # Add CMEs
         # ======================================================================
         # See if the cmes-flag input time series has been prescribed
@@ -1499,6 +1508,8 @@ class HUXt:
                             self.latitude.value,
                             rhoinput=self.input_rho_ts[:, i].value,
                             tempinput=self.input_temp_ts[:, i].value,
+                            rho_ambient=self.ambient_rho_ts[:, i].value,
+                            temp_ambient=self.ambient_temp_ts[:, i].value,
                             compressible=True)
                         self.input_v_ts[:, i] = v * (u.km / u.s)
                         self.input_rho_ts[:, i] = rho * (u.kg / u.m**3)
@@ -1511,6 +1522,8 @@ class HUXt:
                             self.latitude.value,
                             rhoinput=None,
                             tempinput=None,
+                            rho_ambient=None,
+                            temp_ambient=None,
                             compressible=False)
                         self.input_v_ts[:, i] = v * (u.km / u.s)
                     self.input_iscme_ts[:, i] = isincme
@@ -2802,7 +2815,7 @@ def solve_radial(vinput, binput, iscmeinput, model_time, rrel, params,
 
 @jit(nopython=True)
 def add_cmes_to_input_series(vinput, model_time, lon, r_boundary, cme_params, latitude,
-                             rhoinput=None, tempinput=None, compressible=False):
+                             rhoinput=None, tempinput=None, rho_ambient=None, temp_ambient=None, compressible=False):
     """
     Add CMEs to the model input time series
     Args:
@@ -2815,6 +2828,8 @@ def add_cmes_to_input_series(vinput, model_time, lon, r_boundary, cme_params, la
         latitude: Latitude (from the equator) of the HUXt plane
         rhoinput: Timeseries of inner boundary density (optional, for compressible solver)
         tempinput: Timeseries of inner boundary temperature (optional, for compressible solver)
+        rho_ambient: Timeseries of ambient (pre-CME) density (optional, for compressible solver)
+        temp_ambient: Timeseries of ambient (pre-CME) temperature (optional, for compressible solver)
         compressible: Boolean flag indicating if compressible solver is being used
     Returns: 
         v: vinput with CME speeds added
@@ -2855,14 +2870,22 @@ def add_cmes_to_input_series(vinput, model_time, lon, r_boundary, cme_params, la
                 # Check if this point is within the cone CME
                 iscme, dist_from_nose = _is_in_cme_boundary_(r_boundary, lon, latitude, time, cme)
                 if iscme:
-                    # Get ambient values at this time (initialize all to avoid Numba type inference issues)
+                    # Get ambient values at this time (use ambient arrays if provided, else use input arrays)
                     v_ambient = vinput[t]
-                    rho_ambient = 0.0
-                    temp_ambient = 0.0
-                    if compressible and rhoinput is not None:
-                        rho_ambient = rhoinput[t]
-                    if compressible and tempinput is not None:
-                        temp_ambient = tempinput[t]
+                    rho_ambient_val = 0.0
+                    temp_ambient_val = 0.0
+                    
+                    if compressible:
+                        # Use ambient arrays (pre-CME) if provided, otherwise fall back to input arrays
+                        if rho_ambient is not None:
+                            rho_ambient_val = rho_ambient[t]
+                        elif rhoinput is not None:
+                            rho_ambient_val = rhoinput[t]
+                            
+                        if temp_ambient is not None:
+                            temp_ambient_val = temp_ambient[t]
+                        elif tempinput is not None:
+                            temp_ambient_val = tempinput[t]
                     
                     # Compute modulation factor based on profile type
                     if profile_flag > 0.5:  # sinusoidal profile
@@ -2889,8 +2912,8 @@ def add_cmes_to_input_series(vinput, model_time, lon, r_boundary, cme_params, la
                         temp_cme = cme[13]
                         
                         # Apply modulation to density and temperature as well
-                        rho_update_cme[n] = rho_ambient + modulation * (rho_cme - rho_ambient)
-                        temp_update_cme[n] = temp_ambient + modulation * (temp_cme - temp_ambient)
+                        rho_update_cme[n] = rho_ambient_val + modulation * (rho_cme - rho_ambient_val)
+                        temp_update_cme[n] = temp_ambient_val + modulation * (temp_cme - temp_ambient_val)
 
                     # record the CME number
                     isincme[t] = n + 1
