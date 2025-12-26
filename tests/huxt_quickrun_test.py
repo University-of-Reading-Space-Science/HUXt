@@ -24,10 +24,10 @@ import huxt.huxt_analysis as HA
 import huxt.huxt_inputs as Hin
 import huxt.huxt_insitu as HI
 
-standard_tests = False
-compressible_tests = False
+standard_tests = True
+compressible_tests = True
 insitu_tests = False
-insitu_compressible_tests = True
+insitu_compressible_tests = False
 
 # <codecell> Upwind and compressible tests
 

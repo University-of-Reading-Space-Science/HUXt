@@ -2633,7 +2633,6 @@ def solve_radial(vinput, binput, iscmeinput, model_time, rrel, params,
             if compressible:
                 # Initialize with proper continuity relation: ρ·v·r² = const
                 # This accounts for velocity evolution and gives better initial guess
-                from huxt.huxt_insitu import map_density_parker
                 
                 r_inner = rrel[0] * 695700.0 + r_boundary  # km
                 rho_inner = rhoinput[0]
@@ -2647,7 +2646,9 @@ def solve_radial(vinput, binput, iscmeinput, model_time, rrel, params,
                     v_this = vinput[ir] if ir < len(vinput) else v_inner
                     # Use Parker solution density scaling with velocity correction
                     # Continuity: ρ·v·r² = const → ρ(r) = ρ₀·(v₀/v)·(r₀/r)²
-                    rho_base = map_density_parker(rho_inner, r_inner*u.km, r_this*u.km)
+                    # Density scales as 1/r²: rho(r_to) = rho(r_from) * (r_from/r_to)²
+                    r_ratio = r_inner / r_this
+                    rho_base = rho_inner * r_ratio**2
                     rho[ir] = rho_base * (v_inner / v_this)
                     # Temperature initialization: use constant value from boundary
                     # Full temperature evolution handled by compressible solver
