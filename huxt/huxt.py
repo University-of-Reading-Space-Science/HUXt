@@ -13,7 +13,7 @@ import numpy as np
 from numba import jit
 from pathlib import Path
 from sunpy.coordinates import sun
-from huxt.compressible_solvers import CompressibleSolver, create_solver as create_compressible_solver
+from huxt.huxt_solvers import CompressibleSolver, create_solver as create_compressible_solver
 
 
 

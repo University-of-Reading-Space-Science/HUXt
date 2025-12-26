@@ -19,7 +19,7 @@ Available Time Integration:
 - 'rk2': Runge-Kutta 2nd order (Heun's method)
 
 Example Usage:
-    from huxt.compressible_solvers import create_solver
+    from huxt.huxt_solvers import create_solver
     
     # Create solver with specific methods
     solver = create_solver(r_grid, gamma=1.5, method='hllc-plm')

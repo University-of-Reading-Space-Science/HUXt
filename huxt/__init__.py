@@ -1,7 +1,7 @@
 from huxt.huxt import HUXt, ConeCME
 
 # Expose compressible solvers for advanced usage
-from huxt.compressible_solvers import (
+from huxt.huxt_solvers import (
     CompressibleSolver,
     create_solver,
     benchmark_solvers,

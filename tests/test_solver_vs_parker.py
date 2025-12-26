@@ -18,7 +18,7 @@ import time
 # Import directly to avoid slow sunpy imports
 import sys
 sys.path.insert(0, '.')
-from huxt.compressible_solvers import (
+from huxt.huxt_solvers import (
     CompressibleSolver, 
     create_solver,
     KM_TO_CM,
