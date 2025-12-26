@@ -14,6 +14,7 @@ from astropy.time import Time
 import tqdm
 import os
 import re
+import h5py
 
 from sunpy.net import Fido
 from sunpy.net import attrs
@@ -33,7 +34,87 @@ except ImportError:
     ONNX_AVAILABLE = False
 
 import huxt.huxt as H
+import huxt.huxt_inputs as Hin
 from huxt.huxt_inputs import datetime2huxtinputs, zerototwopi, map_v_boundary_inwards
+
+
+# ==============================================================================
+# Parker Solution Radial Scaling Functions
+# ==============================================================================
+
+def map_density_parker(density, r_from, r_to):
+    """
+    Map density between two heliocentric distances using Parker solution scaling.
+    
+    In the Parker solar wind model, mass conservation gives:
+    rho(r) * v(r) * r² = constant
+    
+    For supersonic flow where velocity is approximately constant (or varies slowly),
+    density scales as: rho ∝ 1/r²
+    
+    Args:
+        density: Density at r_from (scalar or array). Can be number density (cm^-3)
+                or mass density (kg/m^3) - units preserved
+        r_from: Initial heliocentric distance (astropy Quantity with length units)
+        r_to: Final heliocentric distance (astropy Quantity with length units)
+    
+    Returns:
+        Density at r_to (same type and units as input)
+    
+    Example:
+        >>> rho_1AU = 5e-21 * u.kg / u.m**3
+        >>> rho_30Rs = map_density_parker(rho_1AU, 215*u.solRad, 30*u.solRad)
+    """
+    # Convert radii to dimensionless ratio
+    r_ratio = (r_from / r_to).decompose().value
+    
+    # Apply 1/r² scaling
+    if hasattr(density, 'unit'):
+        return density * r_ratio**2
+    else:
+        return density * r_ratio**2
+
+
+def map_temperature_parker(temperature, r_from, r_to, gamma=1.5):
+    """
+    Map temperature between two heliocentric distances using Parker solution scaling.
+    
+    In the Parker solar wind model with adiabatic expansion:
+    - T ∝ ρ^(γ-1) (adiabatic relation)
+    - ρ ∝ 1/r² (mass conservation)
+    - Therefore: T ∝ r^(-2(γ-1))
+    
+    For supersonic solar wind with γ=1.5:
+    T ∝ r^(-2×0.5) = r^(-1)
+    
+    This is the scaling that HUXt's compressible solvers use internally.
+    The empirical scaling T ∝ r^(-0.3) from OMNI observations includes
+    non-adiabatic effects (heat conduction, etc.) not modeled by HUXt.
+    
+    Args:
+        temperature: Temperature at r_from (scalar or array, in K or astropy Quantity)
+        r_from: Initial heliocentric distance (astropy Quantity with length units)
+        r_to: Final heliocentric distance (astropy Quantity with length units)
+        gamma: Adiabatic index (default 1.5 for solar wind)
+    
+    Returns:
+        Temperature at r_to (same type and units as input)
+    
+    Example:
+        >>> T_1AU = 1e5 * u.K
+        >>> T_01AU = map_temperature_parker(T_1AU, 215*u.solRad, 21.5*u.solRad)
+        >>> # Returns T_01AU = 1e6 K (10x higher for adiabatic scaling)
+    """
+    # Convert radii to dimensionless ratio
+    r_ratio = (r_from / r_to).decompose().value
+    
+    # Apply adiabatic scaling: T ∝ r^(-2(γ-1))
+    alpha = 2 * (gamma - 1)  # For γ=1.5, alpha = 1.0
+    
+    if hasattr(temperature, 'unit'):
+        return temperature * r_ratio**alpha
+    else:
+        return temperature * r_ratio**alpha
 
 
 def get_omni(starttime, endtime):
@@ -155,7 +236,6 @@ def generate_vCarr_from_OMNI(runstart, runend, nlon_grid=None, omni_input=None, 
     omni_int['mjd'] = [t.mjd for t in omni_int['Time'].array]
 
     # get the Earth radial distance info.
-    import h5py
     dirs = H._setup_dirs_()
     ephem = h5py.File(dirs['ephemeris'], 'r')
     # convert ephemeric to mjd and interpolate to required times
@@ -1046,7 +1126,6 @@ def omniHUXt_forecast(ftime, simtime=27.27*u.day,
     
     # now map back to the inner boundary
     # Get Earth's radial distance from ephemeris data
-    import h5py
     dirs = H._setup_dirs_()
     ephem = h5py.File(dirs['ephemeris'], 'r')
     # convert ephemeris to mjd and interpolate to required time
@@ -1087,4 +1166,275 @@ def omniHUXt_forecast(ftime, simtime=27.27*u.day,
                       simtime=simtime, r_min=rmin, r_max=rmax, 
                       dt_scale=dt_scale, latitude=Elat, frame='synodic', 
                       track_cmes=False, lon_out=0*u.rad)
+    return model
+
+
+def omniHUXt_reconstruction(start_time, end_time, 
+                            rmin=21.5*u.solRad, rmax=230*u.solRad, 
+                            dt_scale=4, dt=1*u.day,
+                            omni_input=None,
+                            run_2d=False,
+                            solver='upwind',
+                            rho_source='speed',
+                            temp_source='speed'):
+    """
+    Create a HUXt solar wind reconstruction using OMNI observations over a time interval.
+    
+    Uses OMNI data mapped to Carrington coordinates via corotation (with 'both' forward
+    and backward mapping), backmaps to the inner boundary, applies CNN correction for
+    stream interaction effects, and creates a time-dependent HUXt simulation.
+    
+    Parameters
+    ----------
+    start_time : datetime.datetime
+        Start time of the reconstruction interval.
+    end_time : datetime.datetime
+        End time of the reconstruction interval.
+    rmin : astropy.units.Quantity, optional
+        Inner boundary radius for the HUXt model. Default is 21.5 solar radii.
+    rmax : astropy.units.Quantity, optional  
+        Outer boundary radius for the HUXt model. Default is 230 solar radii.
+    dt_scale : int, optional
+        Time step scaling factor for HUXt. Higher values = faster but less
+        accurate. Default is 4.
+    dt : astropy.units.Quantity, optional
+        Time resolution for the Carrington map, in days. Default is 1 day.
+    omni_input : pandas.DataFrame, optional
+        Pre-loaded OMNI data. If None, the function will download OMNI data
+        and remove ICMEs (Cane & Richardson list) automatically. Should contain
+        columns 'datetime', 'mjd', 'V', 'BX_GSE', 'N', 'T'.
+    run_2d : bool, optional
+        If False (default), runs a 1D radial simulation at Earth's longitude.
+        If True, runs a full 2D simulation across all longitudes.
+    solver : str, optional
+        Solver type: 'upwind' (default) or 'euler'. For compressible solvers,
+        density and temperature must also be provided.
+    rho_source : str, optional
+        Source for density when solver != 'upwind'. Options:
+        - 'speed': Derive from speed using HUXt input functions (default)
+        - 'omni': Use OMNI data with 1/r^2 scaling from reference radius to rmin
+    temp_source : str, optional
+        Source for temperature when solver != 'upwind'. Options:
+        - 'speed': Derive from speed using HUXt input functions (default)
+        - 'omni': Use OMNI data with Parker-like radial scaling
+    
+    Returns
+    -------
+    model : huxt.HUXt
+        Initialized (but not yet solved) HUXt model object with time-dependent
+        boundary conditions. Call model.solve([]) to run the simulation.
+    
+    Notes
+    -----
+    The function:
+    1. Downloads OMNI data from start_time-28 days to end_time+28 days
+    2. Removes ICMEs using the Richardson & Cane catalog
+    3. Calls generate_vCarr_from_OMNI with corot_type='both'
+    4. Backmaps velocity from reference radius (215 Rsun) to rmin
+    5. Applies CNN correction to account for stream interactions during backmapping
+    6. Creates a HUXt model with time-dependent boundary conditions
+    
+    The CNN correction (correct_inner_vlon_cnn_onnx) accounts for stream 
+    interaction effects that occur during the backmapping process from the
+    reference radius to the inner boundary.
+    
+    For compressible solvers:
+    - 'speed' source uses empirical relations from solar wind observations
+    - 'omni' source scales OMNI measurements: density by (r_ref/r)^2, 
+      temperature by approximate Parker solution scaling
+    
+    Examples
+    --------
+    >>> import datetime
+    >>> start = datetime.datetime(2022, 5, 1)
+    >>> end = datetime.datetime(2022, 5, 28)
+    >>> model = omniHUXt_reconstruction(start, end)
+    >>> model.solve([])
+    >>> # For compressible solver
+    >>> model = omniHUXt_reconstruction(start, end, solver='euler', 
+    ...                                 rho_source='omni', temp_source='omni')
+    >>> # Extract Earth time series
+    >>> import huxt.huxt_analysis as HA
+    >>> ts = HA.get_observer_timeseries(model, observer='Earth')
+    """
+    
+    # If no OMNI data provided, download it and remove ICMEs
+    if omni_input is None:
+        dl_starttime = start_time - datetime.timedelta(days=28)
+        dl_endtime = end_time + datetime.timedelta(days=28)
+        
+        omni = get_omni(dl_starttime, dl_endtime)
+        omni_input = removeICMEs(omni, icme_list='CaneRichardson')
+    
+    # Determine if we need density and temperature from OMNI
+    need_compressible = solver != 'upwind'
+    compressible = need_compressible and (rho_source == 'omni' or temp_source == 'omni')
+    
+    # Generate Carrington map using corotation (both forward and backward)
+    if compressible:
+        time_grid, vcarr_215, bcarr_215, rhocarr_215, tcarr_215 = generate_vCarr_from_OMNI(
+            start_time, end_time, 
+            omni_input=omni_input, 
+            dt=dt,
+            corot_type='both',
+            compressible=True
+        )
+    else:
+        time_grid, vcarr_215, bcarr_215 = generate_vCarr_from_OMNI(
+            start_time, end_time, 
+            omni_input=omni_input, 
+            dt=dt,
+            corot_type='both',
+            compressible=False
+        )
+    
+    # Get reference radius from generate_vCarr_from_OMNI (215 Rsun by default)
+    ref_r = 215 * u.solRad
+    
+    # Backmap from 215 Rsun to rmin for each time step
+    # This applies both the acceleration profile AND the longitudinal shift
+    # due to solar wind transit time (~3-4 days)
+    nlon, nt = vcarr_215.shape
+    vcarr_rmin = np.zeros_like(vcarr_215.value)
+    bcarr_rmin = np.zeros_like(bcarr_215)
+    
+    for t in range(nt):
+        # Map both velocity and magnetic field with the same longitudinal shift
+        vcarr_rmin[:, t], bcarr_rmin[:, t] = map_v_boundary_inwards(
+            vcarr_215[:, t], 
+            ref_r, 
+            rmin,
+            b_orig=bcarr_215[:, t]
+        )
+    
+    # Apply CNN correction to backmapped data
+    vcarr_rmin_cnn = correct_inner_vlon_cnn_onnx(vcarr_rmin)
+    
+    # Handle density and temperature for compressible solvers
+    rhogrid_carr = np.nan
+    tempgrid_carr = np.nan
+    
+    if need_compressible:
+        # Density
+        if rho_source == 'speed':
+            # Use empirical relation derived from OMNI data via adiabatic Parker solution
+            # Quadratic fit at 0.1 AU: n = a*v² + b*v + c from OMNI 1994-present
+            # (all non-ICME data, mapped to 0.1 AU then binned)
+            # Best fit: n = 0.003454*v² - 5.0899*v + 2124.72 cm^-3 (quadratic)
+            # Scale to inner boundary: n ∝ 1/r², so n(r_inner) = n(0.1 AU) * (21.5/r_inner)²
+            # Convert to mass density in kg/m^3
+            r_ratio_sq = (21.5 / (rmin.to(u.solRad).value))**2
+            
+            # Quadratic fit coefficients at 0.1 AU
+            a = 0.003454  # cm^-3 / (km/s)²
+            b = -5.0899   # cm^-3 / (km/s)
+            c = 2124.72   # cm^-3
+            
+            # Compute density at 0.1 AU
+            n_01AU = a * vcarr_rmin_cnn**2 + b * vcarr_rmin_cnn + c  # cm^-3
+            
+            # Scale to inner boundary
+            n_inner = n_01AU * r_ratio_sq  # cm^-3
+            
+            m_p = 1.6726e-27  # proton mass in kg
+            rhogrid_carr = n_inner * m_p * 1e6 * (u.kg / u.m**3)  # convert to kg/m^3
+        elif rho_source == 'omni':
+            # Map OMNI density from ref_r (1 AU) to rmin (inner boundary)
+            # Scale UP using Parker solution: rho ∝ 1/r², so rho(0.1 AU) = rho(1 AU) × (1 AU/0.1 AU)²
+            # HUXt's compressible solver will then evolve it forward, bringing it back down
+            # Also apply longitudinal shift for solar wind transit time
+            rhogrid_carr_rmin = np.zeros_like(rhocarr_215.value)
+            for t in range(nt):
+                # Scale density from 1 AU to inner boundary using Parker solution
+                rho_scaled = map_density_parker(rhocarr_215[:, t], ref_r, rmin)
+                # Apply longitudinal shift
+                _, rho_shifted = map_v_boundary_inwards(
+                    vcarr_215[:, t],
+                    ref_r,
+                    rmin,
+                    b_orig=rho_scaled.value
+                )
+                rhogrid_carr_rmin[:, t] = rho_shifted
+            rhogrid_carr = rhogrid_carr_rmin * (u.kg / u.m**3)
+        else:
+            raise ValueError(f"Unknown rho_source: {rho_source}. Use 'speed' or 'omni'.")
+        
+        # Temperature
+        if temp_source == 'speed':
+            # Use empirical relation derived from OMNI data via adiabatic Parker solution
+            # Power law fit at 0.1 AU: T = a*v^n + b from OMNI 1994-present (all non-ICME, mapped to 0.1 AU then binned)
+            # Best fit: T = 0.72*v^2.323 - 65789 K (power law with exponent ~2.3)
+            # Derived using adiabatic scaling: T(0.1 AU) = T(1 AU) × 10
+            # Scale to inner boundary using adiabatic Parker solution
+            a = 0.72  # K/(km/s)^n
+            n = 2.323   # power law exponent
+            b = -65789  # K offset
+            T_01AU = a * vcarr_rmin_cnn**n + b  # K at 0.1 AU (21.5 Rs)
+            tempgrid_carr = map_temperature_parker(T_01AU * u.K, 21.5*u.solRad, rmin)
+        elif temp_source == 'omni':
+            # Map OMNI temperature from ref_r (1 AU) to rmin (inner boundary)
+            # Scale UP using Parker solution: T ∝ r^(-0.3), so T(0.1 AU) = T(1 AU) × (1 AU/0.1 AU)^0.3
+            # HUXt's compressible solver will then evolve it forward, bringing it back down
+            # Also apply longitudinal shift for solar wind transit time
+            tempgrid_carr_rmin = np.zeros_like(tcarr_215.value)
+            for t in range(nt):
+                # Scale temperature from 1 AU to inner boundary using Parker solution
+                temp_scaled = map_temperature_parker(tcarr_215[:, t] * u.K, ref_r, rmin)
+                # Apply longitudinal shift
+                _, temp_shifted = map_v_boundary_inwards(
+                    vcarr_215[:, t],
+                    ref_r,
+                    rmin,
+                    b_orig=temp_scaled.value
+                )
+                tempgrid_carr_rmin[:, t] = temp_shifted
+            tempgrid_carr = tempgrid_carr_rmin * u.K
+        else:
+            raise ValueError(f"Unknown temp_source: {temp_source}. Use 'speed' or 'omni'.")
+    
+    # Calculate simulation time from start to end
+    simtime = (Time(end_time).mjd - Time(start_time).mjd) * u.day
+    
+    # Get Earth latitude
+    try:
+        from huxt.huxt_inputs import get_earth_lat
+        Elat = get_earth_lat(start_time)
+    except ImportError:
+        Elat = 0.0 * u.deg
+    
+    # Create HUXt model with time-dependent boundary
+    if run_2d:
+        model = Hin.set_time_dependent_boundary(
+            vgrid_Carr=vcarr_rmin_cnn * u.km/u.s,
+            time_grid=time_grid,
+            starttime=start_time,
+            simtime=simtime,
+            bgrid_Carr=bcarr_rmin,
+            rhogrid_Carr=rhogrid_carr,
+            tempgrid_Carr=tempgrid_carr,
+            r_min=rmin,
+            r_max=rmax,
+            dt_scale=dt_scale,
+            latitude=Elat,
+            frame='synodic',
+            solver=solver
+        )
+    else:
+        model = Hin.set_time_dependent_boundary(
+            vgrid_Carr=vcarr_rmin_cnn * u.km/u.s,
+            time_grid=time_grid,
+            starttime=start_time,
+            simtime=simtime,
+            bgrid_Carr=bcarr_rmin,
+            rhogrid_Carr=rhogrid_carr,
+            tempgrid_Carr=tempgrid_carr,
+            r_min=rmin,
+            r_max=rmax,
+            dt_scale=dt_scale,
+            latitude=Elat,
+            frame='synodic',
+            lon_out=0*u.rad,
+            solver=solver
+        )
+    
     return model

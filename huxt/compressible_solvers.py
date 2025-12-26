@@ -811,11 +811,19 @@ class CompressibleSolver:
         rho0 = rho_bc_func(t_grid[0])
         T0 = T_bc_func(t_grid[0])
         
-        # Simple 1/r^2 initialization
+        # Initialize using Parker solution scaling
+        from huxt.huxt_insitu import map_density_parker, map_temperature_parker
+        import astropy.units as u
+        
         r0 = self.r[0]
         v_init = np.ones_like(self.r) * v0
-        rho_init = rho0 * (r0 / self.r)**2
-        T_init = T0 * (rho_init / rho0)**(self.gamma - 1)
+        
+        # Use Parker solution to scale density and temperature with radius
+        rho_init = np.zeros_like(self.r)
+        T_init = np.zeros_like(self.r)
+        for i, r in enumerate(self.r):
+            rho_init[i] = map_density_parker(rho0, r0*u.solRad, r*u.solRad)
+            T_init[i] = map_temperature_parker(T0 * u.K, r0*u.solRad, r*u.solRad, gamma=self.gamma).value
         
         self.set_initial_conditions(rho_init, v_init, T_init)
         self.time = t_grid[0]

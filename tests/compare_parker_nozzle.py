@@ -195,7 +195,7 @@ if __name__ == "__main__":
     )
     
     # Run HUXt solvers
-    solvers = ['upwind', 'cgf']
+    solvers = ['upwind', 'hllc']
     models = {}
     
     simtime = 5  # days - long enough to reach steady state

@@ -232,20 +232,25 @@ class ConeCME:
         r_1au = constants['r_1au']
         rho_sw_1au = constants['rho_sw_1au']
         
+        # Import Parker solution mapping functions
+        from huxt.huxt_insitu import map_density_parker
+        
         # Set CME density and temperature
         if np.isnan(cme_density.value):
-            # Calculate default solar wind density at initial_height
-            sw_density_at_height = rho_sw_1au * (r_1au / initial_height)**2
+            # Calculate default solar wind density at initial_height using Parker solution
+            sw_density_at_height = map_density_parker(rho_sw_1au, r_1au, initial_height)
             # Apply density_fraction to ambient solar wind density
             self.cme_density = density_fraction * sw_density_at_height
         else:
             self.cme_density = cme_density
             
         if np.isnan(cme_temperature.value):
-            # Calculate solar wind temperature at initial_height using Lopez & Freeman (1986)
-            # Temperature depends on velocity, not just radial distance
+            # Calculate solar wind temperature at initial_height using empirical relation
+            # from OMNI data mapped via Parker nozzle solution
             # Use v (CME speed at 1 AU) to get temperature via empirical relation
-            sw_temp_at_height = lopez_temperature_from_velocity(v)
+            sw_temp_at_height = lopez_temperature_from_velocity(
+                v, gamma=1.5, r_inner=initial_height.to(u.solRad).value
+            )
             # Apply temperature_fraction to ambient solar wind temperature
             self.cme_temperature = temperature_fraction * sw_temp_at_height
         else:
@@ -776,12 +781,11 @@ class HUXt:
                 self.rho_boundary_lons = np.arange(dlon / 2, 2 * np.pi - dlon / 2 + dlon / 10, dlon) * u.rad
 
             if np.all(np.isnan(temp_boundary)):
-                # Calculate temperature using Lopez & Freeman (1986) velocity-temperature relation
-                # This accounts for the velocity at the inner boundary and uses physically-motivated scaling
-                # Temperature at 1 AU follows T = (V/200)² × 10⁴ K
-                # At r_min, velocity is ~7% lower due to continued acceleration
-                # Temperature scales with velocity via adiabatic relation
-                temp_from_velocity = lopez_temperature_from_velocity(self.v_boundary, gamma=self.gamma)
+                # Calculate temperature using empirical velocity-temperature relation
+                # derived from OMNI data mapped via Parker nozzle solution
+                temp_from_velocity = lopez_temperature_from_velocity(
+                    self.v_boundary, gamma=self.gamma, r_inner=self.r[0].to(u.solRad).value
+                )
                 self.temp_boundary = temp_from_velocity
                 self.temp_boundary_lons = self.v_boundary_lons
             elif not np.all(np.isnan(temp_boundary)):
@@ -936,10 +940,11 @@ class HUXt:
                 self.input_temp_ts_flag = True
             elif compressible:
                 # Create default temperature values based on V, same as for 1D case
-                # Calculate temperature using Lopez & Freeman (1986) velocity-temperature relation
-                # This accounts for the velocity at the inner boundary and uses physically-motivated scaling
+                # Calculate temperature using empirical velocity-temperature relation
                 # lopez_temperature_from_velocity handles Quantity arrays correctly
-                temp_from_velocity = lopez_temperature_from_velocity(self.input_v_ts, gamma=self.gamma)
+                temp_from_velocity = lopez_temperature_from_velocity(
+                    self.input_v_ts, gamma=self.gamma, r_inner=self.r[0].to(u.solRad).value
+                )
                 self.input_temp_ts = temp_from_velocity
                 self.input_temp_ts_flag = True
 
@@ -1351,7 +1356,9 @@ class HUXt:
         if hasattr(self, 'compressible') and self.compressible:
             if hasattr(self, 'v_boundary') and hasattr(self, 'temp_boundary'):
                 # Recalculate temperature using new gamma value
-                temp_from_velocity = lopez_temperature_from_velocity(self.v_boundary, gamma=new_gamma)
+                temp_from_velocity = lopez_temperature_from_velocity(
+                    self.v_boundary, gamma=new_gamma, r_inner=self.r[0].to(u.solRad).value
+                )
                 self.temp_boundary = temp_from_velocity
     
     @u.quantity_input(streak_carr=u.rad)
@@ -1975,51 +1982,106 @@ def huxt_constants():
     return constants
 
 
-def lopez_temperature_from_velocity(v_boundary, gamma=1.5):
+def density_from_velocity(v_boundary, r_inner=30.0):
     """
-    Compute realistic coronal temperature at inner boundary (r_min ≈ 30 Rs).
+    Compute number density at inner boundary from velocity using empirical relations
+    derived from OMNI data mapped via adiabatic Parker solution.
     
-    At 30 solar radii, we're in the extended corona where temperatures are ~1-2 MK.
-    The solar wind accelerates from this region, and adiabatic cooling during expansion
-    brings the temperature down to values consistent with Lopez & Freeman (1986) at 1 AU.
+    Empirical fit from OMNI 1994-present (all non-ICME data, mapped to 0.1 AU then binned by velocity):
+    Best fit (quadratic) at 0.1 AU (21.5 Rs): n = 0.003454*v² - 5.0899*v + 2124.72 cm⁻³
+    Derived using adiabatic scaling: n(0.1 AU) = n(1 AU) × (1 AU/0.1 AU)² = n(1 AU) × 100
     
-    Approach:
-    1. Use coronal temperature scaling: T(r) ∝ r^(-α) where α ≈ 0.5-0.7 in the corona
-    2. At 1 AU (215 Rs), temperature should follow Lopez & Freeman: T ∝ V²
-    3. At 30 Rs, temperature should be ~1-2 MK
+    This is mapped to arbitrary inner boundary radius using:
+    n(r) ∝ 1/r², so n(r_inner) = n(0.1 AU) × (21.5/r_inner)²
     
-    For typical 400 km/s wind:
-    - At 1 AU: T ≈ 100,000 K (Lopez & Freeman)
-    - At 30 Rs: T ≈ 1.5 × 10⁶ K (coronal value)
-    - Ratio: T(30Rs)/T(1AU) ≈ 15×
+    Args:
+        v_boundary: Solar wind velocity at inner boundary in km/s (scalar or array)
+        r_inner: Inner boundary radius in solar radii (default 30 Rs)
+    
+    Returns:
+        Number density at inner boundary in cm^-3
+        
+    Reference:
+        Empirical fit from OMNI data (1994-present), Richardson & Cane ICME list removed,
+        mapped via adiabatic Parker solution from 1 AU to 0.1 AU, then binned by velocity.
+    """
+    # Extract velocity value
+    if hasattr(v_boundary, 'unit'):
+        v_value = v_boundary.to(u.km/u.s).value
+    else:
+        v_value = v_boundary
+    
+    # OMNI empirical quadratic fit at 0.1 AU (21.5 Rs) with adiabatic scaling
+    # n = a*v² + b*v + c
+    a = 0.003454  # cm^-3 / (km/s)²
+    b = -5.0899   # cm^-3 / (km/s)
+    c = 2124.72   # cm^-3
+    
+    # Compute number density at 0.1 AU
+    n_01AU = a * v_value**2 + b * v_value + c  # cm^-3
+    
+    # Import Parker solution mapping function
+    from huxt.huxt_insitu import map_density_parker
+    
+    # Scale from 0.1 AU (21.5 Rs) to inner boundary using Parker solution (1/r² scaling)
+    n_inner = map_density_parker(n_01AU * (1/u.cm**3), 21.5*u.solRad, r_inner*u.solRad)
+    
+    # Return with or without units
+    if hasattr(v_boundary, 'unit'):
+        return n_inner / u.cm**3
+    else:
+        return n_inner
+
+
+def lopez_temperature_from_velocity(v_boundary, gamma=1.5, r_inner=30.0):
+    """
+    Compute temperature at inner boundary from velocity using empirical relations
+    derived from OMNI data mapped via adiabatic Parker solution.
+    
+    Empirical fit from OMNI 1994-present (all non-ICME data, mapped to 0.1 AU then binned by velocity):
+    Best fit (power law) at 0.1 AU (21.5 Rs): T = 0.72*v^2.323 - 65789 K
+    Derived using adiabatic scaling: T(0.1 AU) = T(1 AU) × (1 AU/0.1 AU)^1 = T(1 AU) × 10
+    
+    This is mapped to arbitrary inner boundary radius using adiabatic scaling:
+    T(r) ∝ r^(-2(γ-1)) = r^(-1) for γ=1.5
+    T(r_inner) = T(0.1 AU) × (21.5/r_inner)^1
     
     Args:
         v_boundary: Solar wind velocity at inner boundary (r_min) in km/s (scalar or array)
         gamma: Adiabatic index (default 1.5 for solar wind)
+        r_inner: Inner boundary radius in solar radii (default 30 Rs)
     
     Returns:
-        Temperature at inner boundary (r_min) in Kelvin
+        Temperature at inner boundary in Kelvin
         
     Reference:
-        Lopez, R. E., & Freeman, J. W. (1986). Solar wind proton temperature-velocity relationship.
-        Journal of Geophysical Research, 91(A2), 1701-1705.
+        Empirical fit from OMNI data (1994-present), Richardson & Cane ICME list removed,
+        quasi-steady wind selection (1 < n < 10 cm^-3, 3 < B < 10 nT), mapped via
+        Parker nozzle solution from 1 AU to inner boundary.
     """
     # Extract velocity value
     if hasattr(v_boundary, 'unit'):
-        v_rmin_value = v_boundary.to(u.km/u.s).value
+        v_value = v_boundary.to(u.km/u.s).value
     else:
-        v_rmin_value = v_boundary
+        v_value = v_boundary
     
-    # At 30 Rs, use coronal temperature scaling
-    # Assume T_coronal ∝ V^1.5 (intermediate between T ∝ V and T ∝ V²)
-    # Calibrated so that 400 km/s gives ~1.5 MK at 30 Rs
-    # This gives reasonable temperatures that cool to ~100,000 K at 1 AU after adiabatic expansion
-    T_rmin = (v_rmin_value / 400.0)**1.5 * 1e6  # K
+    # OMNI empirical power law fit at 0.1 AU with adiabatic scaling: T = a*v^n + b
+    # Best fit from OMNI data (1994-present, all non-ICME data, mapped to 0.1 AU then binned)
+    a = 0.72  # K/(km/s)^n
+    n = 2.323   # power law exponent
+    b = -65789  # K offset
+    T_01AU = a * v_value**n + b  # K
+    
+    # Import Parker solution mapping function
+    from huxt.huxt_insitu import map_temperature_parker
+    
+    # Scale from 0.1 AU (21.5 Rs) to inner boundary using adiabatic Parker solution (T ∝ r^(-1))
+    T_inner = map_temperature_parker(T_01AU * u.K, 21.5*u.solRad, r_inner*u.solRad, gamma=gamma)
     
     if hasattr(v_boundary, 'unit'):
-        return T_rmin * u.K
+        return T_inner * u.K
     else:
-        return T_rmin
+        return T_inner
 
 
 @u.quantity_input(r_min=u.solRad)
@@ -2558,6 +2620,8 @@ def solve_radial(vinput, binput, iscmeinput, model_time, rrel, params,
             if compressible:
                 # Initialize with proper continuity relation: ρ·v·r² = const
                 # This accounts for velocity evolution and gives better initial guess
+                from huxt.huxt_insitu import map_density_parker
+                
                 r_inner = rrel[0] * 695700.0 + r_boundary  # km
                 rho_inner = rhoinput[0]
                 temp_inner = tempinput[0]
@@ -2567,10 +2631,11 @@ def solve_radial(vinput, binput, iscmeinput, model_time, rrel, params,
                 temp = np.zeros(nr)
                 for ir in range(nr):
                     r_this = rrel[ir] * 695700.0 + r_boundary  # km
-                    r_ratio = r_inner / r_this
                     v_this = vinput[ir] if ir < len(vinput) else v_inner
+                    # Use Parker solution density scaling with velocity correction
                     # Continuity: ρ·v·r² = const → ρ(r) = ρ₀·(v₀/v)·(r₀/r)²
-                    rho[ir] = rho_inner * (v_inner / v_this) * r_ratio**2
+                    rho_base = map_density_parker(rho_inner, r_inner*u.km, r_this*u.km)
+                    rho[ir] = rho_base * (v_inner / v_this)
                     # Temperature initialization: use constant value from boundary
                     # Full temperature evolution handled by compressible solver
                     # which accounts for adiabatic expansion and velocity changes
