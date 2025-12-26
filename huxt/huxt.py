@@ -2091,10 +2091,8 @@ def lopez_temperature_from_velocity(v_boundary, gamma=1.5, r_inner=30.0):
     # Scale from 0.1 AU (21.5 Rs) to inner boundary using adiabatic Parker solution (T ∝ r^(-1))
     T_inner = map_temperature_parker(T_01AU * u.K, 21.5*u.solRad, r_inner*u.solRad, gamma=gamma)
     
-    if hasattr(v_boundary, 'unit'):
-        return T_inner * u.K
-    else:
-        return T_inner
+    # T_inner already has units from map_temperature_parker, just return it
+    return T_inner
 
 
 @u.quantity_input(r_min=u.solRad)
