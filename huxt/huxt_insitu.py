@@ -22,15 +22,11 @@ from sunpy.timeseries import TimeSeries
 from sunpy.coordinates import sun
 from dtaidistance import dtw
 
-import urllib
-from urllib.request import urlopen, urlretrieve
+from urllib.request import urlopen
 import json
-
 
 import joblib
 import onnxruntime as ort
-
-
 
 import huxt.huxt as H
 import huxt.huxt_inputs as Hin
@@ -1144,7 +1140,7 @@ def omniHUXt_forecast(ftime, simtime=27.27*u.day,
     cr, cr_lon_init = datetime2huxtinputs(ftime - datetime.timedelta(days=buffertime.value))
     
     # Get Earth latitude - using get_earth_lat if available, otherwise default to 0
-    Elat = get_earth_lat(ftime)
+    Elat = Hin.get_earth_lat(ftime)
 
     
     if run_2d:
@@ -1389,7 +1385,7 @@ def omniHUXt_reconstruction(start_time, end_time,
     simtime = (Time(end_time).mjd - Time(start_time).mjd) * u.day
     
     # Get Earth latitude
-    Elat = get_earth_lat(start_time)
+    Elat = Hin.get_earth_lat(start_time)
     
     # Create HUXt model with time-dependent boundary
     if run_2d:

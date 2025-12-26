@@ -5,7 +5,6 @@ import matplotlib as mpl
 import datetime
 from matplotlib.animation import FuncAnimation
 import numpy as np
-import os
 import pandas as pd
 from pathlib import Path
 from numba import jit
@@ -16,6 +15,7 @@ from appdirs import user_data_dir
 
 import huxt.huxt as H
 import huxt.huxt_inputs as Hin
+import huxt.huxt_insitu as Hinsitu
 
 mpl.rc("axes", labelsize=16)
 mpl.rc("ytick", labelsize=16)
@@ -1153,7 +1153,7 @@ def plot_earth_timeseries(model, plot_omni=True, save=False, tag=''):
 
     if plot_omni:
         # grab the omni data
-        data = hinsitu.get_omni(starttime, endtime)
+        data = Hinsitu.get_omni(starttime, endtime)
         # plot the period of interest
         mask = (data['datetime'] >= starttime) & (data['datetime'] <= endtime)
         plotdata = data[mask]

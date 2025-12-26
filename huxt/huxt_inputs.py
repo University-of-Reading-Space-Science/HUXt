@@ -18,14 +18,10 @@ from scipy.io import netcdf_file, readsav
 from scipy import interpolate
 
 from sunpy.coordinates import sun
-from sunpy.net import Fido
-from sunpy.net import attrs
-from sunpy.timeseries import TimeSeries
 
 import requests
 import pandas as pd
 from dtaidistance import dtw
-import tqdm
 
 
 def convert_hdf4_to_hdf5(hdf4_path, hdf5_path):

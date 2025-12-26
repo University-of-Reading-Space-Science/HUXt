@@ -1,8 +1,6 @@
 import copy
 import errno
 import os
-import shutil
-import warnings
 
 from appdirs import user_data_dir
 import astropy.units as u
@@ -13,7 +11,7 @@ import numpy as np
 from numba import jit
 from pathlib import Path
 from sunpy.coordinates import sun
-from huxt.huxt_solvers import CompressibleSolver, create_solver as create_compressible_solver
+from huxt.huxt_solvers import create_solver as create_compressible_solver
 
 
 
