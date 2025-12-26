@@ -227,14 +227,16 @@ if insitu_compressible_tests:
     ftime = datetime.datetime(2022,12,1)
     cr, cr_lon_init = HI.datetime2huxtinputs(ftime)
 
-    time_grid, vgrid_carr, bgrid_carr, ngrid_carr, tgrid_carr = HI.generate_vCarr_from_OMNI(ftime, 
+    time_grid, vgrid_carr, bgrid_carr, rhogrid_carr, tgrid_carr = HI.generate_vCarr_from_OMNI(ftime, 
                                                                                         ftime +datetime.timedelta(days=27), 
                                                                                         compressible=True)
     
     # Set up the model, with (optional) time-dependent bpol boundary conditions
     model = Hin.set_time_dependent_boundary(vgrid_carr, time_grid, ftime, 10*u.day, r_min=210*u.solRad, r_max=240*u.solRad, 
                                             dt_scale=4, solver = 'hllc',
-                                        latitude=0*u.deg, bgrid_Carr = bgrid_carr, lon_start=230*u.deg, lon_stop=60*u.deg,)
+                                        latitude=0*u.deg, bgrid_Carr = bgrid_carr, 
+                                        rhogrid_Carr = rhogrid_carr, tempgrid_Carr= tgrid_carr, 
+                                        lon_start=230*u.deg, lon_stop=60*u.deg,)
     model.solve([])
     HA.plot_earth_timeseries(model)
 

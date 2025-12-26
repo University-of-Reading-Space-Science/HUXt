@@ -97,10 +97,10 @@ def generate_vCarr_from_OMNI(runstart, runend, nlon_grid=None, omni_input=None, 
         compressible: Boolean. If True, also return density and temperature arrays. Default is False.
     Returns:
         Time: Array of times as modified Julian days
-        Vcarr: Array of solar wind speeds mapped as a function of Carr long and time
+        Vcarr: Array of solar wind speeds (km/s) mapped as a function of Carr long and time
         bcarr: Array of Br mapped as a function of Carr long and time
-        ncarr: (if compressible=True) Array of density mapped as a function of Carr long and time
-        tcarr: (if compressible=True) Array of temperature mapped as a function of Carr long and time
+        rhocarr: (if compressible=True) Array of mass density (kg/m³) mapped as a function of Carr long and time
+        tcarr: (if compressible=True) Array of temperature (K) mapped as a function of Carr long and time
     """
 
     # check the coro_type is one of the accepted values
@@ -202,9 +202,9 @@ def generate_vCarr_from_OMNI(runstart, runend, nlon_grid=None, omni_input=None, 
     bgrid_carr_recon_both = np.ones((nlon_grid, len(time_grid))) * np.nan
     
     if compressible:
-        ngrid_carr_recon_back = np.ones((nlon_grid, len(time_grid))) * np.nan
-        ngrid_carr_recon_forward = np.ones((nlon_grid, len(time_grid))) * np.nan
-        ngrid_carr_recon_both = np.ones((nlon_grid, len(time_grid))) * np.nan
+        rhogrid_carr_recon_back = np.ones((nlon_grid, len(time_grid))) * np.nan
+        rhogrid_carr_recon_forward = np.ones((nlon_grid, len(time_grid))) * np.nan
+        rhogrid_carr_recon_both = np.ones((nlon_grid, len(time_grid))) * np.nan
         
         tgrid_carr_recon_back = np.ones((nlon_grid, len(time_grid))) * np.nan
         tgrid_carr_recon_forward = np.ones((nlon_grid, len(time_grid))) * np.nan
@@ -240,12 +240,12 @@ def generate_vCarr_from_OMNI(runstart, runend, nlon_grid=None, omni_input=None, 
         bgrid_carr_recon_both[:, t] = numerator / denominator
         
         if compressible:
-            ngrid_carr_recon_back[:, t] = np.interp(time_grid[t] - dt_back.value, omni_int['mjd'], omni_int['N_ref'],
+            rhogrid_carr_recon_back[:, t] = np.interp(time_grid[t] - dt_back.value, omni_int['mjd'], omni_int['N_ref'],
                                                     left=np.nan, right=np.nan)
-            ngrid_carr_recon_forward[:, t] = np.interp(time_grid[t] + dt_forward.value, omni_int['mjd'], omni_int['N_ref'],
+            rhogrid_carr_recon_forward[:, t] = np.interp(time_grid[t] + dt_forward.value, omni_int['mjd'], omni_int['N_ref'],
                                                        left=np.nan, right=np.nan)
-            numerator = (dt_forward * ngrid_carr_recon_back[:, t] + dt_back * ngrid_carr_recon_forward[:, t])
-            ngrid_carr_recon_both[:, t] = numerator / denominator
+            numerator = (dt_forward * rhogrid_carr_recon_back[:, t] + dt_back * rhogrid_carr_recon_forward[:, t])
+            rhogrid_carr_recon_both[:, t] = numerator / denominator
             
             tgrid_carr_recon_back[:, t] = np.interp(time_grid[t] - dt_back.value, omni_int['mjd'], omni_int['T_ref'],
                                                     left=np.nan, right=np.nan)
@@ -258,22 +258,40 @@ def generate_vCarr_from_OMNI(runstart, runend, nlon_grid=None, omni_input=None, 
     mask = ((time_grid >= Time(runstart).mjd) & (time_grid <= Time(runend).mjd))
 
     if compressible:
+        # Convert number density (cm⁻³) to mass density (kg/m³) and add units
+        m_p = 1.6726e-27  # proton mass in kg
+        
         if corot_type == 'both':
-            return time_grid[mask], vgrid_carr_recon_both[:, mask], bgrid_carr_recon_both[:, mask], \
-                   ngrid_carr_recon_both[:, mask], tgrid_carr_recon_both[:, mask]
+            return time_grid[mask], \
+                   vgrid_carr_recon_both[:, mask] * (u.km / u.s), \
+                   bgrid_carr_recon_both[:, mask], \
+                   rhogrid_carr_recon_both[:, mask] * m_p * 1e6 * (u.kg / u.m**3), \
+                   tgrid_carr_recon_both[:, mask] * u.K
         elif corot_type == 'back':
-            return time_grid[mask], vgrid_carr_recon_back[:, mask], bgrid_carr_recon_back[:, mask], \
-                   ngrid_carr_recon_back[:, mask], tgrid_carr_recon_back[:, mask]
+            return time_grid[mask], \
+                   vgrid_carr_recon_back[:, mask] * (u.km / u.s), \
+                   bgrid_carr_recon_back[:, mask], \
+                   rhogrid_carr_recon_back[:, mask] * m_p * 1e6 * (u.kg / u.m**3), \
+                   tgrid_carr_recon_back[:, mask] * u.K
         elif corot_type == 'forward':
-            return time_grid[mask], vgrid_carr_recon_forward[:, mask], bgrid_carr_recon_forward[:, mask], \
-                   ngrid_carr_recon_forward[:, mask], tgrid_carr_recon_forward[:, mask]
+            return time_grid[mask], \
+                   vgrid_carr_recon_forward[:, mask] * (u.km / u.s), \
+                   bgrid_carr_recon_forward[:, mask], \
+                   rhogrid_carr_recon_forward[:, mask] * m_p * 1e6 * (u.kg / u.m**3), \
+                   tgrid_carr_recon_forward[:, mask] * u.K
     else:
         if corot_type == 'both':
-            return time_grid[mask], vgrid_carr_recon_both[:, mask], bgrid_carr_recon_both[:, mask]
+            return time_grid[mask], \
+                   vgrid_carr_recon_both[:, mask] * (u.km / u.s), \
+                   bgrid_carr_recon_both[:, mask]
         elif corot_type == 'back':
-            return time_grid[mask], vgrid_carr_recon_back[:, mask], bgrid_carr_recon_back[:, mask]
+            return time_grid[mask], \
+                   vgrid_carr_recon_back[:, mask] * (u.km / u.s), \
+                   bgrid_carr_recon_back[:, mask]
         elif corot_type == 'forward':
-            return time_grid[mask], vgrid_carr_recon_forward[:, mask], bgrid_carr_recon_forward[:, mask]
+            return time_grid[mask], \
+                   vgrid_carr_recon_forward[:, mask] * (u.km / u.s), \
+                   bgrid_carr_recon_forward[:, mask]
 
 
 def generate_vCarr_from_OMNI_DTW(runstart, runend, nlon=None, omni_input=None, res='24h', psi_days=7 * u.day,

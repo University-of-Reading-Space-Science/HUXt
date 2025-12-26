@@ -1115,7 +1115,8 @@ def consolidate_cme_lists(cmelist_list, t_thresh=0.1 * u.day, lon_thresh=10 * u.
 
 def set_time_dependent_boundary(vgrid_Carr, time_grid, starttime, simtime, r_min=215 * u.solRad, r_max=1290 * u.solRad,
                                 dt_scale=50, latitude=0 * u.deg, frame='sidereal', lon_start=0 * u.rad,
-                                lon_stop=2 * np.pi * u.rad, lon_out=np.nan, bgrid_Carr=np.nan, track_cmes=True,
+                                lon_stop=2 * np.pi * u.rad, lon_out=np.nan, bgrid_Carr=np.nan, 
+                                rhogrid_Carr=np.nan, tempgrid_Carr=np.nan, track_cmes=True,
                                 accel_limit=True, solver='upwind'):
     """
     A function to compute an explicitly time dependent inner boundary condition for HUXt, rather than due to
@@ -1135,6 +1136,8 @@ def set_time_dependent_boundary(vgrid_Carr, time_grid, starttime, simtime, r_min
         lon_start: Longitude of one edge of the longitudinal domain of HUXt
         lon_stop: Longitude of the other edge of the longitudinal domain of HUXt
         bgrid_Carr: input magnetic polarity as a function of Carrington longitude and time
+        rhogrid_Carr: input density (kg/m³) as a function of Carrington longitude and time
+        tempgrid_Carr: input temperature (K) as a function of Carrington longitude and time
         track_cmes: Bool, whether to track CMEs through the simulation.
         accel_limit: Bool, whether to turn off the acceleration for fluid elements with speeds >650 km/s
     returns:
@@ -1147,6 +1150,16 @@ def set_time_dependent_boundary(vgrid_Carr, time_grid, starttime, simtime, r_min
     do_b = False
     if np.isfinite(bgrid_Carr).any():
         do_b = True
+    
+    # see if density boundary conditions are supplied
+    do_rho = False
+    if np.isfinite(rhogrid_Carr).any():
+        do_rho = True
+    
+    # see if temperature boundary conditions are supplied
+    do_temp = False
+    if np.isfinite(tempgrid_Carr).any():
+        do_temp = True
 
     # work out the start time in terms of cr number and cr_lon_init
     cr, cr_lon_init = datetime2huxtinputs(starttime)
@@ -1198,6 +1211,10 @@ def set_time_dependent_boundary(vgrid_Carr, time_grid, starttime, simtime, r_min
     input_ambient_ts = np.nan * np.ones((model_time.size, nlon)) * (u.km / u.s)
     if do_b:
         input_ambient_ts_b = np.nan * np.ones((model_time.size, nlon))
+    if do_rho:
+        input_ambient_ts_rho = np.nan * np.ones((model_time.size, nlon)) * (u.kg / u.m**3)
+    if do_temp:
+        input_ambient_ts_temp = np.nan * np.ones((model_time.size, nlon)) * u.K
 
     for t in range(0, len(model_time)):
 
@@ -1218,6 +1235,9 @@ def set_time_dependent_boundary(vgrid_Carr, time_grid, starttime, simtime, r_min
 
         # take the vlong slice at this value
         v_boundary = vgrid_Carr[:, t_input]
+        # Handle units if present
+        if hasattr(v_boundary, 'unit'):
+            v_boundary = v_boundary.value
         v_b_shifted = v_boundary[id_sort]
         # interpolate back to the original grid
         v_boundary = np.interp(all_lons.value, lon_shifted, v_b_shifted, period=2 * np.pi)
@@ -1229,6 +1249,26 @@ def set_time_dependent_boundary(vgrid_Carr, time_grid, starttime, simtime, r_min
             # interpolate back to the original grid
             b_boundary = np.interp(all_lons.value, lon_shifted, b_b_shifted, period=2 * np.pi)
             input_ambient_ts_b[t, :] = b_boundary
+        
+        if do_rho:
+            rho_boundary = rhogrid_Carr[:, t_input]
+            # Handle units if present
+            if hasattr(rho_boundary, 'unit'):
+                rho_boundary = rho_boundary.value
+            rho_b_shifted = rho_boundary[id_sort]
+            # interpolate back to the original grid
+            rho_boundary = np.interp(all_lons.value, lon_shifted, rho_b_shifted, period=2 * np.pi)
+            input_ambient_ts_rho[t, :] = rho_boundary * (u.kg / u.m**3)
+        
+        if do_temp:
+            temp_boundary = tempgrid_Carr[:, t_input]
+            # Handle units if present
+            if hasattr(temp_boundary, 'unit'):
+                temp_boundary = temp_boundary.value
+            temp_b_shifted = temp_boundary[id_sort]
+            # interpolate back to the original grid
+            temp_boundary = np.interp(all_lons.value, lon_shifted, temp_b_shifted, period=2 * np.pi)
+            input_ambient_ts_temp[t, :] = temp_boundary * u.K
 
     # fill the nan values
     mask = np.isnan(input_ambient_ts)
@@ -1236,68 +1276,48 @@ def set_time_dependent_boundary(vgrid_Carr, time_grid, starttime, simtime, r_min
     if do_b:
         mask = np.isnan(input_ambient_ts_b)
         input_ambient_ts_b[mask] = 0
+    if do_rho:
+        mask = np.isnan(input_ambient_ts_rho)
+        input_ambient_ts_rho[mask] = 0 * (u.kg / u.m**3)
+    if do_temp:
+        mask = np.isnan(input_ambient_ts_temp)
+        input_ambient_ts_temp[mask] = 0 * u.K
 
+    # Build kwargs for HUXt model instantiation
+    huxt_kwargs = {
+        'v_boundary': np.ones(128) * 400 * u.km / u.s,
+        'simtime': simtime,
+        'cr_num': cr,
+        'cr_lon_init': cr_lon_init,
+        'r_min': r_min,
+        'r_max': r_max,
+        'dt_scale': dt_scale,
+        'latitude': latitude,
+        'input_v_ts': input_ambient_ts,
+        'input_t_ts': model_time,
+        'track_cmes': track_cmes,
+        'accel_limit': accel_limit,
+        'solver': solver
+    }
+    
+    # Add optional boundary condition time series
     if do_b:
-        # set up the model class with these data initialised
-
-        if np.isfinite(lon_out):  # single longitude
-            model = h.HUXt(v_boundary=np.ones(128) * 400 * u.km / u.s,
-                           simtime=simtime,
-                           cr_num=cr, cr_lon_init=cr_lon_init,
-                           r_min=r_min, r_max=r_max,
-                           dt_scale=dt_scale, latitude=latitude,
-                           frame='synodic',
-                           lon_out=lon_out,
-                           input_v_ts=input_ambient_ts,
-                           input_b_ts=input_ambient_ts_b,
-                           input_t_ts=model_time,
-                           track_cmes=track_cmes,
-                           accel_limit=accel_limit,
-                           solver=solver)
-        else:  # multiple longitudes
-            model = h.HUXt(v_boundary=np.ones(128) * 400 * u.km / u.s,
-                           simtime=simtime,
-                           cr_num=cr, cr_lon_init=cr_lon_init,
-                           r_min=r_min, r_max=r_max,
-                           dt_scale=dt_scale, latitude=latitude,
-                           frame=frame,
-                           lon_start=lon_start, lon_stop=lon_stop,
-                           input_v_ts=input_ambient_ts,
-                           input_b_ts=input_ambient_ts_b,
-                           input_t_ts=model_time,
-                           track_cmes=track_cmes,
-                           accel_limit=accel_limit,
-                           solver=solver)
-
-    else:
-        # set up the model class without B
-        if np.isfinite(lon_out):  # single longitude
-            model = h.HUXt(v_boundary=np.ones(128) * 400 * u.km / u.s,
-                           simtime=simtime,
-                           cr_num=cr, cr_lon_init=cr_lon_init,
-                           r_min=r_min, r_max=r_max,
-                           dt_scale=dt_scale, latitude=latitude,
-                           frame='synodic',
-                           lon_out=lon_out,
-                           input_v_ts=input_ambient_ts,
-                           input_t_ts=model_time,
-                           track_cmes=track_cmes,
-                           accel_limit=accel_limit,
-                           solver=solver)
-
-        else:  # multiple longitudes
-            model = h.HUXt(v_boundary=np.ones(128) * 400 * u.km / u.s,
-                           simtime=simtime,
-                           cr_num=cr, cr_lon_init=cr_lon_init,
-                           r_min=r_min, r_max=r_max,
-                           dt_scale=dt_scale, latitude=latitude,
-                           frame=frame,
-                           lon_start=lon_start, lon_stop=lon_stop,
-                           input_v_ts=input_ambient_ts,
-                           input_t_ts=model_time,
-                           track_cmes=track_cmes,
-                           accel_limit=accel_limit,
-                           solver=solver)
+        huxt_kwargs['input_b_ts'] = input_ambient_ts_b
+    if do_rho:
+        huxt_kwargs['input_rho_ts'] = input_ambient_ts_rho
+    if do_temp:
+        huxt_kwargs['input_temp_ts'] = input_ambient_ts_temp
+    
+    # Set frame and longitude parameters
+    if np.isfinite(lon_out):  # single longitude
+        huxt_kwargs['frame'] = 'synodic'
+        huxt_kwargs['lon_out'] = lon_out
+    else:  # multiple longitudes
+        huxt_kwargs['frame'] = frame
+        huxt_kwargs['lon_start'] = lon_start
+        huxt_kwargs['lon_stop'] = lon_stop
+    
+    model = h.HUXt(**huxt_kwargs)
 
     return model
 
