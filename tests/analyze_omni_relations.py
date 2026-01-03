@@ -141,8 +141,8 @@ bin_counts_01AU = []
 for i in range(n_bins):
     mask = (v_at_01AU >= v_bin_edges[i]) & (v_at_01AU < v_bin_edges[i+1])
     if np.sum(mask) > 10:  # Require at least 10 points per bin
-        T_binned_01AU.append(np.mean(T_at_01AU[mask]))
-        n_binned_01AU.append(np.mean(n_at_01AU[mask]))
+        T_binned_01AU.append(np.median(T_at_01AU[mask]))
+        n_binned_01AU.append(np.median(n_at_01AU[mask]))
         v_binned_01AU.append(v_bin_centers[i])
         T_std_binned_01AU.append(np.std(T_at_01AU[mask]))
         n_std_binned_01AU.append(np.std(n_at_01AU[mask]))
@@ -447,3 +447,20 @@ ax_n.legend(fontsize=10, loc='upper right')
 plt.tight_layout()
 plt.savefig('omni_empirical_relations_01AU.png', dpi=150)
 print("\nSaved 0.1 AU plot to omni_empirical_relations_01AU.png")
+
+# ==============================================================================
+# Save lookup table for HUXt
+# ==============================================================================
+print("\n=== Saving lookup table for HUXt ===")
+
+# Save the binned median values as a lookup table
+lookup_table = np.column_stack((v_binned_01AU, n_binned_01AU, T_binned_01AU))
+np.savetxt('omni_lookup_table_01AU.txt', lookup_table, 
+           header='Velocity (km/s), Density (cm^-3), Temperature (K) at 0.1 AU\n'
+                  'Median values from OMNI 1994-present, mapped to 0.1 AU using adiabatic Parker solution\n'
+                  'Use linear interpolation between values',
+           fmt='%.6f')
+
+print(f"Saved lookup table with {len(v_binned_01AU)} velocity bins")
+print(f"Velocity range: {v_binned_01AU[0]:.0f} - {v_binned_01AU[-1]:.0f} km/s")
+print(f"File: omni_lookup_table_01AU.txt")

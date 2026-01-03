@@ -1995,12 +1995,11 @@ def huxt_constants():
 
 def density_from_velocity(v_boundary, r_inner=30.0):
     """
-    Compute number density at inner boundary from velocity using empirical relations
+    Compute number density at inner boundary from velocity using lookup table
     derived from OMNI data mapped via adiabatic Parker solution.
     
-    Empirical fit from OMNI 1994-present (all non-ICME data, mapped to 0.1 AU then binned by velocity):
-    Best fit (quadratic) at 0.1 AU (21.5 Rs): n = 0.003454*v² - 5.0899*v + 2124.72 cm⁻³
-    Derived using adiabatic scaling: n(0.1 AU) = n(1 AU) × (1 AU/0.1 AU)² = n(1 AU) × 100
+    Uses linear interpolation of median values from OMNI 1994-present binned data.
+    Data mapped to 0.1 AU (21.5 Rs) using adiabatic scaling: n(0.1 AU) = n(1 AU) × 100
     
     This is mapped to arbitrary inner boundary radius using:
     n(r) ∝ 1/r², so n(r_inner) = n(0.1 AU) × (21.5/r_inner)²
@@ -2013,8 +2012,8 @@ def density_from_velocity(v_boundary, r_inner=30.0):
         Number density at inner boundary in cm^-3
         
     Reference:
-        Empirical fit from OMNI data (1994-present), Richardson & Cane ICME list removed,
-        mapped via adiabatic Parker solution from 1 AU to 0.1 AU, then binned by velocity.
+        Median values from OMNI data (1994-present), Richardson & Cane ICME list removed,
+        mapped via adiabatic Parker solution from 1 AU to 0.1 AU, binned by velocity.
     """
     # Extract velocity value
     if hasattr(v_boundary, 'unit'):
@@ -2022,14 +2021,17 @@ def density_from_velocity(v_boundary, r_inner=30.0):
     else:
         v_value = v_boundary
     
-    # OMNI empirical quadratic fit at 0.1 AU (21.5 Rs) with adiabatic scaling
-    # n = a*v² + b*v + c
-    a = 0.003454  # cm^-3 / (km/s)²
-    b = -5.0899   # cm^-3 / (km/s)
-    c = 2124.72   # cm^-3
+    # Load lookup table from data directory
+    cwd = os.path.abspath(os.path.dirname(__file__))
+    lookup_file = os.path.join(cwd, 'data', 'omni_lookup_table_01AU.txt')
     
-    # Compute number density at 0.1 AU
-    n_01AU = a * v_value**2 + b * v_value + c  # cm^-3
+    # Load the lookup table (velocity, density, temperature)
+    lookup_data = np.loadtxt(lookup_file)
+    v_lookup = lookup_data[:, 0]  # km/s
+    n_lookup = lookup_data[:, 1]  # cm^-3 at 0.1 AU
+    
+    # Interpolate density at 0.1 AU for the given velocity
+    n_01AU = np.interp(v_value, v_lookup, n_lookup)  # cm^-3
     
     # Import Parker solution mapping function
     from huxt.huxt_insitu import map_density_parker
@@ -2046,12 +2048,11 @@ def density_from_velocity(v_boundary, r_inner=30.0):
 
 def lopez_temperature_from_velocity(v_boundary, gamma=1.5, r_inner=30.0):
     """
-    Compute temperature at inner boundary from velocity using empirical relations
+    Compute temperature at inner boundary from velocity using lookup table
     derived from OMNI data mapped via adiabatic Parker solution.
     
-    Empirical fit from OMNI 1994-present (all non-ICME data, mapped to 0.1 AU then binned by velocity):
-    Best fit (power law) at 0.1 AU (21.5 Rs): T = 0.72*v^2.323 - 65789 K
-    Derived using adiabatic scaling: T(0.1 AU) = T(1 AU) × (1 AU/0.1 AU)^1 = T(1 AU) × 10
+    Uses linear interpolation of median values from OMNI 1994-present binned data.
+    Data mapped to 0.1 AU (21.5 Rs) using adiabatic scaling: T(0.1 AU) = T(1 AU) × 10
     
     This is mapped to arbitrary inner boundary radius using adiabatic scaling:
     T(r) ∝ r^(-2(γ-1)) = r^(-1) for γ=1.5
@@ -2066,9 +2067,8 @@ def lopez_temperature_from_velocity(v_boundary, gamma=1.5, r_inner=30.0):
         Temperature at inner boundary in Kelvin
         
     Reference:
-        Empirical fit from OMNI data (1994-present), Richardson & Cane ICME list removed,
-        quasi-steady wind selection (1 < n < 10 cm^-3, 3 < B < 10 nT), mapped via
-        Parker nozzle solution from 1 AU to inner boundary.
+        Median values from OMNI data (1994-present), Richardson & Cane ICME list removed,
+        mapped via adiabatic Parker solution from 1 AU to 0.1 AU, binned by velocity.
     """
     # Extract velocity value
     if hasattr(v_boundary, 'unit'):
@@ -2076,12 +2076,17 @@ def lopez_temperature_from_velocity(v_boundary, gamma=1.5, r_inner=30.0):
     else:
         v_value = v_boundary
     
-    # OMNI empirical power law fit at 0.1 AU with adiabatic scaling: T = a*v^n + b
-    # Best fit from OMNI data (1994-present, all non-ICME data, mapped to 0.1 AU then binned)
-    a = 0.72  # K/(km/s)^n
-    n = 2.323   # power law exponent
-    b = -65789  # K offset
-    T_01AU = a * v_value**n + b  # K
+    # Load lookup table from data directory
+    cwd = os.path.abspath(os.path.dirname(__file__))
+    lookup_file = os.path.join(cwd, 'data', 'omni_lookup_table_01AU.txt')
+    
+    # Load the lookup table (velocity, density, temperature)
+    lookup_data = np.loadtxt(lookup_file)
+    v_lookup = lookup_data[:, 0]  # km/s
+    T_lookup = lookup_data[:, 2]  # K at 0.1 AU
+    
+    # Interpolate temperature at 0.1 AU for the given velocity
+    T_01AU = np.interp(v_value, v_lookup, T_lookup)  # K
     
     # Import Parker solution mapping function
     from huxt.huxt_insitu import map_temperature_parker

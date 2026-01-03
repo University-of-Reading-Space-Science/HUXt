@@ -6,6 +6,7 @@ import json
 import ssl
 import copy
 import pickle
+import warnings
 
 from appdirs import user_data_dir
 import astropy.units as u
@@ -21,7 +22,10 @@ from sunpy.coordinates import sun
 
 import requests
 import pandas as pd
-from dtaidistance import dtw
+
+# Suppress SSL warnings for unverified HTTPS requests
+import urllib3
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 
 def convert_hdf4_to_hdf5(hdf4_path, hdf5_path):
@@ -112,8 +116,8 @@ def get_MAS_boundary_conditions(cr=np.nan, observatory='', runtype='', runnumber
     # Get the local HUXt boundary condition directory
     boundary_dir = get_data_dir()
 
-    # Example URL: http://www.predsci.com/data/runs/cr2010-medium/mdi_mas_mas_std_0101/helio/br_r0.hdf
-    heliomas_url_front = 'http://www.predsci.com/data/runs/cr'
+    # Example URL: https://www.predsci.com/data/runs/cr2010-medium/mdi_mas_mas_std_0101/helio/br_r0.hdf
+    heliomas_url_front = 'https://www.predsci.com/data/runs/cr'
     heliomas_url_end = '_r0.hdf'
 
     vrfilename = 'HelioMAS_CR' + str(int(cr)) + '_vr' + heliomas_url_end
@@ -179,8 +183,14 @@ def get_MAS_boundary_conditions(cr=np.nan, observatory='', runtype='', runnumber
         ssl._create_default_https_context = ssl._create_unverified_context
 
         print('Downloading from: ', urlbase)
-        urllib.request.urlretrieve(urlbase + 'br' + heliomas_url_end, brfilepath)
-        urllib.request.urlretrieve(urlbase + 'vr' + heliomas_url_end, vrfilepath)
+        try:
+            urllib.request.urlretrieve(urlbase + 'br' + heliomas_url_end, brfilepath)
+            urllib.request.urlretrieve(urlbase + 'vr' + heliomas_url_end, vrfilepath)
+        except urllib.error.HTTPError as e:
+            print(f'Error downloading files: {e}')
+            print(f'BR URL: {urlbase + "br" + heliomas_url_end}')
+            print(f'VR URL: {urlbase + "vr" + heliomas_url_end}')
+            raise
 
         # Convert HDF4 files to HDF5
         print('Converting HDF4 files to HDF5...')

@@ -30,7 +30,6 @@ import onnxruntime as ort
 
 import huxt.huxt as H
 import huxt.huxt_inputs as Hin
-from huxt.huxt_inputs import datetime2huxtinputs, zerototwopi, map_v_boundary_inwards
 
 
 # ==============================================================================
@@ -64,10 +63,7 @@ def map_density_parker(density, r_from, r_to):
     r_ratio = (r_from / r_to).decompose().value
     
     # Apply 1/r² scaling
-    if hasattr(density, 'unit'):
-        return density * r_ratio**2
-    else:
-        return density * r_ratio**2
+    return density * r_ratio**2
 
 
 def map_temperature_parker(temperature, r_from, r_to, gamma=1.5):
@@ -106,10 +102,7 @@ def map_temperature_parker(temperature, r_from, r_to, gamma=1.5):
     # Apply adiabatic scaling: T ∝ r^(-2(γ-1))
     alpha = 2 * (gamma - 1)  # For γ=1.5, alpha = 1.0
     
-    if hasattr(temperature, 'unit'):
-        return temperature * r_ratio**alpha
-    else:
-        return temperature * r_ratio**alpha
+    return temperature * r_ratio**alpha
 
 
 def get_omni(starttime, endtime):
@@ -223,7 +216,7 @@ def generate_vCarr_from_OMNI(runstart, runend, nlon_grid=None, omni_input=None, 
     cr = np.ones(len(omni_int))
     cr_lon_init = np.ones(len(omni_int)) * u.rad
     for i in range(0, len(omni_int)):
-        cr[i], cr_lon_init[i] = datetime2huxtinputs(omni_int['datetime'][i])
+        cr[i], cr_lon_init[i] = Hin.datetime2huxtinputs(omni_int['datetime'][i])
 
     omni_int['Carr_lon'] = cr_lon_init.value  # remove unit as this confuses pd.DataFrame.copy() needed later
     omni_int['Carr_lon_unwrap'] = np.unwrap(omni_int['Carr_lon'].to_numpy())
@@ -291,8 +284,8 @@ def generate_vCarr_from_OMNI(runstart, runend, nlon_grid=None, omni_input=None, 
         Elong = omni_int['Carr_lon'][t_id] * u.rad
 
         # get the Carrington longitude difference from current Earth pos
-        dlong_back = zerototwopi(lon_grid.value - Elong.value) * u.rad
-        dlong_forward = zerototwopi(Elong.value - lon_grid.value) * u.rad
+        dlong_back = Hin.zerototwopi(lon_grid.value - Elong.value) * u.rad
+        dlong_forward = Hin.zerototwopi(Elong.value - lon_grid.value) * u.rad
 
         dt_back = (dlong_back / omega_synodic).to(u.day)
         dt_forward = (dlong_forward / omega_synodic).to(u.day)
@@ -421,7 +414,7 @@ def generate_vCarr_from_OMNI_DTW(runstart, runend, nlon=None, omni_input=None, r
     omni[[dtw_on]] = omni[[dtw_on]].interpolate(method='linear', axis=0).ffill().bfill()
 
     # get the carrington longitude
-    temp = datetime2huxtinputs(omni['datetime'].to_numpy())
+    temp = Hin.datetime2huxtinputs(omni['datetime'].to_numpy())
     omni['carr_lon'] = temp[1].value
     # unwrap this.
     omni['clon_unwrap'] = np.unwrap(omni['carr_lon'].to_numpy())
@@ -434,7 +427,7 @@ def generate_vCarr_from_OMNI_DTW(runstart, runend, nlon=None, omni_input=None, r
     omni_res.reset_index(drop=True, inplace=True)
 
     # compute carrington longitude of earth for each point
-    temp = datetime2huxtinputs(omni_res['datetime'].to_numpy())
+    temp = Hin.datetime2huxtinputs(omni_res['datetime'].to_numpy())
     omni_res['carr_lon'] = temp[1].value
     # unwrap this.
     omni_res['clon_unwrap'] = np.unwrap(omni_res['carr_lon'].to_numpy())
@@ -1125,7 +1118,7 @@ def omniHUXt_forecast(ftime, simtime=27.27*u.day,
     Earth_R_km = np.interp(Time(ftime).mjd, all_time, ephem['EARTH']['HEEQ']['radius'][:]) * u.km
     ephem.close()
     
-    vcarr_rmin_back = map_v_boundary_inwards(omni_lon['V'].to_numpy()*u.km/u.s, 
+    vcarr_rmin_back = Hin.map_v_boundary_inwards(omni_lon['V'].to_numpy()*u.km/u.s, 
                                     Earth_R_km.to(u.solRad), rmin)
     
     # interp to typical HUXt resolution
@@ -1137,7 +1130,7 @@ def omniHUXt_forecast(ftime, simtime=27.27*u.day,
     vcarr_rmin_back_cnn = correct_inner_vlon_cnn_onnx(vlon.reshape(-1, 1))
     
     # set up the model run to start 5 days before the forecast time, to allow for CMEs
-    cr, cr_lon_init = datetime2huxtinputs(ftime - datetime.timedelta(days=buffertime.value))
+    cr, cr_lon_init = Hin.datetime2huxtinputs(ftime - datetime.timedelta(days=buffertime.value))
     
     # Get Earth latitude - using get_earth_lat if available, otherwise default to 0
     Elat = Hin.get_earth_lat(ftime)
@@ -1289,7 +1282,7 @@ def omniHUXt_reconstruction(start_time, end_time,
     
     for t in range(nt):
         # Map both velocity and magnetic field with the same longitudinal shift
-        vcarr_rmin[:, t], bcarr_rmin[:, t] = map_v_boundary_inwards(
+        vcarr_rmin[:, t], bcarr_rmin[:, t] = Hin.map_v_boundary_inwards(
             vcarr_215[:, t], 
             ref_r, 
             rmin,
@@ -1337,7 +1330,7 @@ def omniHUXt_reconstruction(start_time, end_time,
                 # Scale density from 1 AU to inner boundary using Parker solution
                 rho_scaled = map_density_parker(rhocarr_215[:, t], ref_r, rmin)
                 # Apply longitudinal shift
-                _, rho_shifted = map_v_boundary_inwards(
+                _, rho_shifted = Hin.map_v_boundary_inwards(
                     vcarr_215[:, t],
                     ref_r,
                     rmin,
@@ -1370,7 +1363,7 @@ def omniHUXt_reconstruction(start_time, end_time,
                 # Scale temperature from 1 AU to inner boundary using Parker solution
                 temp_scaled = map_temperature_parker(tcarr_215[:, t] * u.K, ref_r, rmin)
                 # Apply longitudinal shift
-                _, temp_shifted = map_v_boundary_inwards(
+                _, temp_shifted = Hin.map_v_boundary_inwards(
                     vcarr_215[:, t],
                     ref_r,
                     rmin,
