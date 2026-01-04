@@ -5,6 +5,7 @@ import matplotlib as mpl
 import datetime
 from matplotlib.animation import FuncAnimation
 import numpy as np
+import os
 import pandas as pd
 from pathlib import Path
 from numba import jit
@@ -13,9 +14,9 @@ import sunpy
 from sunpy.coordinates import get_horizons_coord
 from appdirs import user_data_dir
 
-import huxt.huxt as H
-import huxt.huxt_inputs as Hin
-import huxt.huxt_insitu as Hinsitu
+from . import huxt as h
+from . import huxt_inputs as hin
+from . import huxt_insitu as hinsitu
 
 mpl.rc("axes", labelsize=16)
 mpl.rc("ytick", labelsize=16)
@@ -65,7 +66,7 @@ def plot(model, time, save=False, tag='', fighandle=np.nan, axhandle=np.nan, min
     id_t = np.argmin(np.abs(model.time_out - time))
 
     # Get plotting data
-    lon_arr, dlon, nlon = H.longitude_grid()
+    lon_arr, dlon, nlon = h.longitude_grid()
     lon, rad = np.meshgrid(lon_arr.value, model.r.value)
 
     orig_cmap = mpl.cm.viridis
@@ -354,7 +355,7 @@ def plot_compressible(model, time, save=False, tag='', fighandle=np.nan, minimal
     id_t = np.argmin(np.abs(model.time_out - time))
 
     # Get plotting data
-    lon_arr, dlon, nlon = H.longitude_grid()
+    lon_arr, dlon, nlon = h.longitude_grid()
     lon, rad = np.meshgrid(lon_arr.value, model.r.value)
 
     # Prepare data arrays for velocity, density, and temperature
@@ -1153,7 +1154,7 @@ def plot_earth_timeseries(model, plot_omni=True, save=False, tag=''):
 
     if plot_omni:
         # grab the omni data
-        data = Hinsitu.get_omni(starttime, endtime)
+        data = hinsitu.get_omni(starttime, endtime)
         # plot the period of interest
         mask = (data['datetime'] >= starttime) & (data['datetime'] <= endtime)
         plotdata = data[mask]
@@ -1465,7 +1466,7 @@ def plot_bpol(model, time, save=False, tag='', fighandle=np.nan, axhandle=np.nan
     id_t = np.argmin(np.abs(model.time_out - time))
 
     # Get plotting data
-    lon_arr, dlon, nlon = H.longitude_grid()
+    lon_arr, dlon, nlon = h.longitude_grid()
     lon, rad = np.meshgrid(lon_arr.value, model.r.value)
     mymap = mpl.cm.PuOr
     v_sub = model.b_grid[id_t, :, :].copy()
@@ -2012,13 +2013,13 @@ def run_WSA_HUXt_td_wedge_about_observer(start_dt, stop_dt, vel_path, vel_format
         print('Runnig HUXt at lat = ' + str(lat) + ' degrees')
         thislat = (lat*np.pi/180)*u.rad
         # create the HUXt input from the WSA files
-        vlongs, brlongs, lon, mjds, times = Hin.huxt_td_input_from_WSA_runs(vel_path, start_dt, stop_dt,
+        vlongs, brlongs, lon, mjds, times = hin.huxt_td_input_from_WSA_runs(vel_path, start_dt, stop_dt,
                                                                             latitude=thislat, deacc=deacc,
                                                                             input_res_days=0.1,
                                                                             format_template=vel_format_template)
 
         # set up the model, with (optional) time-dependent bpol boundary conditions
-        model = Hin.set_time_dependent_boundary(vlongs, mjds, start_dt, simtime, lon_start=obj_min_lon*u.rad,
+        model = hin.set_time_dependent_boundary(vlongs, mjds, start_dt, simtime, lon_start=obj_min_lon*u.rad,
                                                 lon_stop=obj_max_lon*u.rad, r_min=r_min, r_max=obj_max_r*u.solRad,
                                                 bgrid_Carr=brlongs, dt_scale=4, latitude=thislat, frame='sidereal')
         model.solve([])
