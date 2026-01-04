@@ -1238,12 +1238,20 @@ def omniHUXt_forecast(ftime, simtime=27.27*u.day,
     ephem.close()
     
     vcarr_rmin_back = Hin.map_v_boundary_inwards(omni_lon['V'].to_numpy()*u.km/u.s, 
-                                    Earth_R_km.to(u.solRad), rmin)
+                                    Earth_R_km.to(u.solRad), rmin,
+                                    b_orig=-omni_lon['BX_GSE'].to_numpy())
+    
+    # Extract mapped velocity and magnetic field
+    if isinstance(vcarr_rmin_back, tuple):
+        vcarr_rmin_back, bcarr_rmin_back = vcarr_rmin_back
+    else:
+        bcarr_rmin_back = None
     
     # interp to typical HUXt resolution
     dphi = 2*np.pi/H.huxt_constants()['nlong']
     longs = np.arange(dphi/2, 2*np.pi, dphi)
     vlon = np.interp(longs, omni_lon['lon_carr'], vcarr_rmin_back)
+    blon = np.interp(longs, omni_lon['lon_carr'], bcarr_rmin_back) if bcarr_rmin_back is not None else None
     
     # apply the CNN to the backmapped data
     vcarr_rmin_back_cnn = correct_inner_vlon_cnn_onnx(vlon.reshape(-1, 1))
@@ -1294,6 +1302,7 @@ def omniHUXt_forecast(ftime, simtime=27.27*u.day,
     
     if run_2d:
         model = H.HUXt(v_boundary=vcarr_rmin_back_cnn.flatten() * u.km/u.s, 
+                      b_boundary=blon, 
                       cr_num=cr, cr_lon_init=cr_lon_init,
                       simtime=simtime, r_min=rmin, r_max=rmax, 
                       dt_scale=dt_scale, latitude=Elat, frame='synodic', 
@@ -1301,6 +1310,7 @@ def omniHUXt_forecast(ftime, simtime=27.27*u.day,
                       rho_boundary=rho_boundary, temp_boundary=temp_boundary)
     else:
         model = H.HUXt(v_boundary=vcarr_rmin_back_cnn.flatten() * u.km/u.s, 
+                      b_boundary=blon, 
                       cr_num=cr, cr_lon_init=cr_lon_init,
                       simtime=simtime, r_min=rmin, r_max=rmax, 
                       dt_scale=dt_scale, latitude=Elat, frame='synodic', 
