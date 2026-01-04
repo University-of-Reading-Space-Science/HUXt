@@ -105,6 +105,101 @@ def map_temperature_parker(temperature, r_from, r_to, gamma=1.5):
     return temperature * r_ratio**alpha
 
 
+def density_from_speed(v, rmin):
+    """
+    Calculate mass density from solar wind speed using empirical relations.
+    
+    Uses a quadratic fit derived from OMNI data (1994-present, non-ICME periods)
+    mapped to 0.1 AU via adiabatic Parker solution, then scaled to the requested
+    inner boundary radius.
+    
+    The empirical relation at 0.1 AU is:
+    n = 0.003454*v² - 5.0899*v + 2124.72 [cm⁻³]
+    
+    This is then scaled to the inner boundary using mass conservation (n ∝ 1/r²)
+    and converted to mass density in kg/m³.
+    
+    Args:
+        v: Solar wind speed (scalar or array). Can be in km/s or astropy Quantity.
+        rmin: Inner boundary radius (astropy Quantity with length units)
+    
+    Returns:
+        Mass density at rmin (astropy Quantity in kg/m³)
+    
+    Example:
+        >>> v = 400  # km/s
+        >>> rho = density_from_speed(v, 21.5*u.solRad)
+    """
+    # Handle units if provided
+    if hasattr(v, 'unit'):
+        v_value = v.to(u.km/u.s).value
+    else:
+        v_value = v
+    
+    # Quadratic fit coefficients at 0.1 AU (21.5 Rs)
+    a = 0.003454  # cm⁻³ / (km/s)²
+    b = -5.0899   # cm⁻³ / (km/s)
+    c = 2124.72   # cm⁻³
+    
+    # Compute number density at 0.1 AU
+    n_01AU = a * v_value**2 + b * v_value + c  # cm⁻³
+    
+    # Scale to inner boundary using 1/r² scaling
+    r_ratio_sq = (21.5 / rmin.to(u.solRad).value)**2
+    n_inner = n_01AU * r_ratio_sq  # cm⁻³
+    
+    # Convert to mass density (kg/m³)
+    m_p = 1.6726e-27  # proton mass in kg
+    rho = n_inner * m_p * 1e6  # kg/m³
+    
+    return rho * (u.kg / u.m**3)
+
+
+def temperature_from_speed(v, rmin):
+    """
+    Calculate temperature from solar wind speed using empirical relations.
+    
+    Uses a power law fit derived from OMNI data (1994-present, non-ICME periods)
+    mapped to 0.1 AU via adiabatic Parker solution, then scaled to the requested
+    inner boundary radius.
+    
+    The empirical relation at 0.1 AU is:
+    T = 0.72*v^2.323 - 65789 [K]
+    
+    This is then scaled to the inner boundary using adiabatic Parker solution
+    scaling (T ∝ r⁻¹ for γ=1.5).
+    
+    Args:
+        v: Solar wind speed (scalar or array). Can be in km/s or astropy Quantity.
+        rmin: Inner boundary radius (astropy Quantity with length units)
+    
+    Returns:
+        Temperature at rmin (astropy Quantity in K)
+    
+    Example:
+        >>> v = 400  # km/s
+        >>> T = temperature_from_speed(v, 21.5*u.solRad)
+    """
+    # Handle units if provided
+    if hasattr(v, 'unit'):
+        v_value = v.to(u.km/u.s).value
+    else:
+        v_value = v
+    
+    # Power law fit coefficients at 0.1 AU (21.5 Rs)
+    a = 0.72      # K/(km/s)^n
+    n = 2.323     # power law exponent
+    b = -65789    # K offset
+    
+    # Compute temperature at 0.1 AU
+    T_01AU = a * v_value**n + b  # K
+    
+    # Scale to inner boundary using Parker solution (T ∝ r⁻¹)
+    T_inner = map_temperature_parker(T_01AU * u.K, 21.5*u.solRad, rmin)
+    
+    return T_inner
+
+
 def get_omni(starttime, endtime):
     """
     A function to grab and process the OMNI COHO1HR data using FIDO
@@ -1011,7 +1106,8 @@ def omniHUXt_forecast(ftime, simtime=27.27*u.day,
                         rmin=21.5*u.solRad, rmax=230*u.solRad, 
                         dt_scale=4,
                         omni_input=None, buffertime=5*u.day,
-                        run_2d=False):
+                        run_2d=False, solver='upwind',
+                        rho_source='speed', temp_source='speed'):
     """
     Create a HUXt solar wind forecast initialized from in-situ OMNI observations.
     
@@ -1039,13 +1135,24 @@ def omniHUXt_forecast(ftime, simtime=27.27*u.day,
     omni_input : pandas.DataFrame, optional
         Pre-loaded OMNI data with ICMEs already removed. If None, the function
         will download OMNI data and remove ICMEs automatically. Should contain
-        columns 'datetime', 'mjd', 'V', and 'BX_GSE'.
+        columns 'datetime', 'mjd', 'V', 'BX_GSE', and optionally 'N', 'T'.
     buffertime : astropy.units.Quantity, optional
         Buffer time before ftime to start the simulation, allowing transients
         to propagate through the domain. Default is 5 days.
     run_2d : bool, optional
         If False (default), runs a 1D radial simulation at Earth's longitude
         (lon_out=0). If True, runs a full 2D simulation across all longitudes.
+    solver : str, optional
+        Solver type: 'upwind' (default) or 'euler'. For compressible solvers,
+        density and temperature must also be provided.
+    rho_source : str, optional
+        Source for density when solver != 'upwind'. Options:
+        - 'speed': Derive from speed using empirical relations (default)
+        - 'omni': Use OMNI data with 1/r^2 scaling from reference radius to rmin
+    temp_source : str, optional
+        Source for temperature when solver != 'upwind'. Options:
+        - 'speed': Derive from speed using empirical relations (default)
+        - 'omni': Use OMNI data with Parker-like radial scaling
     
     Returns
     -------
@@ -1061,12 +1168,20 @@ def omniHUXt_forecast(ftime, simtime=27.27*u.day,
     
     Earth's orbital position is obtained from the built-in HUXt ephemeris data.
     
+    For compressible solvers:
+    - 'speed' source uses empirical relations from solar wind observations
+    - 'omni' source scales OMNI measurements: density by (r_ref/r)^2, 
+      temperature by approximate Parker solution scaling
+    
     Examples
     --------
     >>> import datetime
     >>> ftime = datetime.datetime(2022, 5, 1)
     >>> model = omniHUXt_forecast(ftime, simtime=27*u.day)
     >>> model.solve([])
+    >>> # For compressible solver
+    >>> model = omniHUXt_forecast(ftime, solver='euler', 
+    ...                           rho_source='speed', temp_source='speed')
     >>> # Extract Earth time series
     >>> import huxt.huxt_analysis as HA
     >>> ts = HA.get_observer_timeseries(model, observer='Earth')
@@ -1084,6 +1199,10 @@ def omniHUXt_forecast(ftime, simtime=27.27*u.day,
     # cut out the precise bit of the OMNI data that is required
     mask = (omni_input['datetime'] <= ftime) 
     omni_input = omni_input.loc[mask]
+    
+    # Determine if we need density and temperature from OMNI
+    need_compressible = solver != 'upwind'
+    need_omni_nt = need_compressible and (rho_source == 'omni' or temp_source == 'omni')
     
     # add the carrington longitude to the omni data
     def remainder(cr_frac):
@@ -1129,6 +1248,43 @@ def omniHUXt_forecast(ftime, simtime=27.27*u.day,
     # apply the CNN to the backmapped data
     vcarr_rmin_back_cnn = correct_inner_vlon_cnn_onnx(vlon.reshape(-1, 1))
     
+    # Handle density and temperature for compressible solvers
+    rho_boundary = None
+    temp_boundary = None
+    
+    if need_compressible:
+        # Density
+        if rho_source == 'speed':
+            # Use empirical relation derived from OMNI data
+            rho_boundary = density_from_speed(vcarr_rmin_back_cnn.flatten(), rmin)
+        elif rho_source == 'omni':
+            # Get density from OMNI and map to inner boundary
+            # First interpolate OMNI density to the longitude grid
+            n_omni = np.interp(longs, omni_lon['lon_carr'], omni_lon['N'].to_numpy())  # cm^-3
+            
+            # Convert to mass density
+            m_p = 1.6726e-27  # proton mass in kg
+            rho_1AU = n_omni * m_p * 1e6 * (u.kg / u.m**3)
+            
+            # Map from Earth's distance to inner boundary using Parker solution
+            rho_boundary = map_density_parker(rho_1AU, Earth_R_km.to(u.solRad), rmin)
+        else:
+            raise ValueError(f"Unknown rho_source: {rho_source}. Use 'speed' or 'omni'.")
+        
+        # Temperature
+        if temp_source == 'speed':
+            # Use empirical relation derived from OMNI data
+            temp_boundary = temperature_from_speed(vcarr_rmin_back_cnn.flatten(), rmin)
+        elif temp_source == 'omni':
+            # Get temperature from OMNI and map to inner boundary
+            # First interpolate OMNI temperature to the longitude grid
+            T_omni = np.interp(longs, omni_lon['lon_carr'], omni_lon['T'].to_numpy()) * u.K
+            
+            # Map from Earth's distance to inner boundary using Parker solution
+            temp_boundary = map_temperature_parker(T_omni, Earth_R_km.to(u.solRad), rmin)
+        else:
+            raise ValueError(f"Unknown temp_source: {temp_source}. Use 'speed' or 'omni'.")
+    
     # set up the model run to start 5 days before the forecast time, to allow for CMEs
     cr, cr_lon_init = Hin.datetime2huxtinputs(ftime - datetime.timedelta(days=buffertime.value))
     
@@ -1141,13 +1297,15 @@ def omniHUXt_forecast(ftime, simtime=27.27*u.day,
                       cr_num=cr, cr_lon_init=cr_lon_init,
                       simtime=simtime, r_min=rmin, r_max=rmax, 
                       dt_scale=dt_scale, latitude=Elat, frame='synodic', 
-                      track_cmes=False)
+                      track_cmes=False, solver=solver,
+                      rho_boundary=rho_boundary, temp_boundary=temp_boundary)
     else:
         model = H.HUXt(v_boundary=vcarr_rmin_back_cnn.flatten() * u.km/u.s, 
                       cr_num=cr, cr_lon_init=cr_lon_init,
                       simtime=simtime, r_min=rmin, r_max=rmax, 
                       dt_scale=dt_scale, latitude=Elat, frame='synodic', 
-                      track_cmes=False, lon_out=0*u.rad)
+                      track_cmes=False, lon_out=0*u.rad, solver=solver,
+                      rho_boundary=rho_boundary, temp_boundary=temp_boundary)
     return model
 
 
@@ -1299,27 +1457,8 @@ def omniHUXt_reconstruction(start_time, end_time,
     if need_compressible:
         # Density
         if rho_source == 'speed':
-            # Use empirical relation derived from OMNI data via adiabatic Parker solution
-            # Quadratic fit at 0.1 AU: n = a*v² + b*v + c from OMNI 1994-present
-            # (all non-ICME data, mapped to 0.1 AU then binned)
-            # Best fit: n = 0.003454*v² - 5.0899*v + 2124.72 cm^-3 (quadratic)
-            # Scale to inner boundary: n ∝ 1/r², so n(r_inner) = n(0.1 AU) * (21.5/r_inner)²
-            # Convert to mass density in kg/m^3
-            r_ratio_sq = (21.5 / (rmin.to(u.solRad).value))**2
-            
-            # Quadratic fit coefficients at 0.1 AU
-            a = 0.003454  # cm^-3 / (km/s)²
-            b = -5.0899   # cm^-3 / (km/s)
-            c = 2124.72   # cm^-3
-            
-            # Compute density at 0.1 AU
-            n_01AU = a * vcarr_rmin_cnn**2 + b * vcarr_rmin_cnn + c  # cm^-3
-            
-            # Scale to inner boundary
-            n_inner = n_01AU * r_ratio_sq  # cm^-3
-            
-            m_p = 1.6726e-27  # proton mass in kg
-            rhogrid_carr = n_inner * m_p * 1e6 * (u.kg / u.m**3)  # convert to kg/m^3
+            # Use empirical relation derived from OMNI data
+            rhogrid_carr = density_from_speed(vcarr_rmin_cnn, rmin)
         elif rho_source == 'omni':
             # Map OMNI density from ref_r (1 AU) to rmin (inner boundary)
             # Scale UP using Parker solution: rho ∝ 1/r², so rho(0.1 AU) = rho(1 AU) × (1 AU/0.1 AU)²
@@ -1343,16 +1482,8 @@ def omniHUXt_reconstruction(start_time, end_time,
         
         # Temperature
         if temp_source == 'speed':
-            # Use empirical relation derived from OMNI data via adiabatic Parker solution
-            # Power law fit at 0.1 AU: T = a*v^n + b from OMNI 1994-present (all non-ICME, mapped to 0.1 AU then binned)
-            # Best fit: T = 0.72*v^2.323 - 65789 K (power law with exponent ~2.3)
-            # Derived using adiabatic scaling: T(0.1 AU) = T(1 AU) × 10
-            # Scale to inner boundary using adiabatic Parker solution
-            a = 0.72  # K/(km/s)^n
-            n = 2.323   # power law exponent
-            b = -65789  # K offset
-            T_01AU = a * vcarr_rmin_cnn**n + b  # K at 0.1 AU (21.5 Rs)
-            tempgrid_carr = map_temperature_parker(T_01AU * u.K, 21.5*u.solRad, rmin)
+            # Use empirical relation derived from OMNI data
+            tempgrid_carr = temperature_from_speed(vcarr_rmin_cnn, rmin)
         elif temp_source == 'omni':
             # Map OMNI temperature from ref_r (1 AU) to rmin (inner boundary)
             # Scale UP using Parker solution: T ∝ r^(-0.3), so T(0.1 AU) = T(1 AU) × (1 AU/0.1 AU)^0.3
