@@ -12,12 +12,12 @@ import huxt.huxt_analysis as HA
 import huxt.huxt_inputs as Hin
 import huxt.huxt_insitu as Hinsitu
 
-standard_tests = False
-compressible_tests = False
+standard_tests = True
+compressible_tests = True
 insitu_tests = False
-insitu_compressible_tests = True
+insitu_compressible_tests = False
 
-simtime = 4*u.day
+simtime = 5*u.day
 
 # <codecell> Upwind and compressible tests
 
@@ -27,43 +27,7 @@ if standard_tests:
     print("="*60)
     print(f"Matplotlib backend: {matplotlib.get_backend()}")
     plt.ion()  # Turn on interactive mode
-    """
-    # Form longitudinal boundary conditions - background wind of 400 km/s with two fast streams.
-    v_boundary = np.ones(128) * 400 * (u.km/u.s)
-    v_boundary[30:50] = 600 * (u.km/u.s)
-    v_boundary[95:125] = 700 * (u.km/u.s)
 
-    # This boundary condition looks like
-    fig, ax = plt.subplots(figsize=(10,5))
-    ax.plot(v_boundary,'k-')
-    ax.set_xlabel('Longitude bin')
-    ax.set_ylabel('Input Wind Speed (km/s)')
-
-    # Setup HUXt to do a 5-day simulation, with model output every 4 timesteps (roughly half and hour time step), looking at 0 longitude
-    model = H.HUXt(v_boundary=v_boundary, lon_out=0.0*u.deg, simtime=10*u.day, dt_scale=4, compressible=True)
-
-    # Solve these conditions, with no ConeCMEs added.
-    cme_list = []
-    model.solve(cme_list)
-
-
-
-    # Plot the time series of the ambient wind profile at a fixed radius. 
-    r = 1.0*u.AU
-    #HA.plot_timeseries(model, r, lon=0.0)
-
-
-
-    # Save the data
-    out_path = model.save(tag='cone_cme_test')
-
-    # And load it back in with
-    model2, cme_list2 = H.load_HUXt_run(out_path)
-
-    # Plot the time series of the ambient wind profile at a fixed radius. 
-    r = 1.0*u.AU
-    HA.plot_timeseries(model2, r, lon=0.0)
-    """
 
 
 
@@ -142,27 +106,31 @@ if standard_tests:
     HA.plot(model_incomp, time=t_interest)
     print(f"  -> Created figure(s). Current figures: {plt.get_fignums()}")
 
+    HA.animate(model_incomp, tag =  'incompressible_with_CME')
+
 
 if compressible_tests:
     print("\n" + "="*60)
     print("Starting compressible model (HLLC solver)...")
     print("="*60)
-    model_comp_cgf = H.HUXt(v_boundary=vr_in, b_boundary=br_in,#lon_start=350*u.deg, lon_stop = 10*u.deg,
+    model_comp = H.HUXt(v_boundary=vr_in, b_boundary=br_in,#lon_start=350*u.deg, lon_stop = 10*u.deg,
                             #lon_out=0.0*u.rad,
                             simtime=simtime, dt_scale=4, 
                         solver ='hllc')
     print("Model initialized. Starting solve...")
-    model_comp_cgf.solve(cme_list, streak_carr=lon_grid)
+    model_comp.solve(cme_list, streak_carr=lon_grid)
     print("Solve complete!")
     #model_comp_cgf.solve([])
     print("Creating plot 3: Earth timeseries (compressible)...")
-    HA.plot_earth_timeseries(model_comp_cgf, plot_omni=False)
+    HA.plot_earth_timeseries(model_comp, plot_omni=False)
     print(f"  -> Created figure(s). Current figures: {plt.get_fignums()}")
-    ts_cgf = HA.get_observer_timeseries(model_comp_cgf)
+    ts_cgf = HA.get_observer_timeseries(model_comp)
 
     print("Creating plot 4: Compressible spatial plot...")
-    HA.plot_compressible(model_comp_cgf, time=t_interest)
+    HA.plot_compressible(model_comp, time=t_interest)
     print(f"  -> Created figure(s). Current figures: {plt.get_fignums()}")
+
+    HA.animate(model_comp, tag = 'compressible_with_CME')
 
 # model_comp_pluto = H.HUXt(cr_num=cr,
 #                         v_boundary=vr_in, #lon_start=350*u.deg, lon_stop = 10*u.deg,
@@ -186,7 +154,7 @@ if compressible_tests:
 # input()
 
 #HA.plot(model_incomp, t_interest)
-#HA.animate(model_incomp, tag =  'incompressible_with_CME')
+
 
 
 

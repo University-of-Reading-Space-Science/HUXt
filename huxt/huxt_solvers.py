@@ -50,6 +50,79 @@ __all__ = [
 SMALL_RHO = 1e-30
 SMALL_P = 1e-30
 
+@njit
+def _advect_particle_rk2(r_p, v_grid, r_grid, dt, behavior):
+    """
+    Advect a single particle using RK2 integration.
+    
+    Parameters
+    ----------
+    r_p : float
+        Current particle radius
+    v_grid : array_like
+        Velocity on radial grid
+    r_grid : array_like
+        Radial grid points
+    dt : float
+        Time step
+    behavior : int
+        0: 'delete' (set active=False if out of bounds)
+        1: 'clamp' (clamp to outer boundary)
+        
+    Returns
+    -------
+    r_new : float
+        New particle radius
+    v_new : float
+        Velocity of particle for this step
+    is_active : bool
+        Whether particle is still active
+    """
+    # Check current bounds
+    if r_p < r_grid[0]: 
+        r_new = r_grid[0]
+    elif r_p > r_grid[-1]:
+        if behavior == 0:
+            return r_p, 0.0, False
+        else:
+            r_new = r_grid[-1]
+            # Since we are clamping, if we are at the boundary, we stay there if flow is outward
+            # But we still check velocity to see if it brings us back? 
+            # Usually solar wind is outward.
+    else:
+        r_new = r_p
+        
+    r_p = r_new
+
+    # RK2 Integration
+    # 1. Evaluate v at current position
+    v_p = np.interp(r_p, r_grid, v_grid)
+    
+    # 2. Half step
+    r_mid = r_p + 0.5 * v_p * dt
+    
+    # Clamp intermediate position to grid for stability
+    if r_mid < r_grid[0]: r_mid = r_grid[0]
+    if r_mid > r_grid[-1]: r_mid = r_grid[-1]
+    
+    # 3. Evaluate v at mid point
+    v_mid = np.interp(r_mid, r_grid, v_grid)
+    
+    # 4. Full step
+    r_final = r_p + v_mid * dt
+    
+    # Boundary handling
+    is_active = True
+    if r_final < r_grid[0]:
+        r_final = r_grid[0]
+    elif r_final > r_grid[-1]:
+        if behavior == 0:
+            is_active = False
+        else:
+            r_final = r_grid[-1]
+            
+    return r_final, v_mid, is_active
+
 # Physical constants (CGS units)
 K_B_CGS = 1.380649e-16      # erg/K
 M_P_CGS = 1.67262192e-24    # g
@@ -783,7 +856,7 @@ class CompressibleSolver:
         return _get_dt(self.U, self.nr, self.dx, self.gamma, self.cfl)
     
     def solve(self, t_grid, v_bc_func, rho_bc_func, T_bc_func, 
-              num_particles=0, particle_injection_rate=None):
+              num_particles=0, particle_injection_rate=None, particle_release_rate=None):
         """
         Run simulation over time grid.
         
@@ -842,20 +915,33 @@ class CompressibleSolver:
             particles_enabled = True
             for group_name, n_p in num_particles.items():
                 inj_times = particle_injection_rate[group_name]
+                rel_times = particle_release_rate[group_name] if particle_release_rate and group_name in particle_release_rate else inj_times
+                
+                # Determine boundary behavior
+                # Default is delete (0), CMEs are clamped (1)
+                behavior = 0
+                if 'cme' in group_name.lower():
+                    behavior = 1
+                
                 particle_groups[group_name] = {
                     'n_particles': n_p,
                     'injection_times': inj_times,
+                    'release_times': rel_times,
                     'r': [], 'v': [], 't': [], 't_inject': [], 'active': [],
-                    'particles_injected': 0
+                    'particles_injected': 0,
+                    'behavior': behavior
                 }
         elif isinstance(num_particles, int) and num_particles > 0:
             particles_enabled = True
             inj_times = particle_injection_rate if particle_injection_rate is not None else np.zeros(num_particles)
+            rel_times = particle_release_rate if particle_release_rate is not None else inj_times
             particle_groups['default'] = {
                 'n_particles': num_particles,
                 'injection_times': inj_times,
+                'release_times': rel_times,
                 'r': [], 'v': [], 't': [], 't_inject': [], 'active': [],
-                'particles_injected': 0
+                'particles_injected': 0,
+                'behavior': 0
             }
         
         # Time loop
@@ -897,25 +983,32 @@ class CompressibleSolver:
                             group['particles_injected'] += 1
                         
                         # Advect particles (RK2)
+                        behavior = group.get('behavior', 0)
                         for i in range(len(group['active'])):
                             if group['active'][i]:
-                                r_p = group['r'][i][-1]
-                                if r_p < self.r[0] or r_p > self.r[-1]:
-                                    group['active'][i] = False
+                                # Check if particle is pinned to boundary
+                                if self.time < group['release_times'][i]:
+                                    r_new = self.r[0]
+                                    v_new = v_curr[0]
+                                    
+                                    group['r'][i].append(r_new)
+                                    group['v'][i].append(v_new)
+                                    group['t'][i].append(self.time)
                                     continue
                                 
-                                v_p = np.interp(r_p, self.r, v_curr)
-                                r_mid = r_p + 0.5 * v_p * dt
+                                r_p = group['r'][i][-1]
                                 
-                                if r_mid < self.r[0] or r_mid > self.r[-1]:
-                                    v_mid = v_p
-                                else:
-                                    v_mid = np.interp(r_mid, self.r, v_curr)
+                                # Use compiled function
+                                r_new, v_new, is_active = _advect_particle_rk2(
+                                    r_p, v_curr, self.r, dt, behavior
+                                )
                                 
-                                r_new = r_p + v_mid * dt
-                                group['r'][i].append(r_new)
-                                group['v'][i].append(v_mid)
-                                group['t'][i].append(self.time)
+                                group['active'][i] = is_active
+                                
+                                if is_active:
+                                    group['r'][i].append(r_new)
+                                    group['v'][i].append(v_new)
+                                    group['t'][i].append(self.time)
             
             # Save snapshot
             for i in range(self.nr):

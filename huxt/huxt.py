@@ -1116,11 +1116,13 @@ class HUXt:
         # Set up particle tracking for this longitude
         num_particles = 0
         particle_injection_rate = None
+        particle_release_rate = None
         hcs_polarities = []  # Initialize HCS polarities list
         
         if self.track_cmes or self.track_b or self.track_streak:
             num_particles = {}
             particle_injection_rate = {}
+            particle_release_rate = {}
             
             # CME particles: track leading and trailing edges
             if self.track_cmes and n_cme > 0:
@@ -1138,8 +1140,14 @@ class HUXt:
                         
                         num_particles[f'cme_{cme_id}_leading'] = 1
                         num_particles[f'cme_{cme_id}_trailing'] = 1
+                        
                         particle_injection_rate[f'cme_{cme_id}_leading'] = [t_leading]
-                        particle_injection_rate[f'cme_{cme_id}_trailing'] = [t_trailing]
+                        particle_release_rate[f'cme_{cme_id}_leading'] = [t_leading]
+                        
+                        # Fix for CME inner boundary: inject trailing edge at START of CME
+                        # but hold it at the boundary until the END of the CME (release time)
+                        particle_injection_rate[f'cme_{cme_id}_trailing'] = [t_leading]
+                        particle_release_rate[f'cme_{cme_id}_trailing'] = [t_trailing]
             
             # HCS particles: inject at each polarity change
             # Also track the polarity direction for each crossing
@@ -1205,7 +1213,8 @@ class HUXt:
             riemann=self.solver,  # Pass the Riemann solver choice
             verbose=False,  # Suppress detailed solver output in parallel mode
             num_particles=num_particles,
-            particle_injection_rate=particle_injection_rate
+            particle_injection_rate=particle_injection_rate,
+            particle_release_rate=particle_release_rate
         )
         
         # Extract particle positions at output times
@@ -2333,7 +2342,8 @@ def zerototwopi(angles):
 
 def solve_radial_compressible(v_bc_kms, rho_bc_kgm3, T_bc_K, model_time, time_out, 
                                r_grid, gamma, nt_out, nr, riemann='hllc', verbose=False,
-                               num_particles=0, particle_injection_rate=None, solver_instance=None):
+                               num_particles=0, particle_injection_rate=None, particle_release_rate=None,
+                               solver_instance=None):
     """
     Solve 1D radial solar wind expansion using a compressible solver with selectable Riemann solver.
     
@@ -2370,6 +2380,9 @@ def solve_radial_compressible(v_bc_kms, rho_bc_kgm3, T_bc_K, model_time, time_ou
     particle_injection_rate : array-like or dict, optional
         Injection times (seconds) for particles in model_time coordinates.
         If num_particles is dict, this must also be dict with matching keys.
+    particle_release_rate : array-like or dict, optional
+        Release times (seconds) for particles.
+        If None, default to injection times.
     solver_instance : CompressibleSolver, optional
         Pre-initialized solver instance to reuse. If None, a new one is created.
     
@@ -2444,7 +2457,8 @@ def solve_radial_compressible(v_bc_kms, rho_bc_kgm3, T_bc_K, model_time, time_ou
         rho_bc_func=rho_bc_func,
         T_bc_func=T_bc_func,
         num_particles=num_particles,
-        particle_injection_rate=particle_injection_rate
+        particle_injection_rate=particle_injection_rate,
+        particle_release_rate=particle_release_rate
     )
     
     # Extract output times (skip spin-up)
@@ -2754,12 +2768,13 @@ def solve_radial(vinput, binput, iscmeinput, model_time, rrel, params,
                         v_cmeparticles[n, bound] = v_test
 
                 if r_cmeparticles[n, 0] > rgrid[-1]:
-                    # If the leading edge is past the outer boundary, put it at the outer boundary
+                    # If the leading edge is past the outer boundary, clamp it at the outer boundary
                     r_cmeparticles[n, 0] = rgrid[-1]
 
                 if r_cmeparticles[n, 1] > rgrid[-1]:
-                    # If the trailing edge is past the outer boundary,delete
-                    r_cmeparticles[n, :] = rgrid[-1]
+                    # If the trailing edge is past the outer boundary, clamp it at the outer boundary
+                    # This prevents CME contours from being corrupted in plots
+                    r_cmeparticles[n, 1] = rgrid[-1]
 
         # Move the HCS test particles forward
         if t > 0:
