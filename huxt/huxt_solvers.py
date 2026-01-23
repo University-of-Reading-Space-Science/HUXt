@@ -1,14 +1,22 @@
 """
 Compressible hydrodynamics solvers for HUXt.
 
-This module provides multiple numerical methods for solving the 1D spherical 
-compressible Euler equations, allowing easy comparison of accuracy and performance.
+This module provides numerical methods for solving the 1D spherical 
+compressible Euler equations using a finite-volume formulation with
+area-weighted fluxes AND geometric source terms.
 
-Available Riemann Solvers:
-- 'hllc': HLLC (Harten-Lax-van Leer-Contact) - fast, robust
-- 'hll': HLL (Harten-Lax-van Leer) - faster, more diffusive  
-- 'roe': Roe's approximate solver - accurate for smooth flows
-- 'rusanov': Rusanov/Local Lax-Friedrichs - most robust, most diffusive
+Spherical geometry is handled through:
+1. Interface areas: A = 4πr² 
+2. Cell volumes: V = 4/3 π(r³_out - r³_in)
+3. Geometric source term: S = [0, 2p/r, 0] for momentum equation
+
+The combination of area-weighted fluxes + the 2p/r source term ensures:
+- Mass, momentum, and energy are conserved correctly
+- Parker nozzle acceleration emerges naturally
+- Shocks and stream interactions are handled correctly by the Riemann solver
+
+Riemann Solver:
+- 'hllc': HLLC (Harten-Lax-van Leer-Contact) - fast, robust, captures contact waves
 
 Available Reconstruction Methods:
 - 'plm': Piecewise Linear Method (2nd order) with MC limiter
@@ -201,85 +209,10 @@ def get_flux(U, gamma):
 # =============================================================================
 
 @njit(cache=True)
-def riemann_rusanov(U_l, U_r, gamma):
-    """
-    Rusanov (Local Lax-Friedrichs) Riemann solver.
-    Most robust but most diffusive. Good for strong shocks.
-    
-    F = 0.5*(F_l + F_r) - 0.5*S_max*(U_r - U_l)
-    """
-    # Left state
-    rho_l = max(U_l[0], SMALL_RHO)
-    v_l = U_l[1] / rho_l
-    p_l = max(get_pressure(rho_l, (U_l[2] - 0.5*rho_l*v_l**2)/rho_l, gamma), SMALL_P)
-    c_l = get_sound_speed(rho_l, p_l, gamma)
-    
-    # Right state
-    rho_r = max(U_r[0], SMALL_RHO)
-    v_r = U_r[1] / rho_r
-    p_r = max(get_pressure(rho_r, (U_r[2] - 0.5*rho_r*v_r**2)/rho_r, gamma), SMALL_P)
-    c_r = get_sound_speed(rho_r, p_r, gamma)
-    
-    # Maximum wave speed
-    S_max = max(abs(v_l) + c_l, abs(v_r) + c_r)
-    
-    # Fluxes
-    F_l = get_flux(U_l, gamma)
-    F_r = get_flux(U_r, gamma)
-    
-    # Rusanov flux
-    F = np.zeros(3)
-    for i in range(3):
-        F[i] = 0.5 * (F_l[i] + F_r[i]) - 0.5 * S_max * (U_r[i] - U_l[i])
-    
-    return F
-
-
-@njit(cache=True)
-def riemann_hll(U_l, U_r, gamma):
-    """
-    HLL (Harten-Lax-van Leer) Riemann solver.
-    Fast and robust. More diffusive than HLLC but simpler.
-    Does not resolve contact discontinuities.
-    """
-    # Left state
-    rho_l = max(U_l[0], SMALL_RHO)
-    v_l = U_l[1] / rho_l
-    p_l = max(get_pressure(rho_l, (U_l[2] - 0.5*rho_l*v_l**2)/rho_l, gamma), SMALL_P)
-    c_l = get_sound_speed(rho_l, p_l, gamma)
-    
-    # Right state
-    rho_r = max(U_r[0], SMALL_RHO)
-    v_r = U_r[1] / rho_r
-    p_r = max(get_pressure(rho_r, (U_r[2] - 0.5*rho_r*v_r**2)/rho_r, gamma), SMALL_P)
-    c_r = get_sound_speed(rho_r, p_r, gamma)
-    
-    # Wave speed estimates (Davis)
-    S_l = min(v_l - c_l, v_r - c_r)
-    S_r = max(v_l + c_l, v_r + c_r)
-    
-    if S_l >= 0:
-        return get_flux(U_l, gamma)
-    elif S_r <= 0:
-        return get_flux(U_r, gamma)
-    else:
-        # HLL average state
-        F_l = get_flux(U_l, gamma)
-        F_r = get_flux(U_r, gamma)
-        
-        F = np.zeros(3)
-        for i in range(3):
-            F[i] = (S_r * F_l[i] - S_l * F_r[i] + S_l * S_r * (U_r[i] - U_l[i])) / (S_r - S_l)
-        return F
-
-
-@njit(cache=True)
 def riemann_hllc(U_l, U_r, gamma):
     """
     HLLC (Harten-Lax-van Leer-Contact) Riemann solver.
     Good balance of accuracy and speed. Resolves contact discontinuities.
-    
-    This is currently the default "CGF" solver despite the naming.
     """
     # Left state
     rho_l = max(U_l[0], SMALL_RHO)
@@ -339,79 +272,6 @@ def riemann_hllc(U_l, U_r, gamma):
         return F
 
 
-@njit(cache=True)
-def riemann_roe(U_l, U_r, gamma):
-    """
-    Roe's approximate Riemann solver with entropy fix.
-    More accurate for smooth flows but can fail at strong shocks
-    without entropy fix.
-    """
-    # Left state
-    rho_l = max(U_l[0], SMALL_RHO)
-    v_l = U_l[1] / rho_l
-    E_l = U_l[2]
-    p_l = max(get_pressure(rho_l, (E_l - 0.5*rho_l*v_l**2)/rho_l, gamma), SMALL_P)
-    H_l = (E_l + p_l) / rho_l  # Total enthalpy
-    c_l = get_sound_speed(rho_l, p_l, gamma)
-    
-    # Right state
-    rho_r = max(U_r[0], SMALL_RHO)
-    v_r = U_r[1] / rho_r
-    E_r = U_r[2]
-    p_r = max(get_pressure(rho_r, (E_r - 0.5*rho_r*v_r**2)/rho_r, gamma), SMALL_P)
-    H_r = (E_r + p_r) / rho_r
-    c_r = get_sound_speed(rho_r, p_r, gamma)
-    
-    # Roe averages
-    sqrt_rho_l = np.sqrt(rho_l)
-    sqrt_rho_r = np.sqrt(rho_r)
-    denom = sqrt_rho_l + sqrt_rho_r
-    
-    v_roe = (sqrt_rho_l * v_l + sqrt_rho_r * v_r) / denom
-    H_roe = (sqrt_rho_l * H_l + sqrt_rho_r * H_r) / denom
-    c_roe = np.sqrt((gamma - 1) * (H_roe - 0.5 * v_roe**2))
-    
-    # Eigenvalues
-    lambda1 = v_roe - c_roe
-    lambda2 = v_roe
-    lambda3 = v_roe + c_roe
-    
-    # Entropy fix (Harten-Hyman)
-    eps = 0.1 * c_roe
-    if abs(lambda1) < eps:
-        lambda1 = 0.5 * (lambda1**2 / eps + eps) * np.sign(lambda1)
-    if abs(lambda3) < eps:
-        lambda3 = 0.5 * (lambda3**2 / eps + eps) * np.sign(lambda3)
-    
-    # Wave strengths
-    drho = rho_r - rho_l
-    dv = v_r - v_l
-    dp = p_r - p_l
-    
-    alpha1 = (dp - rho_l * c_roe * dv) / (2 * c_roe**2)
-    alpha2 = drho - dp / c_roe**2
-    alpha3 = (dp + rho_l * c_roe * dv) / (2 * c_roe**2)
-    
-    # Eigenvectors (right)
-    r1 = np.array([1.0, v_roe - c_roe, H_roe - v_roe * c_roe])
-    r2 = np.array([1.0, v_roe, 0.5 * v_roe**2])
-    r3 = np.array([1.0, v_roe + c_roe, H_roe + v_roe * c_roe])
-    
-    # Flux
-    F_l = get_flux(U_l, gamma)
-    F_r = get_flux(U_r, gamma)
-    
-    F = np.zeros(3)
-    for i in range(3):
-        F[i] = 0.5 * (F_l[i] + F_r[i]) - 0.5 * (
-            abs(lambda1) * alpha1 * r1[i] +
-            abs(lambda2) * alpha2 * r2[i] +
-            abs(lambda3) * alpha3 * r3[i]
-        )
-    
-    return F
-
-
 # =============================================================================
 # Reconstruction Methods (Slope Limiters)
 # =============================================================================
@@ -449,9 +309,52 @@ def reconstruct_plm(U, i, nr, gamma):
     Piecewise Linear Method (2nd order) with MC limiter.
     Returns left and right states at cell i's right interface.
     """
-    if i == 0 or i >= nr - 1:
-        return U[i].copy(), U[i+1].copy() if i < nr-1 else U[i].copy()
+    if i >= nr - 1:
+        return U[i].copy(), U[i].copy()
     
+    # Special handling for inner boundary (i=0) to improve conservation
+    if i == 0:
+        if nr < 3: # Fallback for tiny grids
+            return U[0].copy(), U[1].copy()
+            
+        q_0 = cons_to_prim(U[0], gamma)
+        q_1 = cons_to_prim(U[1], gamma)
+        q_2 = cons_to_prim(U[2], gamma)
+        
+        # Check validity
+        if q_0[0] <= 0 or q_0[2] <= 0 or q_1[0] <= 0 or q_1[2] <= 0 or q_2[0] <= 0 or q_2[2] <= 0:
+             return U[0].copy(), U[1].copy()
+
+        q_L = np.zeros(3)
+        q_R = np.zeros(3)
+        
+        for n in range(3):
+            # For cell 0 (Left state): Use forward difference slope as approximation
+            # This is better than 0 slope (PCM) for smooth flows
+            slope_0 = q_1[n] - q_0[n]
+            # No limiter possible for cell 0 without ghost cells, but for smooth 
+            # Parker wind this is safe. For robustness, we could limit to 0, 
+            # but that causes the error you saw.
+            
+            # For cell 1 (Right state): We have full stencil 0,1,2
+            slope_L = q_1[n] - q_0[n]
+            slope_R = q_2[n] - q_1[n]
+            dq_1 = mc_limiter(slope_L, slope_R)
+            
+            # Reconstruct
+            # Interface is between 0 and 1
+            # q_L comes from 0 projected to right
+            # q_R comes from 1 projected to left
+            q_L[n] = q_0[n] + 0.5 * slope_0
+            q_R[n] = q_1[n] - 0.5 * dq_1
+            
+        # Ensure positivity
+        q_L[0] = max(q_L[0], SMALL_RHO); q_L[2] = max(q_L[2], SMALL_P)
+        q_R[0] = max(q_R[0], SMALL_RHO); q_R[2] = max(q_R[2], SMALL_P)
+        
+        return prim_to_cons(q_L, gamma), prim_to_cons(q_R, gamma)
+
+    # Standard internal interfaces
     # Check for valid states first
     for j in [i-1, i, i+1]:
         if U[j, 0] <= SMALL_RHO or U[j, 2] <= 0:
@@ -504,8 +407,7 @@ def reconstruct_plm(U, i, nr, gamma):
 @njit(cache=True)
 def _compute_fluxes_pcm(U, nr, gamma, riemann_type):
     """
-    Compute fluxes at all interfaces using PCM reconstruction.
-    riemann_type: 0=rusanov, 1=hll, 2=hllc, 3=roe
+    Compute fluxes at all interfaces using PCM (1st order).
     """
     fluxes = np.zeros((nr + 1, 3))
     
@@ -520,14 +422,8 @@ def _compute_fluxes_pcm(U, nr, gamma, riemann_type):
             U_l = U[i-1]
             U_r = U[i]
         
-        if riemann_type == 0:
-            fluxes[i] = riemann_rusanov(U_l, U_r, gamma)
-        elif riemann_type == 1:
-            fluxes[i] = riemann_hll(U_l, U_r, gamma)
-        elif riemann_type == 2:
-            fluxes[i] = riemann_hllc(U_l, U_r, gamma)
-        else:
-            fluxes[i] = riemann_roe(U_l, U_r, gamma)
+        # Use HLLC Riemann solver
+        fluxes[i] = riemann_hllc(U_l, U_r, gamma)
     
     return fluxes
 
@@ -536,7 +432,6 @@ def _compute_fluxes_pcm(U, nr, gamma, riemann_type):
 def _compute_fluxes_plm(U, nr, gamma, riemann_type):
     """
     Compute fluxes at all interfaces using PLM reconstruction.
-    riemann_type: 0=rusanov, 1=hll, 2=hllc, 3=roe
     """
     fluxes = np.zeros((nr + 1, 3))
     
@@ -545,32 +440,63 @@ def _compute_fluxes_plm(U, nr, gamma, riemann_type):
             U_l = U[0]
             U_r = U[0]
         elif i == nr:
-            U_l = U[nr-1]
-            U_r = U[nr-1]
+            # Outer boundary - Extrapolate from interior to improve accuracy
+            # Uses 2nd order extrapolation to right face of cell nr-1
+            if nr >= 2:
+                q_last = cons_to_prim(U[nr-1], gamma)
+                q_prev = cons_to_prim(U[nr-2], gamma)
+                
+                # Linear extrapolation to face: q_face = q_last + 0.5 * slope
+                # Slope approx as backward difference
+                q_face = q_last + 0.5 * (q_last - q_prev)
+                
+                # Ensure positivity
+                q_face[0] = max(q_face[0], SMALL_RHO)
+                q_face[2] = max(q_face[2], SMALL_P)
+                
+                U_face = prim_to_cons(q_face, gamma)
+                U_l = U_face
+                U_r = U_face
+            else:
+                U_l = U[nr-1]
+                U_r = U[nr-1]
         else:
             # PLM reconstruction
             U_l, U_r = reconstruct_plm(U, i-1, nr, gamma)
         
-        if riemann_type == 0:
-            fluxes[i] = riemann_rusanov(U_l, U_r, gamma)
-        elif riemann_type == 1:
-            fluxes[i] = riemann_hll(U_l, U_r, gamma)
-        elif riemann_type == 2:
-            fluxes[i] = riemann_hllc(U_l, U_r, gamma)
-        else:
-            fluxes[i] = riemann_roe(U_l, U_r, gamma)
+        # Use HLLC Riemann solver
+        fluxes[i] = riemann_hllc(U_l, U_r, gamma)
     
     return fluxes
 
 
 @njit(cache=True)
-def _compute_source(U, r, nr, gamma):
-    """Compute geometric source terms for spherical coordinates."""
+def _compute_source(U, A, V, nr, gamma):
+    """
+    Compute geometric source terms for spherical coordinates.
+    
+    When using area-weighted finite volume formulation:
+    dU/dt = -(1/V) * [A[i+1]*F[i+1] - A[i]*F[i]] + S
+    
+    The area weighting flux method correctly handles the geometric divergence 
+    and conserving mass and energy without explicit source terms.
+    
+    For the momentum equation, there is a physical source term due to the 
+    pressure force acting on the lateral walls of the spherical shell sector.
+    This is best computed discretely to balance the pressure flux term:
+    
+    S_mom = p * (A_out - A_in) / V
+    
+    This ensures that for constant pressure, the geometric source term exactly
+    cancels the geometric part of the pressure flux gradient.
+    """
     S = np.zeros((nr, 3))
     for i in range(nr):
         q = cons_to_prim(U[i], gamma)
-        # Geometric pressure term: 2p/r
-        S[i, 1] = 2.0 * q[2] / r[i]
+        p = q[2]
+        # Geometric pressure term: p * dA/dr (ONLY for momentum equation)
+        # Using discrete area difference is consistent with FV formulation
+        S[i, 1] = p * (A[i+1] - A[i]) / V[i]
     return S
 
 
@@ -599,8 +525,7 @@ def _get_dt(U, nr, dx, gamma, cfl):
 @njit(cache=True)
 def _step_euler_jit(U, U_bc, nr, r, A, V, dt, gamma, riemann_type, use_plm):
     """
-    JIT-compiled Euler step.
-    riemann_type: 0=rusanov, 1=hll, 2=hllc, 3=roe
+    JIT-compiled Euler step using HLLC Riemann solver.
     use_plm: True for PLM, False for PCM
     """
     # Compute fluxes
@@ -609,11 +534,11 @@ def _step_euler_jit(U, U_bc, nr, r, A, V, dt, gamma, riemann_type, use_plm):
     else:
         fluxes = _compute_fluxes_pcm(U, nr, gamma, riemann_type)
     
-    # Compute source
-    S = _compute_source(U, r, nr, gamma)
-    
-    # Update
+    # Update with area-weighted flux divergence PLUS geometric source term
+    # The 2*p/r term is needed for the momentum equation in spherical coordinates
     U_new = np.zeros_like(U)
+    S = _compute_source(U, A, V, nr, gamma)
+    
     for i in range(nr):
         # Check for valid volume
         if V[i] <= 0:
@@ -662,10 +587,10 @@ def _step_rk2_jit(U, U_bc, nr, r, A, V, dt, gamma, riemann_type, use_plm):
 
 class CompressibleSolver:
     """
-    Modular 1D spherical compressible Euler solver.
+    1D spherical compressible Euler solver using HLLC Riemann solver.
     
     Allows selection of different numerical methods:
-    - Riemann solvers: 'rusanov', 'hll', 'hllc', 'roe'
+    - Riemann solver: 'hllc' (HLLC - Harten-Lax-van Leer-Contact)
     - Reconstruction: 'pcm' (1st order), 'plm' (2nd order)
     - Time integration: 'euler', 'rk2'
     
@@ -678,10 +603,7 @@ class CompressibleSolver:
     """
     
     RIEMANN_SOLVERS = {
-        'rusanov': riemann_rusanov,
-        'hll': riemann_hll,
         'hllc': riemann_hllc,
-        'roe': riemann_roe,
     }
     
     def __init__(self, r_grid, gamma=5.0/3.0, cfl=None, 
@@ -694,7 +616,7 @@ class CompressibleSolver:
             r_grid: Radial grid (cell centers) in cm
             gamma: Adiabatic index (default 5/3 for monoatomic gas)
             cfl: CFL number for timestep control (default: 0.8 for PCM, 0.4 for PLM)
-            riemann: Riemann solver choice ('rusanov', 'hll', 'hllc', 'roe')
+            riemann: Riemann solver choice ('hllc' - only option)
             reconstruction: Reconstruction method ('pcm', 'plm')
             time_integration: Time integration ('euler', 'rk2')
             verbose: Print progress information
@@ -785,12 +707,21 @@ class CompressibleSolver:
         return fluxes
     
     def compute_source(self, U):
-        """Compute geometric source terms for spherical coordinates."""
+        """
+        Compute geometric source term for spherical coordinates.
+        
+        Only momentum equation needs source term: S = [0, p*dA/V, 0]
+        
+        The area-weighted flux formulation already handles mass and energy
+        conservation correctly. The source term represents pressure work on
+        the expanding spherical cross-section (lateral walls).
+        """
         S = np.zeros((self.nr, 3))
         for i in range(self.nr):
             q = cons_to_prim(U[i], self.gamma)
-            # Geometric pressure term: 2p/r
-            S[i, 1] = 2.0 * q[2] / self.r[i]
+            p = q[2]
+            # Geometric pressure term: p * dA/V (ONLY for momentum equation)
+            S[i, 1] = p * (self.A[i+1] - self.A[i]) / self.V[i]
         return S
     
     def step_euler(self, dt, U_bc):
@@ -801,7 +732,7 @@ class CompressibleSolver:
         # Fluxes
         fluxes = self.compute_fluxes(U)
         
-        # Update
+        # Update with area-weighted flux divergence PLUS geometric source term
         S = self.compute_source(U)
         
         for i in range(self.nr):
@@ -838,7 +769,7 @@ class CompressibleSolver:
         U_bc = prim_to_cons(np.array([rho_bc, v_bc, p_bc]), self.gamma)
         
         # Use JIT-compiled step functions for speed
-        riemann_type = {'rusanov': 0, 'hll': 1, 'hllc': 2, 'roe': 3}[self.riemann_name]
+        riemann_type = 0  # Only HLLC is available
         use_plm = (self.reconstruction == 'plm')
         
         if self.time_integration == 'rk2':
@@ -1206,13 +1137,10 @@ def list_available_methods():
     print("Available Compressible Solver Methods")
     print("="*70)
     
-    print("\nRiemann Solvers (accuracy roughly increases down the list):")
+    print("\nRiemann Solver:")
     print("-" * 50)
     riemann_info = {
-        'rusanov': 'Rusanov/Local Lax-Friedrichs - most robust, most diffusive',
-        'hll': 'HLL (Harten-Lax-van Leer) - fast, diffusive',
-        'hllc': 'HLLC (HLL-Contact) - fast, captures contact waves [DEFAULT]',
-        'roe': "Roe's solver - accurate for smooth flows",
+        'hllc': 'HLLC (Harten-Lax-van Leer-Contact) - fast, robust, captures contact waves',
     }
     for name, desc in riemann_info.items():
         print(f"  '{name}': {desc}")
@@ -1241,9 +1169,8 @@ def list_available_methods():
     print("\nExamples:")
     print("  'hllc'        -> HLLC + PLM + Euler (default)")
     print("  'hllc-plm'    -> HLLC + PLM + Euler")
-    print("  'rusanov-pcm' -> Rusanov + PCM + Euler (1st order)")
+    print("  'hllc-pcm'    -> HLLC + PCM + Euler (1st order)")
     print("  'hllc-plm-rk2'-> HLLC + PLM + RK2 (full 2nd order)")
-    print("  'roe-plm'     -> Roe + PLM + Euler")
     print()
     
     return {

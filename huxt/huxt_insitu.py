@@ -26,7 +26,10 @@ from urllib.request import urlopen
 import json
 
 import joblib
-import onnxruntime as ort
+try:
+    import onnxruntime as ort
+except ImportError:
+    ort = None
 
 import huxt.huxt as H
 import huxt.huxt_inputs as Hin

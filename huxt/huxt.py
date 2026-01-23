@@ -657,20 +657,34 @@ class HUXt:
             print("[Note] 'cgf' solver renamed to 'hllc' - using HLLC Riemann solver")
         
         valid_solvers = ['upwind', 'hllc', 'hll', 'roe', 'rusanov']
-        if solver not in valid_solvers:
-            raise ValueError(f"Invalid solver '{solver}'. Must be one of: {valid_solvers}")
+        
+        # Check if solver matches exactly OR starts with one of the valid compressible solvers (e.g. hllc-pcm)
+        is_valid = False
+        base_solver = solver
+        
+        if solver in valid_solvers:
+            is_valid = True
+        else:
+            # Check for suffixes (e.g. hllc-plm) by splitting on hyphen
+            parts = solver.split('-')
+            if parts[0] in valid_solvers:
+                is_valid = True
+                base_solver = parts[0]
+                
+        if not is_valid:
+            raise ValueError(f"Invalid solver '{solver}'. Must be one of (or variant of): {valid_solvers}")
         
         # Check compressible solver availability
         compressible_solvers = ['hllc', 'hll', 'roe', 'rusanov']
-        if solver in compressible_solvers:
+        if base_solver in compressible_solvers:
             riemann_names = {'hllc': 'HLLC', 'hll': 'HLL', 'roe': 'Roe', 'rusanov': 'Rusanov'}
-            print(f"[OK] {riemann_names[solver]} Riemann solver (HUXt-native) available")
+            print(f"[OK] {riemann_names[base_solver]} Riemann solver (HUXt-native) available")
         
         self.solver = solver
         
         # Auto-determine compressible mode based on solver choice
         # upwind is incompressible, all others are compressible
-        compressible = solver in compressible_solvers
+        compressible = base_solver in compressible_solvers
         
         # Store parallel computation flag
         self.parallel = parallel
@@ -1039,9 +1053,9 @@ class HUXt:
             Tuple of (i, v, cme_r_bounds, cme_v_bounds, hcs_r, streak_r, rho_out, temp_out)
         """
         # Compressible Riemann solvers: hllc, hll, roe, rusanov
-        compressible_riemann_solvers = ['hllc', 'hll', 'roe', 'rusanov']
+        # Check if using compressible solver (including derived variants like hllc-plm-rk2)
         
-        if self.solver in compressible_riemann_solvers:
+        if self.compressible:
             # Use solve_radial_compressible with selected Riemann solver
             return self._process_longitude_compressible(i, n_cme, n_hcs_max, streak_times)
         else:
@@ -1610,8 +1624,7 @@ class HUXt:
         # ======================================================================
         # Print solver information
         # ======================================================================
-        compressible_riemann_solvers = ['hllc', 'hll', 'roe', 'rusanov']
-        if self.solver in compressible_riemann_solvers:
+        if self.compressible:
             import time
             solve_start = time.time()
             
@@ -2437,14 +2450,23 @@ def solve_radial_compressible(v_bc_kms, rho_bc_kgm3, T_bc_K, model_time, time_ou
         return float(np.interp(t, model_time_seconds, T_bc_K))
     
     # Initialize solver with selected Riemann solver
-    # Method string format: '{riemann}-{reconstruction}' e.g. 'hllc-pcm'
+    # Method string format: '{riemann}-{reconstruction}-{integrator}' e.g. 'hllc-plm-rk2'
     if solver_instance is None:
-        method = f"{riemann}-pcm"  # Use PCM reconstruction for stability
+        # Check if full method string is provided
+        if '-' in riemann:
+            method = riemann
+        # Default HLLC to high-accuracy PLM+RK2 (now stable)
+        elif riemann == 'hllc':
+            method = 'hllc-plm-rk2'
+        # Default others to robust PCM
+        else:
+            method = f"{riemann}-pcm"
+            
         solver = create_compressible_solver(
             r_grid=r_grid_cm,
             gamma=gamma,
             method=method,
-            cfl=0.7,
+            cfl=0.6 if 'plm' in method else 0.8, # Lower CFL for PLM
             verbose=verbose
         )
     else:

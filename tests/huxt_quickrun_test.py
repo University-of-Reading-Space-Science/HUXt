@@ -62,7 +62,7 @@ if standard_tests:
     # Get a list of two ConeCMEs
     daysec = 86400
     times = [0*u.day]
-    speeds = [1000]
+    speeds = [1600]
     lons = [0]
     widths = [60]
     thickness = [5]
@@ -106,31 +106,86 @@ if standard_tests:
     HA.plot(model_incomp, time=t_interest)
     print(f"  -> Created figure(s). Current figures: {plt.get_fignums()}")
 
-    HA.animate(model_incomp, tag =  'incompressible_with_CME')
+    #HA.animate(model_incomp, tag =  'incompressible_with_CME')
 
 
 if compressible_tests:
+    # ---------------------------------------------------------
+    # Test 1: First-order HLLC + PCM
+    # ---------------------------------------------------------
     print("\n" + "="*60)
-    print("Starting compressible model (HLLC solver)...")
+    print("Starting compressible model (HLLC + PCM 1st Order)...")
     print("="*60)
-    model_comp = H.HUXt(v_boundary=vr_in, b_boundary=br_in,#lon_start=350*u.deg, lon_stop = 10*u.deg,
-                            #lon_out=0.0*u.rad,
+    model_pcm = H.HUXt(v_boundary=vr_in, b_boundary=br_in,
                             simtime=simtime, dt_scale=4, 
-                        solver ='hllc')
+                        solver ='hllc-pcm') # Explicitly request PCM
     print("Model initialized. Starting solve...")
-    model_comp.solve(cme_list, streak_carr=lon_grid)
-    print("Solve complete!")
-    #model_comp_cgf.solve([])
-    print("Creating plot 3: Earth timeseries (compressible)...")
-    HA.plot_earth_timeseries(model_comp, plot_omni=False)
-    print(f"  -> Created figure(s). Current figures: {plt.get_fignums()}")
-    ts_cgf = HA.get_observer_timeseries(model_comp)
+    t0 = datetime.datetime.now()
+    model_pcm.solve(cme_list, streak_carr=lon_grid)
+    dt_pcm = (datetime.datetime.now() - t0).total_seconds()
+    print(f"Solve complete in {dt_pcm:.2f}s!")
 
-    print("Creating plot 4: Compressible spatial plot...")
-    HA.plot_compressible(model_comp, time=t_interest)
+    print("Creating plot 3: Earth timeseries (PCM)...")
+    HA.plot_earth_timeseries(model_pcm, plot_omni=False)
+    plt.title("HLLC + PCM (1st Order)")
     print(f"  -> Created figure(s). Current figures: {plt.get_fignums()}")
 
-    HA.animate(model_comp, tag = 'compressible_with_CME')
+    print("Creating plot 4: Compressible spatial plot (PCM)...")
+    HA.plot_compressible(model_pcm, time=t_interest)
+    plt.suptitle("HLLC + PCM (1st Order)")
+    print(f"  -> Created figure(s). Current figures: {plt.get_fignums()}")
+
+    # ---------------------------------------------------------
+    # Test 2: Second-order HLLC + PLM + RK2
+    # ---------------------------------------------------------
+    print("\n" + "="*60)
+    print("Starting compressible model (HLLC + PLM + RK2 2nd Order)...")
+    print("="*60)
+    model_plm = H.HUXt(v_boundary=vr_in, b_boundary=br_in,
+                            simtime=simtime, dt_scale=4, 
+                        solver ='hllc-plm-rk2') # Explicitly request PLM+RK2
+    print("Model initialized. Starting solve...")
+    t0 = datetime.datetime.now()
+    model_plm.solve(cme_list, streak_carr=lon_grid)
+    dt_plm = (datetime.datetime.now() - t0).total_seconds()
+    print(f"Solve complete in {dt_plm:.2f}s!")
+    
+    print(f"\nPerformance Comparison: PCM={dt_pcm:.2f}s vs PLM={dt_plm:.2f}s (Ratio: {dt_plm/dt_pcm:.2f}x)")
+
+    print("Creating plot 5: Earth timeseries (PLM)...")
+    HA.plot_earth_timeseries(model_plm, plot_omni=False)
+    plt.title("HLLC + PLM + RK2 (2nd Order)")
+    print(f"  -> Created figure(s). Current figures: {plt.get_fignums()}")
+
+    print("Creating plot 6: Compressible spatial plot (PLM)...")
+    HA.plot_compressible(model_plm, time=t_interest)
+    plt.suptitle("HLLC + PLM + RK2 (2nd Order)")
+    print(f"  -> Created figure(s). Current figures: {plt.get_fignums()}")
+
+    # ---------------------------------------------------------
+    # Comparison Plot
+    # ---------------------------------------------------------
+    print("\nCreating plot 7: Direct comparison of Earth Profiles...")
+    ts_pcm = HA.get_observer_timeseries(model_pcm)
+    ts_plm = HA.get_observer_timeseries(model_plm)
+    
+    fig, ax = plt.subplots(3, 1, figsize=(10, 8), sharex=True)
+    ax[0].plot(ts_pcm['time'], ts_pcm['vsw'], 'k--', label='PCM (1st Order)')
+    ax[0].plot(ts_plm['time'], ts_plm['vsw'], 'r-', label='PLM (2nd Order)')
+    ax[0].set_ylabel('Velocity (km/s)')
+    ax[0].legend()
+    ax[0].set_title('Earth (0 deg) Timeseries Comparison')
+    
+    ax[1].plot(ts_pcm['time'], ts_pcm['n'], 'k--') 
+    ax[1].plot(ts_plm['time'], ts_plm['n'], 'r-')
+    ax[1].set_ylabel('Density (cm^-3)')
+    
+    ax[2].plot(ts_pcm['time'], ts_pcm['T'], 'k--')
+    ax[2].plot(ts_plm['time'], ts_plm['T'], 'r-')
+    ax[2].set_ylabel('Temperature (K)')
+    ax[2].set_xlabel('Time (days)')
+    
+    plt.tight_layout()
 
 # model_comp_pluto = H.HUXt(cr_num=cr,
 #                         v_boundary=vr_in, #lon_start=350*u.deg, lon_stop = 10*u.deg,

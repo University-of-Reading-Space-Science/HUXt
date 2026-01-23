@@ -141,7 +141,7 @@ def main():
     print(f"\nBoundary conditions:")
     print(f"  v = {v_bc_kms} km/s")
     print(f"  T = {T_bc/1e6:.1f} MK")
-    print(f"  n = {n_bc} cm⁻³")
+    print(f"  n = {n_bc} cm^-3")
     print(f"  gamma = {gamma}")
     
     # Radial grid (30 Rs to 215 Rs)
@@ -161,7 +161,7 @@ def main():
     print(f"  Parker solution at 1 AU:")
     idx_1AU = np.argmin(np.abs(r_AU - 1.0))
     print(f"    v = {v_parker[idx_1AU]/KM_TO_CM:.1f} km/s")
-    print(f"    n = {n_parker[idx_1AU]:.1f} cm⁻³")
+    print(f"    n = {n_parker[idx_1AU]:.1f} cm^-3")
     print(f"    T = {T_parker[idx_1AU]/1e3:.1f} kK")
     
     # Simulation time: run to steady state (5 days)
@@ -177,12 +177,19 @@ def main():
     
     # Methods to compare
     # Note: PLM methods need more work on characteristic limiting - using PCM for now
-    methods = [
-        ('rusanov-pcm', 'Rusanov + PCM'),
-        ('hll-pcm', 'HLL + PCM'),
-        ('hllc-pcm', 'HLLC + PCM'),
-        ('roe-pcm', 'Roe + PCM'),
+    methods = [  
+        ('hllc-pcm', 'HLLC + PCM (1st Order)'),
+        ('hllc-plm-rk2', 'HLLC + PLM + RK2 (2nd Order)'),
     ]
+    
+    # Warm-up JIT compilation
+    print("\nWarming up JIT compilation (running short simulations)...")
+    # Warm up PCM path
+    create_solver(r_grid, gamma=gamma, method='hllc-pcm', verbose=False).solve(
+        [0, 1.0], v_bc_func, rho_bc_func, T_bc_func)
+    # Warm up PLM+RK2 path
+    create_solver(r_grid, gamma=gamma, method='hllc-plm-rk2', verbose=False).solve(
+        [0, 1.0], v_bc_func, rho_bc_func, T_bc_func)
     
     results = {}
     
