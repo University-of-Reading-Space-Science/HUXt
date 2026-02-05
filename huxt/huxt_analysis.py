@@ -1123,20 +1123,23 @@ def plot_earth_timeseries(model, plot_omni=True, save=False, tag=''):
     
     # Velocity panel (always first)
     panel_idx = 0
-    axs[panel_idx].plot(huxt_ts['time'], huxt_ts['vsw'], 'r', label='HUXt')
+    if is_compressible:
+        axs[panel_idx].plot(huxt_ts['time'], huxt_ts['vsw'], 'r', label='SHUXt')
+    else:
+        axs[panel_idx].plot(huxt_ts['time'], huxt_ts['vsw'], 'r', label='HUXt')
     axs[panel_idx].set_ylim(250, 1000)
     axs[panel_idx].set_ylabel('Solar Wind Speed (km/s)')
     
     # B polarity panel (if available)
     if hasattr(model, 'b_grid'):
         panel_idx += 1
-        axs[panel_idx].plot(huxt_ts['time'], np.sign(huxt_ts['bpol']), 'r.', label='HUXt')
+        axs[panel_idx].plot(huxt_ts['time'], np.sign(huxt_ts['bpol']), 'r.', label='SHUXt')
         axs[panel_idx].set_ylabel('B polarity')
     
     # Density panel (if compressible)
     if is_compressible and 'n' in huxt_ts.columns:
         panel_idx += 1
-        axs[panel_idx].semilogy(huxt_ts['time'], huxt_ts['n'], 'r-', label='HUXt')
+        axs[panel_idx].semilogy(huxt_ts['time'], huxt_ts['n'], 'r-', label='SHUXt')
         axs[panel_idx].set_ylabel('n (protons/cm³)')
         axs[panel_idx].set_ylim(0.1, 1000)
         axs[panel_idx].grid(True, alpha=0.3)
@@ -1144,7 +1147,7 @@ def plot_earth_timeseries(model, plot_omni=True, save=False, tag=''):
     # Temperature panel (if compressible)
     if is_compressible and 'T' in huxt_ts.columns:
         panel_idx += 1
-        axs[panel_idx].semilogy(huxt_ts['time'], huxt_ts['T'], 'r-', label='HUXt')
+        axs[panel_idx].semilogy(huxt_ts['time'], huxt_ts['T'], 'r-', label='SHUXt')
         axs[panel_idx].set_ylabel('T (K)')
         axs[panel_idx].set_ylim(1e4, 1e7)
         axs[panel_idx].grid(True, alpha=0.3)

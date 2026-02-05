@@ -12,10 +12,10 @@ import huxt.huxt_analysis as HA
 import huxt.huxt_inputs as Hin
 import huxt.huxt_insitu as Hinsitu
 
-standard_tests = True
-compressible_tests = True
-insitu_tests = False
-insitu_compressible_tests = False
+standard_tests = False
+compressible_tests = False
+insitu_tests = True
+insitu_compressible_tests = True
 
 simtime = 5*u.day
 
@@ -220,7 +220,7 @@ if insitu_tests:
     print("InSitu-HUXt integration test")
     print("="*60)
 
-    ftime = datetime.datetime(2022,12,1)
+    ftime = datetime.datetime(2019,7,20)
     is_model = Hinsitu.omniHUXt_forecast(ftime, simtime=27.27*u.day, 
                             rmin=21.5*u.solRad, rmax=230*u.solRad, 
                             dt_scale=4,
@@ -228,131 +228,66 @@ if insitu_tests:
                             run_2d=False)
 
     is_model.solve([])
-    HA.plot_earth_timeseries(is_model)
+    #HA.plot_earth_timeseries(is_model)
+    ts_incomp = HA.get_observer_timeseries(is_model)
 
 # <cocdecell> InSitu-HUXt compressible test
 
 if insitu_compressible_tests:
-    ftime = datetime.datetime(2022,12,1)
+    ftime = datetime.datetime(2019,7,20)
     cr, cr_lon_init = Hin.datetime2huxtinputs(ftime)
 
-    # time_grid, vgrid_carr, bgrid_carr, rhogrid_carr, tgrid_carr = HI.generate_vCarr_from_OMNI(ftime, 
-    #                                                                                     ftime +datetime.timedelta(days=27), 
-    #                                                                                     compressible=True)
+    ftime = datetime.datetime(2019,7,20)
+    is_model = Hinsitu.omniHUXt_forecast(ftime, simtime=27.27*u.day, 
+                            rmin=21.5*u.solRad, rmax=230*u.solRad, 
+                            dt_scale=4,
+                            omni_input=None, buffertime=5*u.day,
+                            run_2d=False, solver='hllc-plm-rk2')
+
+    is_model.solve([])
+    fig, axs = HA.plot_earth_timeseries(is_model)
+    axs[0].plot(ts_incomp['time'], ts_incomp['vsw'], 'b', label='HUXt')
+    axs[0].legend()
+
+    dbox = os.environ.get('DBOX')
+    overleaf_dir = os.path.join(dbox, 'Apps', 'Overleaf', 'SHUXt')
+    pdf_path = os.path.join(overleaf_dir, 'SHUXt_1AU.pdf')
+    plt.savefig(pdf_path, dpi=150)
+
+
+    #also plot the inputs.
+    #omni = Hinsitu.get_omni(ftime-datetime.timedelta(days=27.27),ftime)
+    fig, axes = plt.subplots(4, figsize=(14, 10))
+    axes[0].plot(is_model.v_boundary_lons, is_model.v_boundary.value, 'r-')
+    axes[0].set_ylabel(r'$v$ [km/s]')
+
+    axes[1].plot(is_model.v_boundary_lons, np.sign(is_model.b_boundary), 'r-')
+    axes[1].set_ylabel(r'B$_{POL}$')
+
+    axes[2].plot(is_model.v_boundary_lons, is_model.rho_boundary.value, 'r-')
+    axes[2].set_ylabel(r'$\rho$ [kg m$^{-3}$]')
+
+    axes[3].plot(is_model.v_boundary_lons, is_model.temp_boundary.value, 'r-')
+    axes[3].set_ylabel(r'T [K]')
+    axes[3].set_xlabel('Carrington Longitude [rad]')
+
+    pdf_path = os.path.join(overleaf_dir, 'SHUXt_0p1AU.pdf')
+    plt.savefig(pdf_path, dpi=150)
+
+    # model = Hinsitu.omniHUXt_reconstruction(ftime, ftime +datetime.timedelta(days=27), 
+    #                         rmin=21.5*u.solRad, rmax=250*u.solRad, 
+    #                         dt_scale=4, dt=1*u.day,
+    #                         run_2d=False,
+    #                         solver='hllc',
+    #                         rho_source='speed',
+    #                         temp_source='speed')
     
-    # # Set up the model, with (optional) time-dependent bpol boundary conditions
-    # model = Hin.set_time_dependent_boundary(vgrid_carr, time_grid, ftime, 10*u.day, r_min=210*u.solRad, r_max=240*u.solRad, 
-    #                                         dt_scale=4, solver = 'hllc',
-    #                                     latitude=0*u.deg, bgrid_Carr = bgrid_carr, 
-    #                                     rhogrid_Carr = rhogrid_carr, tempgrid_Carr= tgrid_carr, 
-    #                                     lon_start=230*u.deg, lon_stop=60*u.deg,)
     # model.solve([])
+    
+    # # Plot Earth timeseries
     # HA.plot_earth_timeseries(model)
-
-
-
-    model = Hinsitu.omniHUXt_reconstruction(ftime, ftime +datetime.timedelta(days=27), 
-                            rmin=21.5*u.solRad, rmax=250*u.solRad, 
-                            dt_scale=4, dt=1*u.day,
-                            run_2d=False,
-                            solver='hllc',
-                            rho_source='speed',
-                            temp_source='speed')
     
-    model.solve([])
-    
-    # Plot Earth timeseries
-    HA.plot_earth_timeseries(model)
-    
-    # # Function to plot observer timeseries in the same format as Earth plot
-    # def plot_observer_timeseries(model, observer_name, observer_label):
-    #     """Plot timeseries for a specific observer in same format as Earth plot"""
-    #     obs_ts = HA.get_observer_timeseries(model, observer=observer_name)
-        
-    #     is_compressible = hasattr(model, 'compressible') and model.compressible
-        
-    #     # Determine number of panels
-    #     n_panels = 1  # Velocity
-    #     if hasattr(model, 'b_grid'):
-    #         n_panels += 1
-    #     if is_compressible:
-    #         n_panels += 2  # Density and temperature
-        
-    #     fig, axs = plt.subplots(n_panels, 1, figsize=(14, 4 * n_panels))
-    #     if n_panels == 1:
-    #         axs = np.array([axs])
-        
-    #     # Velocity panel
-    #     panel_idx = 0
-    #     axs[panel_idx].plot(obs_ts['time'], obs_ts['vsw'], 'r', label='HUXt')
-    #     axs[panel_idx].set_ylim(250, 1000)
-    #     axs[panel_idx].set_ylabel('Solar Wind Speed (km/s)')
-        
-    #     # B polarity panel
-    #     if hasattr(model, 'b_grid'):
-    #         panel_idx += 1
-    #         axs[panel_idx].plot(obs_ts['time'], np.sign(obs_ts['bpol']), 'r.', label='HUXt')
-    #         axs[panel_idx].set_ylabel('B polarity')
-    #         axs[panel_idx].set_ylim(-1.1, 1.1)
-        
-    #     # Density panel
-    #     if is_compressible and 'n' in obs_ts.columns:
-    #         panel_idx += 1
-    #         axs[panel_idx].semilogy(obs_ts['time'], obs_ts['n'], 'r-', label='HUXt')
-    #         axs[panel_idx].set_ylabel('n (protons/cm³)')
-    #         axs[panel_idx].set_ylim(0.1, 1000)
-    #         axs[panel_idx].grid(True, alpha=0.3)
-        
-    #     # Temperature panel
-    #     if is_compressible and 'T' in obs_ts.columns:
-    #         panel_idx += 1
-    #         axs[panel_idx].semilogy(obs_ts['time'], obs_ts['T'], 'r-', label='HUXt')
-    #         axs[panel_idx].set_ylabel('T (K)')
-    #         axs[panel_idx].set_ylim(1e4, 1e7)
-    #         axs[panel_idx].grid(True, alpha=0.3)
-        
-    #     starttime = obs_ts['time'].iloc[0]
-    #     endtime = obs_ts['time'].iloc[-1]
-        
-    #     for a in axs:
-    #         a.set_xlim(starttime, endtime)
-    #         a.legend()
-        
-    #     # Only last panel gets x-label
-    #     for i in range(len(axs) - 1):
-    #         axs[i].set_xticklabels([])
-    #     axs[-1].set_xlabel('Date')
-        
-    #     fig.suptitle(f'{observer_label} - HUXt Reconstruction', fontsize=14, y=0.995)
-    #     plt.tight_layout()
-        
-    #     return fig, axs, obs_ts
-    
-    # # Plot STEREO-A timeseries
-    # print("\n" + "="*60)
-    # print("Plotting STEREO-A timeseries")
-    # print("="*60)
-    # fig_sta, axs_sta, sta_ts = plot_observer_timeseries(model, 'STA', 'STEREO-A')
-    
-    # print("\nSTEREO-A Statistics:")
-    # print(f"  Velocity: {sta_ts['vsw'].mean():.1f} ± {sta_ts['vsw'].std():.1f} km/s")
-    # if 'n' in sta_ts.columns:
-    #     print(f"  Density: {sta_ts['n'].mean():.2f} ± {sta_ts['n'].std():.2f} cm^-3")
-    # if 'T' in sta_ts.columns:
-    #     print(f"  Temperature: {sta_ts['T'].mean():.1e} ± {sta_ts['T'].std():.1e} K")
-    
-    # # Plot Solar Orbiter timeseries
-    # print("\n" + "="*60)
-    # print("Plotting Solar Orbiter timeseries")
-    # print("="*60)
-    # fig_solo, axs_solo, solo_ts = plot_observer_timeseries(model, 'SOLO', 'Solar Orbiter')
-    
-    # print("\nSolar Orbiter Statistics:")
-    # print(f"  Velocity: {solo_ts['vsw'].mean():.1f} ± {solo_ts['vsw'].std():.1f} km/s")
-    # if 'n' in solo_ts.columns:
-    #     print(f"  Density: {solo_ts['n'].mean():.2f} ± {solo_ts['n'].std():.2f} cm^-3")
-    # if 'T' in solo_ts.columns:
-    #     print(f"  Temperature: {solo_ts['T'].mean():.1e} ± {solo_ts['T'].std():.1e} K")
+ 
 
 # <codecell> End of script
 

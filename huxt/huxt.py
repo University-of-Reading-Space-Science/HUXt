@@ -777,15 +777,16 @@ class HUXt:
         # Handle rho and temp boundaries for compressible solver (rotation done later after cr_lon_init is set)
         if compressible:
             if np.all(np.isnan(rho_boundary)):
-                # Calculate density to maintain constant mass flux
-                # Mass flux ρv should be constant, so ρ ∝ 1/v
-                # Reference: density at 1 AU is ~10 protons/cm³ = 16.35e-21 kg/m³ at 400 km/s
-                # Density scales as r^-2, so scale from 1 AU to r_min
-                scaling_factor = (self.r_1au / r_min)**2
-                rho_ref = self.rho_sw_1au_inner * scaling_factor
-                v_ref = 400 * u.km / u.s
-                # Scale density inversely with velocity to maintain constant mass flux
-                self.rho_boundary = rho_ref * (v_ref / self.v_boundary)
+                # Calculate density using empirical velocity-density relation derived from 
+                # OMNI data mapped via Parker nozzle solution
+                v_kms = self.v_boundary.to(u.km/u.s).value
+                r_inner = r_min.to(u.solRad).value
+                n_sw, _ = get_density_temperature_from_velocity(v_kms, r_inner, gamma=self.gamma)
+                
+                # Convert density from cm^-3 to kg/m^3
+                # n [cm^-3] * m_p [g] * 1e6 [cm^3/m^3] * 1e-3 [kg/g] = rho [kg/m^3]
+                m_p = 1.67262192e-24  # proton mass in g
+                self.rho_boundary = n_sw * m_p * 1e6 * 1e-3 * (u.kg / u.m**3)
                 self.rho_boundary_lons = self.v_boundary_lons
             elif not np.all(np.isnan(rho_boundary)):
                 assert rho_boundary.size < 4600  # this equates to about 9 mins
@@ -801,8 +802,7 @@ class HUXt:
                 v_kms = self.v_boundary.to(u.km/u.s).value
                 r_inner = self.r[0].to(u.solRad).value
                 _, temp_from_velocity = get_density_temperature_from_velocity(
-                    v_kms, r_inner, gamma=self.gamma
-                )
+                    v_kms, r_inner, gamma=self.gamma)
                 self.temp_boundary = temp_from_velocity * u.K
                 self.temp_boundary_lons = self.v_boundary_lons
             elif not np.all(np.isnan(temp_boundary)):
