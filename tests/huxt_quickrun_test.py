@@ -56,13 +56,10 @@ if standard_tests:
 
 
 
-
-
-
     # Get a list of two ConeCMEs
     daysec = 86400
     times = [0*u.day]
-    speeds = [1600]
+    speeds = [1000]
     lons = [0]
     widths = [60]
     thickness = [5]
@@ -95,8 +92,10 @@ if standard_tests:
                         simtime=simtime, dt_scale=4, 
                         solver ='upwind')
     print("Model initialized. Starting solve...")
+    t0 = datetime.datetime.now()
     model_incomp.solve(cme_list, streak_carr=lon_grid)
-    print("Solve complete!")
+    dt_pcm = (datetime.datetime.now() - t0).total_seconds()
+    print(f"Solve complete in {dt_pcm:.2f}s!")
     #model_incomp.solve([])
     print("Creating plot 1: Earth timeseries (incompressible)...")
     HA.plot_earth_timeseries(model_incomp, plot_omni=False)

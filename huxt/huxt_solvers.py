@@ -43,6 +43,7 @@ Author: HUXt Development Team
 """
 
 import numpy as np
+import astropy.units as u
 from numba import njit
 
 __all__ = [
@@ -815,19 +816,18 @@ class CompressibleSolver:
         rho0 = rho_bc_func(t_grid[0])
         T0 = T_bc_func(t_grid[0])
         
-        # Initialize using Parker solution scaling
-        from huxt.huxt_insitu import map_density_parker, map_temperature_parker
-        import astropy.units as u
-        
+        # Initialize using simple power law scaling 
         r0 = self.r[0]
         v_init = np.ones_like(self.r) * v0
         
-        # Use Parker solution to scale density and temperature with radius
+        # Simple power law scaling: density ~ 1/r^2, temperature ~ r^(-2(γ-1))
         rho_init = np.zeros_like(self.r)
         T_init = np.zeros_like(self.r)
+        alpha = 2 * (self.gamma - 1)  # Adiabatic temperature scaling exponent
         for i, r in enumerate(self.r):
-            rho_init[i] = map_density_parker(rho0, r0*u.solRad, r*u.solRad)
-            T_init[i] = map_temperature_parker(T0 * u.K, r0*u.solRad, r*u.solRad, gamma=self.gamma).value
+            r_ratio = r0 / r
+            rho_init[i] = rho0 * r_ratio**2
+            T_init[i] = T0 * r_ratio**alpha
         
         self.set_initial_conditions(rho_init, v_init, T_init)
         self.time = t_grid[0]

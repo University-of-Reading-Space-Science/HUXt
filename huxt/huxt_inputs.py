@@ -785,8 +785,10 @@ def get_CorTom_vr_map(filepath):
         vr_longs = data['lon']
         vr_map = np.swapaxes(vr_map, 0, 1)
         
-        # Convert colatitude to latitude (no flip needed for pkl files)
+        # Convert colatitude to latitude and flip so south pole at bottom
         vr_lats = (np.pi / 2 - vr_colat)
+        vr_lats = np.flipud(vr_lats)
+        vr_map = np.flipud(vr_map)
     else:
         raise ValueError(f"Filename must have extension of either dat or pkl: {filepath}")
 
@@ -819,11 +821,12 @@ def get_CorTom_long_profile(filepath, lat=0.0 * u.deg):
     assert (filepath.is_file())
 
     vr_map, lon_map, lat_map = get_CorTom_vr_map(filepath)
+    print(lat_map)
 
     # Extract the value at the given latitude
     vr = np.zeros(lon_map.shape)
     for i in range(lon_map.size):
-        vr[i] = np.interp(lat.to(u.rad).value, lat_map.value, vr_map[:, i].value)
+        vr[i] = np.interp(lat.to(u.rad).value, lat_map.to(u.rad).value, vr_map[:, i].value)
 
     return vr * u.km / u.s
     

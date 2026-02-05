@@ -14,6 +14,7 @@ Run with: python test_solver_vs_parker.py
 import numpy as np
 import matplotlib.pyplot as plt
 import time
+import os
 
 # Import directly to avoid slow sunpy imports
 import sys
@@ -178,8 +179,8 @@ def main():
     # Methods to compare
     # Note: PLM methods need more work on characteristic limiting - using PCM for now
     methods = [  
-        ('hllc-pcm', 'HLLC + PCM (1st Order)'),
-        ('hllc-plm-rk2', 'HLLC + PLM + RK2 (2nd Order)'),
+        ('hllc-pcm', 'HLLC + PCM'),
+        ('hllc-plm-rk2', 'HLLC + PLM'),
     ]
     
     # Warm-up JIT compilation
@@ -286,7 +287,15 @@ def main():
               f"{data['max_mass_flux_error']:<15.4f} {order:<10}")
     
     # Plotting
-    fig, axes = plt.subplots(2, 4, figsize=(18, 10))
+    fig, axes = plt.subplots(2, 2, figsize=(14, 10))
+    
+    # Set font sizes globally for better visibility
+    plt.rcParams['font.size'] = 14
+    plt.rcParams['axes.labelsize'] = 14
+    plt.rcParams['axes.titlesize'] = 14
+    plt.rcParams['xtick.labelsize'] = 14
+    plt.rcParams['ytick.labelsize'] = 14
+    plt.rcParams['legend.fontsize'] = 14
     
     # Colors for different methods (use explicit color list for compatibility)
     color_list = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', 
@@ -295,125 +304,86 @@ def main():
     
     # Velocity vs radius
     ax = axes[0, 0]
-    ax.plot(r_Rs, v_parker/KM_TO_CM, 'k-', linewidth=2, label='Parker (analytical)')
+    ax.plot(r_Rs, v_parker/KM_TO_CM, 'k-', linewidth=2.5, label='Parker (analytical)')
     for i, (method_key, method_name) in enumerate(methods):
         v = results[method_key]['result']['v'][-1]
-        ax.plot(r_Rs, v/KM_TO_CM, '--', color=colors[i], alpha=0.7, label=method_name)
-    ax.set_xlabel('Distance (Rs)')
-    ax.set_ylabel('Velocity (km/s)')
-    ax.set_title('Velocity Profile')
-    ax.legend(fontsize=6, loc='lower right')
+        ax.plot(r_Rs, v/KM_TO_CM, '--', color=colors[i], alpha=0.7, linewidth=2, label=method_name)
+    ax.set_xlabel('Distance (Rs)', fontsize=14)
+    ax.set_ylabel('Velocity (km/s)', fontsize=14)
+    ax.legend(fontsize=14, loc='lower right')
     ax.grid(True, alpha=0.3)
+    ax.tick_params(labelsize=14)
+    ax.text(0.02, 0.98, '(a)', transform=ax.transAxes, fontsize=16, fontweight='bold',
+            verticalalignment='top', horizontalalignment='left')
     
     # Density vs radius
     ax = axes[0, 1]
-    ax.semilogy(r_Rs, n_parker, 'k-', linewidth=2, label='Parker (analytical)')
+    ax.semilogy(r_Rs, n_parker, 'k-', linewidth=2.5, label='Parker (analytical)')
     for i, (method_key, method_name) in enumerate(methods):
         rho = results[method_key]['result']['rho'][-1]
         n = rho / M_P_CGS
-        ax.semilogy(r_Rs, n, '--', color=colors[i], alpha=0.7, label=method_name)
-    ax.set_xlabel('Distance (Rs)')
-    ax.set_ylabel('Number density (cm⁻³)')
-    ax.set_title('Density Profile')
-    ax.legend(fontsize=6, loc='upper right')
+        ax.semilogy(r_Rs, n, '--', color=colors[i], alpha=0.7, linewidth=2, label=method_name)
+    ax.set_xlabel('Distance (Rs)', fontsize=14)
+    ax.set_ylabel('Number density (cm⁻³)', fontsize=14)
+    ax.yaxis.tick_right()
+    ax.yaxis.set_label_position("right")
+    ax.legend(fontsize=14, loc='upper right')
     ax.grid(True, alpha=0.3)
+    ax.tick_params(labelsize=14)
+    ax.text(0.02, 0.98, '(b)', transform=ax.transAxes, fontsize=16, fontweight='bold',
+            verticalalignment='top', horizontalalignment='left')
     
     # Temperature vs radius
-    ax = axes[0, 2]
-    ax.semilogy(r_Rs, T_parker/1e3, 'k-', linewidth=2, label='Parker (analytical)')
+    ax = axes[1, 0]
+    ax.semilogy(r_Rs, T_parker, 'k-', linewidth=2.5, label='Parker (analytical)')
     for i, (method_key, method_name) in enumerate(methods):
         T = results[method_key]['result']['T'][-1]
-        ax.semilogy(r_Rs, T/1e3, '--', color=colors[i], alpha=0.7, label=method_name)
-    ax.set_xlabel('Distance (Rs)')
-    ax.set_ylabel('Temperature (kK)')
-    ax.set_title('Temperature Profile')
-    ax.legend(fontsize=6, loc='upper right')
+        ax.semilogy(r_Rs, T, '--', color=colors[i], alpha=0.7, linewidth=2, label=method_name)
+    ax.set_xlabel('Distance (Rs)', fontsize=14)
+    ax.set_ylabel('Temperature (K)', fontsize=14)
+    # Set y-axis range to span at least one order of magnitude
+    T_min = np.min(T_parker)
+    T_max = np.max(T_parker)
+    T_range = T_max / T_min
+    if T_range < 10:  # Less than one order of magnitude
+        ax.set_ylim(T_min * 0.3, T_max * 3)
+    ax.legend(fontsize=14, loc='upper right')
     ax.grid(True, alpha=0.3)
+    ax.tick_params(labelsize=14)
+    ax.text(0.02, 0.98, '(c)', transform=ax.transAxes, fontsize=16, fontweight='bold',
+            verticalalignment='top', horizontalalignment='left')
     
     # Mass flux conservation: ρ*v*r² vs radius
-    ax = axes[0, 3]
-    # Normalize by inner boundary value
+    ax = axes[1, 1]
+    # Normalize by inner boundary value (first real cell)
     for i, (method_key, method_name) in enumerate(methods):
         mf = results[method_key]['mass_flux']
         mf_normalized = mf / mf[0]
-        ax.plot(r_Rs, mf_normalized, '-', color=colors[i], alpha=0.7, label=method_name)
-    ax.axhline(1.0, color='k', linestyle='--', alpha=0.5, label='Perfect conservation')
-    ax.set_xlabel('Distance (Rs)')
-    ax.set_ylabel('ρ·v·r² / (ρ·v·r²)₀')
-    ax.set_title('Mass Flux Conservation')
+        ax.plot(r_Rs, mf_normalized, '-', color=colors[i], alpha=0.7, linewidth=2, label=method_name)
+    ax.axhline(1.0, color='k', linestyle='--', alpha=0.5, linewidth=2, label='Perfect conservation')
+    ax.set_xlabel('Distance (Rs)', fontsize=14)
+    ax.set_ylabel('ρ·v·r² / (ρ·v·r²)₀', fontsize=14)
+    ax.yaxis.tick_right()
+    ax.yaxis.set_label_position("right")
     ax.set_ylim(0.9, 1.1)
-    ax.legend(fontsize=6, loc='upper right')
+    ax.legend(fontsize=14, loc='lower left')
     ax.grid(True, alpha=0.3)
-    
-    # Velocity error vs radius
-    ax = axes[1, 0]
-    for i, (method_key, method_name) in enumerate(methods):
-        v = results[method_key]['result']['v'][-1]
-        error = (v - v_parker) / v_parker * 100
-        ax.plot(r_Rs, error, '-', color=colors[i], alpha=0.7, label=method_name)
-    ax.axhline(0, color='k', linestyle='--', alpha=0.5)
-    ax.set_xlabel('Distance (Rs)')
-    ax.set_ylabel('Velocity Error (%)')
-    ax.set_title('Velocity Error vs Parker')
-    ax.legend(fontsize=6)
-    ax.grid(True, alpha=0.3)
-    
-    # Density error vs radius
-    ax = axes[1, 1]
-    for i, (method_key, method_name) in enumerate(methods):
-        rho = results[method_key]['result']['rho'][-1]
-        n = rho / M_P_CGS
-        error = (n - n_parker) / n_parker * 100
-        ax.plot(r_Rs, error, '-', color=colors[i], alpha=0.7, label=method_name)
-    ax.axhline(0, color='k', linestyle='--', alpha=0.5)
-    ax.set_xlabel('Distance (Rs)')
-    ax.set_ylabel('Density Error (%)')
-    ax.set_title('Density Error vs Parker')
-    ax.legend(fontsize=6)
-    ax.grid(True, alpha=0.3)
-    
-    # Mass flux error vs radius
-    ax = axes[1, 2]
-    for i, (method_key, method_name) in enumerate(methods):
-        mf = results[method_key]['mass_flux']
-        error = (mf - mf[0]) / mf[0] * 100
-        ax.plot(r_Rs, error, '-', color=colors[i], alpha=0.7, label=method_name)
-    ax.axhline(0, color='k', linestyle='--', alpha=0.5)
-    ax.set_xlabel('Distance (Rs)')
-    ax.set_ylabel('Mass Flux Error (%)')
-    ax.set_title('Mass Flux Conservation Error')
-    ax.legend(fontsize=6)
-    ax.grid(True, alpha=0.3)
-    
-    # Runtime vs accuracy comparison
-    ax = axes[1, 3]
-    for i, (method_key, method_name) in enumerate(methods):
-        ax.scatter(results[method_key]['time'], results[method_key]['error_v'], 
-                   color=colors[i], s=100, label=method_name)
-    ax.set_xlabel('Runtime (seconds)')
-    ax.set_ylabel('Velocity RMSE (%)')
-    ax.set_title('Accuracy vs Performance')
-    ax.legend(fontsize=6, loc='upper right')
-    ax.grid(True, alpha=0.3)
+    ax.tick_params(labelsize=14)
+    ax.text(0.02, 0.98, '(d)', transform=ax.transAxes, fontsize=16, fontweight='bold',
+            verticalalignment='top', horizontalalignment='left')
     
     plt.suptitle(f'Solver Comparison: v={v_bc_kms} km/s, T={T_bc/1e6:.0f} MK, n={n_bc} cm⁻³, γ={gamma}',
-                 fontsize=12, fontweight='bold')
-    plt.tight_layout()
+                 fontsize=16, fontweight='bold')
+    plt.tight_layout(rect=[0, 0, 1, 0.97])
     
-    outfile = 'solver_vs_parker_comparison.png'
+    # Output to Overleaf directory
+    dbox = os.environ.get('DBOX', 'C:\\Users\\mathe\\Dropbox')
+    outdir = os.path.join(dbox, 'Apps', 'Overleaf', 'SHUXt')
+    os.makedirs(outdir, exist_ok=True)
+    outfile = os.path.join(outdir, 'solver_vs_parker_comparison.pdf')
     plt.savefig(outfile, dpi=150)
     print(f"\nPlot saved to: {outfile}")
     plt.show()
-    
-    print("\n" + "="*70)
-    print("Analysis Complete")
-    print("="*70)
-    print("\nKey observations:")
-    print("- All solvers should converge to Parker nozzle at steady state")
-    print("- 1st order methods (PCM) show more numerical diffusion")
-    print("- 2nd order methods (PLM) are more accurate")
-    print("- HLLC captures contact discontinuities better than HLL")
-    print("- Roe solver is most accurate for smooth flows")
 
 
 if __name__ == '__main__':
