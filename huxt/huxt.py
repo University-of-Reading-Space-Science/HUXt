@@ -782,6 +782,39 @@ class HUXt:
 
         return
     
+    def process_longitude(self, i, n_cme, n_hcs_max, streak_times):
+        """
+        Process a single longitude slice in the HUXt simulation.
+        This helper function is used for parallel execution across longitudes.
+        
+        Args:
+            i: Longitude index to process
+            n_cme: Number of CMEs
+            n_hcs_max: Maximum number of HCS particles
+            streak_times: Streakline timing data
+            
+        Returns:
+            Tuple of (i, v, cme_r_bounds, cme_v_bounds, hcs_r, streak_r)
+        """
+        # check if there is b polarity data
+        if self.track_b:
+            bslice = self.input_b_ts[:, i]
+        else:
+            bslice = self.input_v_ts[:, i] * np.nan
+
+        # actually run the HUXt solver
+        v, cme_r_bounds, cme_v_bounds, hcs_r, streak_r = solve_radial(
+                                                              self.input_v_ts[:, i],
+                                                              bslice,
+                                                              self.input_iscme_ts[:, i],
+                                                              self.model_time,
+                                                              self.rrel.value,
+                                                              self.model_params,
+                                                              n_cme, n_hcs_max,
+                                                              streak_times[i, :, :, :])
+        
+        return i, v, cme_r_bounds, cme_v_bounds, hcs_r, streak_r
+    
     @u.quantity_input(streak_carr=u.rad)
     def solve(self, cme_list, streak_carr=np.array([])*u.rad, save=False, tag=''):
         """
@@ -986,24 +1019,12 @@ class HUXt:
         # ======================================================================
         # Solve the time series at each longitude
         # ======================================================================
-
         for i in range(self.lon.size):
+            i, v, cme_r_bounds, cme_v_bounds, hcs_r, streak_r = self.process_longitude(i,
+                                                                                       n_cme,
+                                                                                       n_hcs_max,
+                                                                                       streak_times)
 
-            # check if there is b polarity data
-            if self.track_b:
-                bslice = self.input_b_ts[:, i]
-            else:
-                bslice = self.input_v_ts[:, i] * np.nan
-
-            # actually run the HUXt solver
-            v, cme_r_bounds, cme_v_bounds, hcs_r, streak_r = solve_radial(self.input_v_ts[:, i],
-                                                                          bslice,
-                                                                          self.input_iscme_ts[:, i],
-                                                                          self.model_time,
-                                                                          self.rrel.value,
-                                                                          self.model_params,
-                                                                          n_cme, n_hcs_max,
-                                                                          streak_times[i, :, :, :])
             # Save the output at each longitude
             self.v_grid[:, :, i] = v * self.kms
             self.cme_particles_r[:, :, :, i] = cme_r_bounds * u.dimensionless_unscaled
@@ -1521,7 +1542,7 @@ def zerototwopi(angles):
     return angles_out
 
 
-@jit(nopython=True)
+@jit(nopython=True, nogil=True)
 def solve_radial(vinput, binput, iscmeinput, model_time, rrel, params,
                  n_cme, n_hcs_max, streak_times):
     """
@@ -2117,4 +2138,4 @@ def bgrid_from_hcs(hcs_particles_r, input_b_ts, model_time, time_out, r_grid, lo
 
 
 def get_version():
-    return "5.0.0"
+    return "5.0.2"
