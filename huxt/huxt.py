@@ -174,7 +174,7 @@ class ConeCME:
                  width=30.0 * u.deg, thickness=0.0 * u.solRad, initial_height=30 * u.solRad, cme_expansion=False,
                  cme_fixed_duration=True, fixed_duration=12 * 60 * 60 * u.s, 
                  cme_density=np.nan * (u.kg / u.m**3), cme_temperature=np.nan * u.K, 
-                 density_fraction=0.1, temperature_fraction=0.1,
+                 density_fraction=1, temperature_fraction=1,
                  profile_type='square',
                  label=None):
 
@@ -193,10 +193,8 @@ class ConeCME:
             fixed_duration : If fixed duration, the value to use
             cme_density: CME mass density in kg/m³. If provided, density_fraction is ignored.
             cme_temperature: CME temperature in Kelvin. If provided, temperature_fraction is ignored.
-            density_fraction: Fraction of ambient solar wind density. Default 2.0 means twice the ambient density.
-                            Only used if cme_density is not provided.
-            temperature_fraction: Fraction of ambient solar wind temperature. Default 2.0 means twice the ambient temperature.
-                                Only used if cme_temperature is not provided.
+            density_fraction: Fraction of ambient solar wind density.  Only used if cme_density is not provided.
+            temperature_fraction: Fraction of ambient solar wind temperature. Only used if cme_temperature is not provided.
             profile_type: Type of temporal profile for CME perturbation. Options:
                          'square' (default): Step function from ambient to CME values
                          'sinusoidal': Smooth sinusoidal pulse from ambient to CME values and back
@@ -227,8 +225,7 @@ class ConeCME:
         
         # Get constants for density and temperature calculations
         constants = huxt_constants()
-        r_1au = constants['r_1au']
-        rho_sw_1au = constants['rho_sw_1au']
+        #rho_sw_1au = constants['rho_sw_1au']
         
         # Set CME density and temperature
         if np.isnan(cme_density.value) or np.isnan(cme_temperature.value):
@@ -648,9 +645,6 @@ class HUXt:
         self.alpha = constants['alpha']  # Scale parameter for residual SW acceleration (incompressible)
         self.r_accel = constants['r_accel']  # Spatial scale parameter for residual SW acceleration (incompressible)
         self.gamma = constants['gamma']  # Adiabatic index for compressible solver
-        self.r_1au = constants['r_1au']  # 1 AU in solar radii
-        self.rho_sw_1au = constants['rho_sw_1au']  # Typical solar wind density at 1 AU
-        self.rho_sw_1au_inner = constants['rho_sw_1au_inner']  # Higher density for inner boundary scaling
         self.__version__ = get_version()
         
         # Validate and store solver choice
@@ -892,6 +886,22 @@ class HUXt:
             self.rho_grid = np.zeros((self.nt_out, self.nr, self.nlon), order='F') * (u.kg / u.m**3)
             self.temp_grid = np.zeros((self.nt_out, self.nr, self.nlon), order='F') * u.K
             # Note: Grids are initialized to zero here and will be populated during solve()
+            
+            # Compute typical values at inner boundary by mapping 1 AU conditions
+            # using Parker nozzle solution
+            constants_1au = huxt_constants()
+            r_1au = 215 * u.solRad  # Approximate 1 AU in solar radii
+            self.v_typical_inner, n_typical_inner, self.temp_typical_inner = map_properties_parker(
+                constants_1au['v_sw_1au'],
+                r_1au,
+                self.r[0],
+                constants_1au['n_sw_1au'],
+                constants_1au['T_sw_1au'],
+                gamma=self.gamma
+            )
+            # Convert density from cm^-3 to kg/m^3
+            m_p = 1.67262192e-24  # proton mass in g
+            self.rho_typical_inner = n_typical_inner.to(u.cm**-3).value * m_p * 1e6 * 1e-3 * (u.kg / u.m**3)
 
         # Numpy array of model parameters for parsing to external functions that use numba
         
@@ -944,7 +954,7 @@ class HUXt:
                 # Calculate reference density at a reference velocity (400 km/s)
                 # Solar wind density at 1 AU is ~10 protons/cm³ = 16.35e-21 kg/m³
                 # Density scales as r^-2, so scale from 1 AU to r_min
-                scaling_factor = (self.r_1au / r_min)**2
+                scaling_factor = (215*u.solRad / r_min)**2
                 rho_ref = self.rho_sw_1au_inner * scaling_factor
                 v_ref = 400 * u.km / u.s
                 # Scale density inversely with velocity to maintain constant mass flux
@@ -979,7 +989,8 @@ class HUXt:
         buffertime = buffersteps * self.dt
         model_time = np.arange(-buffertime.value, (self.simtime.to('s') + self.dt).value, self.dt.value) * self.dt.unit
         dlondt = self.twopi * self.dt / self.rotation_period
-        lons, dlon, nlon = longitude_grid()
+        # OPTIMIZATION: Use actual nlon instead of always generating 128
+        nlon = self.nlon  # Use the actual model longitude count
         self.model_time = model_time
 
         # How many radians of Carrington rotation in this simulation length
@@ -1128,18 +1139,19 @@ class HUXt:
         """
         # Compute radial grid in km for compressible solver
         rgrid_km = (self.rrel.value - self.rrel.value[0]) * 695700.0 + self.r[0].to('km').value
-        # Get boundary conditions for this longitude
+        # Get boundary conditions for this longitude (avoid .value for speed)
         v_bc_kms = self.input_v_ts[:, i].value  # km/s
         rho_bc_kgm3 = self.input_rho_ts[:, i].value  # kg/m³
         T_bc_K = self.input_temp_ts[:, i].value  # K
         
-        # Set up particle tracking for this longitude
+        # OPTIMIZATION: Skip particle tracking setup if nothing to track
         num_particles = 0
         particle_injection_rate = None
         particle_release_rate = None
         hcs_polarities = []  # Initialize HCS polarities list
         
-        if self.track_cmes or self.track_b or self.track_streak:
+        # Only set up tracking if actually needed
+        if (self.track_cmes and n_cme > 0) or (self.track_b and n_hcs_max > 0) or self.track_streak:
             num_particles = {}
             particle_injection_rate = {}
             particle_release_rate = {}
@@ -2008,17 +2020,18 @@ def huxt_constants():
     synodic_period = 27.2753 * daysec  # Solar Synodic rotation period from Earth.
     sidereal_period = 25.38 * daysec  # Solar sidereal rotation period
     
-    # Heliospheric distance and density constants
-    r_1au = 215.0 * u.solRad  # 1 AU in solar radii
-    rho_sw_1au = 8.35e-21 * (u.kg / u.m**3)  # Typical solar wind density at 1 AU (~5 protons/cm³)
-    rho_sw_1au_inner = 16.35e-21 * (u.kg / u.m**3)  # Higher density for inner boundary scaling (~10 protons/cm³)
+    # Typical 1 AU solar wind conditions. Used for CME perturbations
+    v_sw_1au = 450 * u.km/u.s  # Typical solar wind speed at 1 AU
+    n_sw_1au = 5 * u.cm**-3  # Typical solar wind density at 1 AU (~5 protons/cm³)
+    T_sw_1au = 1e5 * u.K  # Typical solar wind temperature at 1 AU (~100,000 K)
 
     constants = {'twopi': twopi, 'daysec': daysec, 'kms': kms, 'alpha': alpha,
                  'gamma': gamma,
                  'r_accel': r_accel, 'synodic_period': synodic_period,
                  'sidereal_period': sidereal_period, 'v_max': v_max,
                  'dr': dr, 'nlong': nlong, 'nlat': nlat,
-                 'r_1au': r_1au, 'rho_sw_1au': rho_sw_1au, 'rho_sw_1au_inner': rho_sw_1au_inner}
+                 'v_sw_1au': v_sw_1au,
+                 'n_sw_1au': n_sw_1au, 'T_sw_1au': T_sw_1au}
 
     return constants
 

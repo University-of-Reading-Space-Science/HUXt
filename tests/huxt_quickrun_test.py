@@ -12,9 +12,8 @@ import huxt.huxt_analysis as HA
 import huxt.huxt_inputs as Hin
 import huxt.huxt_insitu as Hinsitu
 
-standard_tests = False
-compressible_tests = False
-insitu_tests = True
+standard_tests = True
+compressible_tests = True
 insitu_compressible_tests = True
 
 simtime = 5*u.day
@@ -211,16 +210,10 @@ if compressible_tests:
 
 
 
+# <cocdecell> InSitu-HUXt compressible test
 
-#<codecell> InSitu-HUXt integration test
-
-if insitu_tests:
-
-    print("="*60)
-    print("InSitu-HUXt integration test")
-    print("="*60)
-
-    ftime = datetime.datetime(2019,7,20)
+if insitu_compressible_tests:
+    ftime = datetime.datetime(2019,8,5)
     is_model = Hinsitu.omniHUXt_forecast(ftime, simtime=27.27*u.day, 
                             rmin=21.5*u.solRad, rmax=230*u.solRad, 
                             dt_scale=4,
@@ -228,16 +221,10 @@ if insitu_tests:
                             run_2d=False)
 
     is_model.solve([])
-    #HA.plot_earth_timeseries(is_model)
+    HA.plot_earth_timeseries(is_model)
+
     ts_incomp = HA.get_observer_timeseries(is_model)
 
-# <cocdecell> InSitu-HUXt compressible test
-
-if insitu_compressible_tests:
-    ftime = datetime.datetime(2019,7,20)
-    cr, cr_lon_init = Hin.datetime2huxtinputs(ftime)
-
-    ftime = datetime.datetime(2019,7,20)
     is_model = Hinsitu.omniHUXt_forecast(ftime, simtime=27.27*u.day, 
                             rmin=21.5*u.solRad, rmax=230*u.solRad, 
                             dt_scale=4,

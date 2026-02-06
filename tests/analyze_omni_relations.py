@@ -117,6 +117,8 @@ v_filtered = v_clean
 T_filtered = T_clean
 n_filtered = n_clean
 
+
+
 # ==============================================================================
 # Bin the 1 AU data by velocity to avoid weighting bias
 # ==============================================================================

@@ -4,12 +4,10 @@ Compares serial vs parallel execution to ensure they produce identical results.
 """
 import numpy as np
 import astropy.units as u
-import sys
 import time
-
-sys.path.insert(0, 'c:/Users/vy902033/Dropbox/python_repos/HUXt5/HUXt')
-
 from huxt.huxt import HUXt
+
+solver = 'hllc-plm-rk2'
 
 # Create a simple test case with spatial structure
 print("="*70)
@@ -27,14 +25,36 @@ model_serial = HUXt(
     v_boundary=v_boundary,
     cr_num=2050,
     cr_lon_init=0 * u.deg,
-    simtime=27 * u.day,
+    simtime=0.1 * u.day,
     dt_scale=4,
     frame='synodic',
-    parallel=False  # Serial
+    parallel=False,  # Serial
+    solver = solver
 )
 model_serial.solve(cme_list=[])
 t_serial = time.time() - t_start
 print(f"   Pre-JIT execution time: {t_serial:.2f} seconds")
+
+# Test 1: Serial execution
+print("\n1. Running SERIAL execution in 1D...")
+t_start = time.time()
+model_serial = HUXt(
+    v_boundary=v_boundary,
+    cr_num=2050,
+    cr_lon_init=0 * u.deg,
+    simtime=5 * u.day,
+    dt_scale=4,
+    frame='synodic',
+    parallel=False,  # Serial
+    solver = solver,  
+    lon_out=0.0*u.rad, track_cmes=False  # Disable tracking for fair comparison
+)
+model_serial.solve(cme_list=[])
+t_serial = time.time() - t_start
+
+
+print(f"   Serial execution time: {t_serial:.2f} seconds")
+print(f"   nlon: {model_serial.nlon:.2f}")
 
 # Test 1: Serial execution
 print("\n1. Running SERIAL execution...")
@@ -43,10 +63,12 @@ model_serial = HUXt(
     v_boundary=v_boundary,
     cr_num=2050,
     cr_lon_init=0 * u.deg,
-    simtime=27 * u.day,
+    simtime=5 * u.day,
     dt_scale=4,
     frame='synodic',
-    parallel=False  # Serial
+    parallel=False,  # Serial
+    solver = solver,
+    track_cmes=False  # Disable tracking for fair comparison  
 )
 model_serial.solve(cme_list=[])
 t_serial = time.time() - t_start
@@ -62,10 +84,12 @@ model_parallel = HUXt(
     v_boundary=v_boundary,
     cr_num=2050,
     cr_lon_init=0 * u.deg,
-    simtime=27 * u.day,
+    simtime=5 * u.day,
     dt_scale=4,
     frame='synodic',
-    parallel=True  # Parallel
+    parallel=True,  # Parallel
+    solver = solver,
+    track_cmes=False  # Disable tracking for fair comparison  # Parallel
 )
 model_parallel.solve(cme_list=[])
 t_parallel = time.time() - t_start

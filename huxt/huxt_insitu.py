@@ -1070,12 +1070,7 @@ def omniHUXt_forecast(ftime, simtime=27.27*u.day,
     if isinstance(vcarr_rmin_back, tuple):
         vcarr_rmin_back, bcarr_rmin_back = vcarr_rmin_back
     else:
-        bcarr_rmin_back = None
-    
-    #teh HUXXt equation has stronger acceleration than Parker nozzle. so increase speeds slightly 
-    #to compensate
-    if solver != 'upwind':
-        vcarr_rmin_back = vcarr_rmin_back * 1.1
+        bcarr_rmin_back = None  
     
     # interp to typical HUXt resolution
     dphi = 2*np.pi/H.huxt_constants()['nlong']
@@ -1085,6 +1080,13 @@ def omniHUXt_forecast(ftime, simtime=27.27*u.day,
     
     # apply the CNN to the backmapped data
     vcarr_rmin_back_cnn = correct_inner_vlon_cnn_onnx(vlon.reshape(-1, 1))
+
+    #teh HUXXt equation has stronger acceleration than Parker nozzle. so increase speeds slightly 
+    #to compensate
+    if solver != 'upwind':
+        vcarr_rmin_back_cnn = vcarr_rmin_back_cnn * 1.1
+        #smooth the series, periodic at the edges
+        vcarr_rmin_back_cnn = np.convolve(vcarr_rmin_back_cnn.flatten(), np.ones(5)/5, mode='same')
     
     # set up the model run to start 5 days before the forecast time, to allow for CMEs
     cr, cr_lon_init = Hin.datetime2huxtinputs(ftime - datetime.timedelta(days=buffertime.value))

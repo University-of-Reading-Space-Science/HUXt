@@ -214,29 +214,42 @@ def riemann_hllc(U_l, U_r, gamma):
     """
     HLLC (Harten-Lax-van Leer-Contact) Riemann solver.
     Good balance of accuracy and speed. Resolves contact discontinuities.
+    
+    Optimized: computes fluxes inline from already-known primitives
+    to avoid redundant cons_to_prim conversions in get_flux.
     """
     # Left state
     rho_l = max(U_l[0], SMALL_RHO)
     v_l = U_l[1] / rho_l
     E_l = U_l[2]
-    p_l = max(get_pressure(rho_l, (E_l - 0.5*rho_l*v_l**2)/rho_l, gamma), SMALL_P)
-    c_l = get_sound_speed(rho_l, p_l, gamma)
+    p_l = max((E_l - 0.5*rho_l*v_l**2) * (gamma - 1.0), SMALL_P)
+    c_l = np.sqrt(gamma * p_l / rho_l)
     
     # Right state
     rho_r = max(U_r[0], SMALL_RHO)
     v_r = U_r[1] / rho_r
     E_r = U_r[2]
-    p_r = max(get_pressure(rho_r, (E_r - 0.5*rho_r*v_r**2)/rho_r, gamma), SMALL_P)
-    c_r = get_sound_speed(rho_r, p_r, gamma)
+    p_r = max((E_r - 0.5*rho_r*v_r**2) * (gamma - 1.0), SMALL_P)
+    c_r = np.sqrt(gamma * p_r / rho_r)
     
     # Wave speed estimates
     S_l = min(v_l - c_l, v_r - c_r)
     S_r = max(v_l + c_l, v_r + c_r)
     
+    F = np.zeros(3)
+    
     if S_l >= 0:
-        return get_flux(U_l, gamma)
+        # All waves move right; use left flux (inline, no get_flux call)
+        F[0] = rho_l * v_l
+        F[1] = rho_l * v_l * v_l + p_l
+        F[2] = (E_l + p_l) * v_l
+        return F
     elif S_r <= 0:
-        return get_flux(U_r, gamma)
+        # All waves move left; use right flux (inline)
+        F[0] = rho_r * v_r
+        F[1] = rho_r * v_r * v_r + p_r
+        F[2] = (E_r + p_r) * v_r
+        return F
     
     # Contact wave speed
     denom = rho_l * (S_l - v_l) - rho_r * (S_r - v_r)
@@ -248,28 +261,34 @@ def riemann_hllc(U_l, U_r, gamma):
     if S_c >= 0:
         # Left star state
         factor = rho_l * (S_l - v_l) / (S_l - S_c)
-        U_star = np.zeros(3)
-        U_star[0] = factor
-        U_star[1] = factor * S_c
-        U_star[2] = factor * (E_l/rho_l + (S_c - v_l) * (S_c + p_l/(rho_l*(S_l - v_l))))
+        U_star_0 = factor
+        U_star_1 = factor * S_c
+        U_star_2 = factor * (E_l/rho_l + (S_c - v_l) * (S_c + p_l/(rho_l*(S_l - v_l))))
         
-        F_l = get_flux(U_l, gamma)
-        F = np.zeros(3)
-        for i in range(3):
-            F[i] = F_l[i] + S_l * (U_star[i] - U_l[i])
+        # Inline left flux + HLL correction
+        F_l_0 = rho_l * v_l
+        F_l_1 = rho_l * v_l * v_l + p_l
+        F_l_2 = (E_l + p_l) * v_l
+        
+        F[0] = F_l_0 + S_l * (U_star_0 - U_l[0])
+        F[1] = F_l_1 + S_l * (U_star_1 - U_l[1])
+        F[2] = F_l_2 + S_l * (U_star_2 - U_l[2])
         return F
     else:
         # Right star state
         factor = rho_r * (S_r - v_r) / (S_r - S_c)
-        U_star = np.zeros(3)
-        U_star[0] = factor
-        U_star[1] = factor * S_c
-        U_star[2] = factor * (E_r/rho_r + (S_c - v_r) * (S_c + p_r/(rho_r*(S_r - v_r))))
+        U_star_0 = factor
+        U_star_1 = factor * S_c
+        U_star_2 = factor * (E_r/rho_r + (S_c - v_r) * (S_c + p_r/(rho_r*(S_r - v_r))))
         
-        F_r = get_flux(U_r, gamma)
-        F = np.zeros(3)
-        for i in range(3):
-            F[i] = F_r[i] + S_r * (U_star[i] - U_r[i])
+        # Inline right flux + HLL correction
+        F_r_0 = rho_r * v_r
+        F_r_1 = rho_r * v_r * v_r + p_r
+        F_r_2 = (E_r + p_r) * v_r
+        
+        F[0] = F_r_0 + S_r * (U_star_0 - U_r[0])
+        F[1] = F_r_1 + S_r * (U_star_1 - U_r[1])
+        F[2] = F_r_2 + S_r * (U_star_2 - U_r[2])
         return F
 
 
@@ -375,13 +394,16 @@ def reconstruct_plm(U, i, nr, gamma):
     dq_l = np.zeros(3)
     dq_r = np.zeros(3)
     
+    # Pre-compute q_ip2 once outside the component loop (was called 3x before)
+    if i < nr - 2:
+        q_ip2 = cons_to_prim(U[i+2], gamma)
+    
     for n in range(3):
         slope_l = q_i[n] - q_im1[n]
         slope_r = q_ip1[n] - q_i[n]
         dq_l[n] = mc_limiter(slope_l, slope_r)
         
         if i < nr - 2:
-            q_ip2 = cons_to_prim(U[i+2], gamma)
             slope_l2 = q_ip1[n] - q_i[n]
             slope_r2 = q_ip2[n] - q_ip1[n]
             dq_r[n] = mc_limiter(slope_l2, slope_r2)
@@ -433,28 +455,40 @@ def _compute_fluxes_pcm(U, nr, gamma, riemann_type):
 def _compute_fluxes_plm(U, nr, gamma, riemann_type):
     """
     Compute fluxes at all interfaces using PLM reconstruction.
+    
+    Optimized: batch-converts ALL cells to primitives once upfront,
+    then reuses across interfaces. Previously each cell was converted
+    up to 4 times (as q_im1, q_i, q_ip1, q_ip2).
     """
     fluxes = np.zeros((nr + 1, 3))
+    
+    # Batch convert all cells to primitives ONCE
+    q_all = np.zeros((nr, 3))  # [rho, v, p] for each cell
+    q_valid = np.ones(nr, dtype=np.int32)  # Track validity
+    for j in range(nr):
+        rho = max(U[j, 0], SMALL_RHO)
+        v = U[j, 1] / rho
+        eint = (U[j, 2] - 0.5 * rho * v * v) / rho
+        p = max(rho * eint * (gamma - 1.0), SMALL_P)
+        q_all[j, 0] = rho
+        q_all[j, 1] = v
+        q_all[j, 2] = p
+        if rho <= 0 or p <= 0:
+            q_valid[j] = 0
     
     for i in range(nr + 1):
         if i == 0:
             U_l = U[0]
             U_r = U[0]
         elif i == nr:
-            # Outer boundary - Extrapolate from interior to improve accuracy
-            # Uses 2nd order extrapolation to right face of cell nr-1
+            # Outer boundary - 2nd order extrapolation
             if nr >= 2:
-                q_last = cons_to_prim(U[nr-1], gamma)
-                q_prev = cons_to_prim(U[nr-2], gamma)
-                
-                # Linear extrapolation to face: q_face = q_last + 0.5 * slope
-                # Slope approx as backward difference
-                q_face = q_last + 0.5 * (q_last - q_prev)
-                
-                # Ensure positivity
-                q_face[0] = max(q_face[0], SMALL_RHO)
-                q_face[2] = max(q_face[2], SMALL_P)
-                
+                q_last = q_all[nr-1]
+                q_prev = q_all[nr-2]
+                q_face = np.zeros(3)
+                q_face[0] = max(q_last[0] + 0.5 * (q_last[0] - q_prev[0]), SMALL_RHO)
+                q_face[1] = q_last[1] + 0.5 * (q_last[1] - q_prev[1])
+                q_face[2] = max(q_last[2] + 0.5 * (q_last[2] - q_prev[2]), SMALL_P)
                 U_face = prim_to_cons(q_face, gamma)
                 U_l = U_face
                 U_r = U_face
@@ -462,10 +496,57 @@ def _compute_fluxes_plm(U, nr, gamma, riemann_type):
                 U_l = U[nr-1]
                 U_r = U[nr-1]
         else:
-            # PLM reconstruction
-            U_l, U_r = reconstruct_plm(U, i-1, nr, gamma)
+            # PLM reconstruction using pre-computed primitives
+            idx = i - 1  # left cell of interface
+            
+            if idx >= nr - 1:
+                U_l = U[idx].copy()
+                U_r = U[idx].copy()
+            elif idx == 0:
+                # Inner boundary special case
+                if nr < 3 or q_valid[0] == 0 or q_valid[1] == 0 or q_valid[2] == 0:
+                    U_l = U[0].copy()
+                    U_r = U[1].copy()
+                else:
+                    q_L = np.zeros(3)
+                    q_R = np.zeros(3)
+                    for n in range(3):
+                        slope_0 = q_all[1, n] - q_all[0, n]
+                        slope_L = q_all[1, n] - q_all[0, n]
+                        slope_R = q_all[2, n] - q_all[1, n]
+                        dq_1 = mc_limiter(slope_L, slope_R)
+                        q_L[n] = q_all[0, n] + 0.5 * slope_0
+                        q_R[n] = q_all[1, n] - 0.5 * dq_1
+                    q_L[0] = max(q_L[0], SMALL_RHO); q_L[2] = max(q_L[2], SMALL_P)
+                    q_R[0] = max(q_R[0], SMALL_RHO); q_R[2] = max(q_R[2], SMALL_P)
+                    U_l = prim_to_cons(q_L, gamma)
+                    U_r = prim_to_cons(q_R, gamma)
+            else:
+                # Standard internal - check validity
+                if q_valid[idx-1] == 0 or q_valid[idx] == 0 or q_valid[idx+1] == 0:
+                    U_l = U[idx].copy()
+                    U_r = U[idx+1].copy()
+                else:
+                    # Left state slopes
+                    dq_l = np.zeros(3)
+                    dq_r = np.zeros(3)
+                    for n in range(3):
+                        slope_l = q_all[idx, n] - q_all[idx-1, n]
+                        slope_r = q_all[idx+1, n] - q_all[idx, n]
+                        dq_l[n] = mc_limiter(slope_l, slope_r)
+                        
+                        if idx < nr - 2:
+                            slope_l2 = q_all[idx+1, n] - q_all[idx, n]
+                            slope_r2 = q_all[idx+2, n] - q_all[idx+1, n]
+                            dq_r[n] = mc_limiter(slope_l2, slope_r2)
+                    
+                    q_L = q_all[idx] + 0.5 * dq_l
+                    q_R = q_all[idx+1] - 0.5 * dq_r
+                    q_L[0] = max(q_L[0], SMALL_RHO); q_L[2] = max(q_L[2], SMALL_P)
+                    q_R[0] = max(q_R[0], SMALL_RHO); q_R[2] = max(q_R[2], SMALL_P)
+                    U_l = prim_to_cons(q_L, gamma)
+                    U_r = prim_to_cons(q_R, gamma)
         
-        # Use HLLC Riemann solver
         fluxes[i] = riemann_hllc(U_l, U_r, gamma)
     
     return fluxes
@@ -475,40 +556,29 @@ def _compute_fluxes_plm(U, nr, gamma, riemann_type):
 def _compute_source(U, A, V, nr, gamma):
     """
     Compute geometric source terms for spherical coordinates.
-    
-    When using area-weighted finite volume formulation:
-    dU/dt = -(1/V) * [A[i+1]*F[i+1] - A[i]*F[i]] + S
-    
-    The area weighting flux method correctly handles the geometric divergence 
-    and conserving mass and energy without explicit source terms.
-    
-    For the momentum equation, there is a physical source term due to the 
-    pressure force acting on the lateral walls of the spherical shell sector.
-    This is best computed discretely to balance the pressure flux term:
-    
-    S_mom = p * (A_out - A_in) / V
-    
-    This ensures that for constant pressure, the geometric source term exactly
-    cancels the geometric part of the pressure flux gradient.
+    Optimized: inline pressure computation to avoid cons_to_prim overhead.
     """
     S = np.zeros((nr, 3))
     for i in range(nr):
-        q = cons_to_prim(U[i], gamma)
-        p = q[2]
-        # Geometric pressure term: p * dA/dr (ONLY for momentum equation)
-        # Using discrete area difference is consistent with FV formulation
+        rho = max(U[i, 0], SMALL_RHO)
+        v = U[i, 1] / rho
+        eint = (U[i, 2] - 0.5 * rho * v * v) / rho
+        p = max(rho * eint * (gamma - 1.0), SMALL_P)
         S[i, 1] = p * (A[i+1] - A[i]) / V[i]
     return S
 
 
 @njit(cache=True)
 def _get_dt(U, nr, dx, gamma, cfl):
-    """Compute CFL-limited timestep."""
+    """Compute CFL-limited timestep. Uses precomputed min_dx when available."""
     max_speed = 0.0
     for i in range(nr):
-        q = cons_to_prim(U[i], gamma)
-        c = get_sound_speed(q[0], q[2], gamma)
-        speed = abs(q[1]) + c
+        rho = max(U[i, 0], SMALL_RHO)
+        v = U[i, 1] / rho
+        eint = (U[i, 2] - 0.5 * rho * v * v) / rho
+        p = max(rho * eint * (gamma - 1.0), SMALL_P)
+        c = np.sqrt(gamma * p / rho)
+        speed = abs(v) + c
         if speed > max_speed:
             max_speed = speed
     
@@ -524,10 +594,51 @@ def _get_dt(U, nr, dx, gamma, cfl):
 
 
 @njit(cache=True)
+def _get_dt_fast(U, nr, min_dx, gamma, cfl):
+    """Compute CFL-limited timestep with precomputed min_dx (avoids recomputing each step)."""
+    max_speed = 0.0
+    for i in range(nr):
+        rho = max(U[i, 0], SMALL_RHO)
+        v = U[i, 1] / rho
+        eint = (U[i, 2] - 0.5 * rho * v * v) / rho
+        p = max(rho * eint * (gamma - 1.0), SMALL_P)
+        c = np.sqrt(gamma * p / rho)
+        speed = abs(v) + c
+        if speed > max_speed:
+            max_speed = speed
+    
+    if max_speed == 0:
+        return 1.0
+    
+    return cfl * min_dx / max_speed
+
+
+@njit(cache=True)
+def _extract_snapshot(U, nr, gamma, M_P_CGS_val, K_B_CGS_val):
+    """
+    JIT-compiled snapshot extraction: convert conserved to (v, rho, T) arrays.
+    Avoids per-cell Python overhead in the main solve loop.
+    """
+    v_out = np.zeros(nr)
+    rho_out = np.zeros(nr)
+    T_out = np.zeros(nr)
+    for i in range(nr):
+        rho = max(U[i, 0], SMALL_RHO)
+        v = U[i, 1] / rho
+        eint = (U[i, 2] - 0.5 * rho * v * v) / rho
+        p = max(rho * eint * (gamma - 1.0), SMALL_P)
+        v_out[i] = v
+        rho_out[i] = rho
+        T_out[i] = p * M_P_CGS_val / (rho * K_B_CGS_val)
+    return v_out, rho_out, T_out
+
+
+@njit(cache=True)
 def _step_euler_jit(U, U_bc, nr, r, A, V, dt, gamma, riemann_type, use_plm):
     """
     JIT-compiled Euler step using HLLC Riemann solver.
-    use_plm: True for PLM, False for PCM
+    Optimized: computes source terms inline during update loop
+    to avoid a separate cons_to_prim pass via _compute_source.
     """
     # Compute fluxes
     if use_plm:
@@ -535,19 +646,28 @@ def _step_euler_jit(U, U_bc, nr, r, A, V, dt, gamma, riemann_type, use_plm):
     else:
         fluxes = _compute_fluxes_pcm(U, nr, gamma, riemann_type)
     
-    # Update with area-weighted flux divergence PLUS geometric source term
-    # The 2*p/r term is needed for the momentum equation in spherical coordinates
+    # Update with area-weighted flux divergence PLUS inline geometric source term
     U_new = np.zeros_like(U)
-    S = _compute_source(U, A, V, nr, gamma)
     
     for i in range(nr):
         # Check for valid volume
         if V[i] <= 0:
             U_new[i] = U[i]
             continue
-            
-        dUdt = -(A[i+1] * fluxes[i+1] - A[i] * fluxes[i]) / V[i] + S[i]
-        U_new[i] = U[i] + dt * dUdt
+        
+        # Inline source term: only momentum equation needs p * dA/V
+        rho = max(U[i, 0], SMALL_RHO)
+        v = U[i, 1] / rho
+        eint = (U[i, 2] - 0.5 * rho * v * v) / rho
+        p = max(rho * eint * (gamma - 1.0), SMALL_P)
+        S_mom = p * (A[i+1] - A[i]) / V[i]
+        
+        inv_V = 1.0 / V[i]
+        for j in range(3):
+            dUdt = -(A[i+1] * fluxes[i+1, j] - A[i] * fluxes[i, j]) * inv_V
+            if j == 1:
+                dUdt += S_mom
+            U_new[i, j] = U[i, j] + dt * dUdt
         
         # Check for negative density or energy and reset if needed
         if U_new[i, 0] < SMALL_RHO or U_new[i, 2] < SMALL_P:
@@ -662,6 +782,9 @@ class CompressibleSolver:
         # State
         self.U = np.zeros((self.nr, 3))
         self.time = 0.0
+        
+        # Precompute min_dx for faster CFL computation (grid never changes)
+        self.min_dx = np.min(self.dx)
         
     def set_initial_conditions(self, rho, v, T):
         """Set initial conditions from primitive variables (CGS units)."""
@@ -784,8 +907,8 @@ class CompressibleSolver:
         return self.U
     
     def get_dt_jit(self):
-        """Compute CFL-limited timestep using JIT function."""
-        return _get_dt(self.U, self.nr, self.dx, self.gamma, self.cfl)
+        """Compute CFL-limited timestep using JIT function with precomputed min_dx."""
+        return _get_dt_fast(self.U, self.nr, self.min_dx, self.gamma, self.cfl)
     
     def solve(self, t_grid, v_bc_func, rho_bc_func, T_bc_func, 
               num_particles=0, particle_injection_rate=None, particle_release_rate=None):
@@ -881,11 +1004,11 @@ class CompressibleSolver:
         
         # Save first snapshot
         if abs(t_grid[0] - self.time) < 1e-5:
-            for i in range(self.nr):
-                q = cons_to_prim(self.U[i], self.gamma)
-                v_out[0, i] = q[1]
-                rho_out[0, i] = q[0]
-                T_out[0, i] = q[2] * M_P_CGS / (q[0] * K_B_CGS)
+            v_snap, rho_snap, T_snap = _extract_snapshot(
+                self.U, self.nr, self.gamma, M_P_CGS, K_B_CGS)
+            v_out[0, :] = v_snap
+            rho_out[0, :] = rho_snap
+            T_out[0, :] = T_snap
             t_idx = 1
         
         while t_idx < nt:
@@ -942,11 +1065,11 @@ class CompressibleSolver:
                                     group['t'][i].append(self.time)
             
             # Save snapshot
-            for i in range(self.nr):
-                q = cons_to_prim(self.U[i], self.gamma)
-                v_out[t_idx, i] = q[1]
-                rho_out[t_idx, i] = q[0]
-                T_out[t_idx, i] = q[2] * M_P_CGS / (q[0] * K_B_CGS)
+            v_snap, rho_snap, T_snap = _extract_snapshot(
+                self.U, self.nr, self.gamma, M_P_CGS, K_B_CGS)
+            v_out[t_idx, :] = v_snap
+            rho_out[t_idx, :] = rho_snap
+            T_out[t_idx, :] = T_snap
             t_idx += 1
         
         if self.verbose:

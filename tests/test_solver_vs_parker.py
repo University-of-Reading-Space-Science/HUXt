@@ -167,7 +167,7 @@ def main():
     
     # Simulation time: run to steady state (5 days)
     day_sec = 86400
-    t_end = 5 * day_sec
+    t_end = 10 * day_sec
     dt_out = t_end / 20
     t_grid = np.arange(0, t_end + dt_out, dt_out)
     
@@ -325,6 +325,7 @@ def main():
         ax.semilogy(r_Rs, n, '--', color=colors[i], alpha=0.7, linewidth=2, label=method_name)
     ax.set_xlabel('Distance (Rs)', fontsize=14)
     ax.set_ylabel('Number density (cm⁻³)', fontsize=14)
+    ax.set_ylim(n_parker.min() * 0.8, n_parker.max() * 1.5)
     ax.yaxis.tick_right()
     ax.yaxis.set_label_position("right")
     ax.legend(fontsize=14, loc='upper right')
@@ -342,11 +343,7 @@ def main():
     ax.set_xlabel('Distance (Rs)', fontsize=14)
     ax.set_ylabel('Temperature (K)', fontsize=14)
     # Set y-axis range to span at least one order of magnitude
-    T_min = np.min(T_parker)
-    T_max = np.max(T_parker)
-    T_range = T_max / T_min
-    if T_range < 10:  # Less than one order of magnitude
-        ax.set_ylim(T_min * 0.3, T_max * 3)
+    ax.set_ylim(T_parker.min() * 0.8, T_parker.max() * 1.5)
     ax.legend(fontsize=14, loc='upper right')
     ax.grid(True, alpha=0.3)
     ax.tick_params(labelsize=14)
@@ -384,6 +381,16 @@ def main():
     plt.savefig(outfile, dpi=150)
     print(f"\nPlot saved to: {outfile}")
     plt.show()
+    
+    print("\n" + "="*70)
+    print("Analysis Complete")
+    print("="*70)
+    print("\nKey observations:")
+    print("- All solvers should converge to Parker nozzle at steady state")
+    print("- 1st order methods (PCM) show more numerical diffusion")
+    print("- 2nd order methods (PLM) are more accurate")
+    print("- HLLC captures contact discontinuities better than HLL")
+    print("- Roe solver is most accurate for smooth flows")
 
 
 if __name__ == '__main__':
