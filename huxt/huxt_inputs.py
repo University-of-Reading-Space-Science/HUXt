@@ -722,6 +722,11 @@ def get_CorTom_vr_map(filepath):
         vr_colat = copy.copy(cortom_data['colat_rad'])
         vr_longs = copy.copy(cortom_data['lon_rad'])
 
+        # Convert colatitude to latitude and flip so south pole at bottom
+        vr_lats = (np.pi / 2 - vr_colat)
+        vr_lats = np.flipud(vr_lats)
+        vr_map = np.flipud(vr_map)
+
     elif filepath.suffix == '.pkl':
         # Pickled Cortom output from local or UKMO API
         with open(filepath, "rb") as file:
@@ -731,10 +736,13 @@ def get_CorTom_vr_map(filepath):
         vr_colat = data['colat']
         vr_longs = data['lon']
         vr_map = np.swapaxes(vr_map, 0, 1)
+
+        # Convert colatitude to latitude and flip so south pole at bottom
+        vr_lats = (np.pi / 2 - vr_colat)
+        vr_lats = np.flipud(vr_lats)
+        vr_map = np.flipud(vr_map)
     else:
         raise ValueError(f"Filename must have extension of either dat or pkl: {filepath}")
-
-    vr_lats = (np.pi / 2 - vr_colat)
 
     # now rotate onto a 0 to 360 grid
     Nlon = len(vr_longs)
@@ -744,7 +752,7 @@ def get_CorTom_vr_map(filepath):
         vr_map_out[nlat, :] = np.interp(vr_longs_out, vr_longs, vr_map[nlat, :], period=2 * np.pi)
 
     return vr_map_out * u.km / u.s, vr_longs_out * u.rad, vr_lats * u.rad
-    
+
 
 def get_CorTom_long_profile(filepath, lat=0.0 * u.deg):
     """
@@ -769,7 +777,7 @@ def get_CorTom_long_profile(filepath, lat=0.0 * u.deg):
     # Extract the value at the given latitude
     vr = np.zeros(lon_map.shape)
     for i in range(lon_map.size):
-        vr[i] = np.interp(lat.to(u.rad).value, lat_map.value, vr_map[:, i].value)
+        vr[i] = np.interp(lat.to(u.rad).value, lat_map.to(u.rad).value, vr_map[:, i].value)
 
     return vr * u.km / u.s
     
