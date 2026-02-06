@@ -14,7 +14,7 @@ import huxt.huxt_insitu as Hinsitu
 
 standard_tests = True
 compressible_tests = True
-insitu_compressible_tests = True
+insitu_compressible_tests = False
 
 simtime = 5*u.day
 
@@ -66,7 +66,8 @@ if standard_tests:
     for t, l, w, v, thick in zip(times, lons, widths, speeds, thickness):
         cme = H.ConeCME(t_launch=t, longitude=l*u.deg, width=w*u.deg, v=v*u.km/u.s, 
                         thickness=thick*u.solRad, 
-                        density_fraction=0.1, temperature_fraction=0.1, profile_type='sinusoidal')
+                        #density_fraction=0.1, temperature_fraction=0.1,
+                        profile_type='sinusoidal')
         cme_list.append(cme)
 
 
@@ -108,30 +109,30 @@ if standard_tests:
 
 
 if compressible_tests:
-    # ---------------------------------------------------------
-    # Test 1: First-order HLLC + PCM
-    # ---------------------------------------------------------
-    print("\n" + "="*60)
-    print("Starting compressible model (HLLC + PCM 1st Order)...")
-    print("="*60)
-    model_pcm = H.HUXt(v_boundary=vr_in, b_boundary=br_in,
-                            simtime=simtime, dt_scale=4, 
-                        solver ='hllc-pcm') # Explicitly request PCM
-    print("Model initialized. Starting solve...")
-    t0 = datetime.datetime.now()
-    model_pcm.solve(cme_list, streak_carr=lon_grid)
-    dt_pcm = (datetime.datetime.now() - t0).total_seconds()
-    print(f"Solve complete in {dt_pcm:.2f}s!")
+    # # ---------------------------------------------------------
+    # # Test 1: First-order HLLC + PCM
+    # # ---------------------------------------------------------
+    # print("\n" + "="*60)
+    # print("Starting compressible model (HLLC + PCM 1st Order)...")
+    # print("="*60)
+    # model_pcm = H.HUXt(v_boundary=vr_in, b_boundary=br_in,
+    #                         simtime=simtime, dt_scale=4, 
+    #                     solver ='hllc-pcm') # Explicitly request PCM
+    # print("Model initialized. Starting solve...")
+    # t0 = datetime.datetime.now()
+    # model_pcm.solve(cme_list, streak_carr=lon_grid)
+    # dt_pcm = (datetime.datetime.now() - t0).total_seconds()
+    # print(f"Solve complete in {dt_pcm:.2f}s!")
 
-    print("Creating plot 3: Earth timeseries (PCM)...")
-    HA.plot_earth_timeseries(model_pcm, plot_omni=False)
-    plt.title("HLLC + PCM (1st Order)")
-    print(f"  -> Created figure(s). Current figures: {plt.get_fignums()}")
+    # print("Creating plot 3: Earth timeseries (PCM)...")
+    # HA.plot_earth_timeseries(model_pcm, plot_omni=False)
+    # plt.title("HLLC + PCM (1st Order)")
+    # print(f"  -> Created figure(s). Current figures: {plt.get_fignums()}")
 
-    print("Creating plot 4: Compressible spatial plot (PCM)...")
-    HA.plot_compressible(model_pcm, time=t_interest)
-    plt.suptitle("HLLC + PCM (1st Order)")
-    print(f"  -> Created figure(s). Current figures: {plt.get_fignums()}")
+    # print("Creating plot 4: Compressible spatial plot (PCM)...")
+    # HA.plot_compressible(model_pcm, time=t_interest)
+    # plt.suptitle("HLLC + PCM (1st Order)")
+    # print(f"  -> Created figure(s). Current figures: {plt.get_fignums()}")
 
     # ---------------------------------------------------------
     # Test 2: Second-order HLLC + PLM + RK2
@@ -160,30 +161,30 @@ if compressible_tests:
     plt.suptitle("HLLC + PLM + RK2 (2nd Order)")
     print(f"  -> Created figure(s). Current figures: {plt.get_fignums()}")
 
-    # ---------------------------------------------------------
-    # Comparison Plot
-    # ---------------------------------------------------------
-    print("\nCreating plot 7: Direct comparison of Earth Profiles...")
-    ts_pcm = HA.get_observer_timeseries(model_pcm)
-    ts_plm = HA.get_observer_timeseries(model_plm)
+    # # ---------------------------------------------------------
+    # # Comparison Plot
+    # # ---------------------------------------------------------
+    # print("\nCreating plot 7: Direct comparison of Earth Profiles...")
+    # ts_pcm = HA.get_observer_timeseries(model_pcm)
+    # ts_plm = HA.get_observer_timeseries(model_plm)
     
-    fig, ax = plt.subplots(3, 1, figsize=(10, 8), sharex=True)
-    ax[0].plot(ts_pcm['time'], ts_pcm['vsw'], 'k--', label='PCM (1st Order)')
-    ax[0].plot(ts_plm['time'], ts_plm['vsw'], 'r-', label='PLM (2nd Order)')
-    ax[0].set_ylabel('Velocity (km/s)')
-    ax[0].legend()
-    ax[0].set_title('Earth (0 deg) Timeseries Comparison')
+    # fig, ax = plt.subplots(3, 1, figsize=(10, 8), sharex=True)
+    # ax[0].plot(ts_pcm['time'], ts_pcm['vsw'], 'k--', label='PCM (1st Order)')
+    # ax[0].plot(ts_plm['time'], ts_plm['vsw'], 'r-', label='PLM (2nd Order)')
+    # ax[0].set_ylabel('Velocity (km/s)')
+    # ax[0].legend()
+    # ax[0].set_title('Earth (0 deg) Timeseries Comparison')
     
-    ax[1].plot(ts_pcm['time'], ts_pcm['n'], 'k--') 
-    ax[1].plot(ts_plm['time'], ts_plm['n'], 'r-')
-    ax[1].set_ylabel('Density (cm^-3)')
+    # ax[1].plot(ts_pcm['time'], ts_pcm['n'], 'k--') 
+    # ax[1].plot(ts_plm['time'], ts_plm['n'], 'r-')
+    # ax[1].set_ylabel('Density (cm^-3)')
     
-    ax[2].plot(ts_pcm['time'], ts_pcm['T'], 'k--')
-    ax[2].plot(ts_plm['time'], ts_plm['T'], 'r-')
-    ax[2].set_ylabel('Temperature (K)')
-    ax[2].set_xlabel('Time (days)')
+    # ax[2].plot(ts_pcm['time'], ts_pcm['T'], 'k--')
+    # ax[2].plot(ts_plm['time'], ts_plm['T'], 'r-')
+    # ax[2].set_ylabel('Temperature (K)')
+    # ax[2].set_xlabel('Time (days)')
     
-    plt.tight_layout()
+    # plt.tight_layout()
 
 # model_comp_pluto = H.HUXt(cr_num=cr,
 #                         v_boundary=vr_in, #lon_start=350*u.deg, lon_stop = 10*u.deg,
