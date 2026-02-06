@@ -655,6 +655,404 @@ def plot_compressible(model, time, save=False, tag='', fighandle=np.nan, minimal
     return fig, axes
 
 
+@u.quantity_input(time=u.day)
+def plot_compressible_with_ts(model, time, save=False, tag='', fighandle=np.nan, minimalplot=False, 
+                               annotateplot=True, plot_rmax=None, plotHCS=True):
+    """
+    Make a plot with two subfigures: left shows top-down polar view of r^2*P_dyn,
+    right shows Earth timeseries of V, n, T, and P_dyn.
+    
+    Args:
+        model: An instance of the HUXt class with a completed compressible solution.
+        time: Time to look up closest model time to (with an astropy.unit of time).
+        save: Boolean to determine if the figure is saved.
+        tag: String to append to the filename if saving the figure.
+        fighandle: Figure handle for placing plot in existing figure.
+        minimalplot: Boolean, if True removes colorbar, planets, spacecraft, and labels.
+        annotateplot: Boolean, whether to include text and legends
+        plot_rmax: float (no units, but in Rs). Limit outer boundary to help with field lines during CMEs
+        plotHCS: Boolean, if True plots heliospheric current sheet coordinates
+    Returns:
+        fig: Figure handle.
+        subfigs: Array of subfigure handles [subfig_left, subfig_right].
+        ax_polar: The polar axis in the left subfigure.
+        axes_ts: Array of axes handles for the timeseries plots [ax_v, ax_n, ax_T, ax_P].
+    """
+    
+    if not hasattr(model, 'rho_grid') or not hasattr(model, 'temp_grid'):
+        raise ValueError("Model must be run with compressible=True to use plot_compressible_with_ts")
+
+    if (time < model.time_out.min()) | (time > (model.time_out.max())):
+        print("Error, input time outside span of model times. Defaulting to closest time")
+
+    # Create figure with two subfigures side by side
+    if isinstance(fighandle, float):
+        fig = plt.figure(figsize=(16, 8))
+    else:
+        fig = fighandle
+    subfigs = fig.subfigures(1, 2, wspace=0.05, width_ratios=[1, 1])
+    
+    # Left subfigure: polar plot of r^2 * P_dyn
+    ax_polar = subfigs[0].add_subplot(111, projection='polar')
+    
+    id_t = np.argmin(np.abs(model.time_out - time))
+
+    # Get plotting data
+    lon_arr, dlon, nlon = h.longitude_grid()
+    lon, rad = np.meshgrid(lon_arr.value, model.r.value)
+
+    # Prepare data arrays
+    v_sub = model.v_grid.value[id_t, :, :].copy()
+    rho_sub = model.rho_grid.value[id_t, :, :].copy()
+    
+    # Compute r^2 * P_dyn = 0.5 * r^2 * rho * v^2
+    # rho in kg/m^3, v in km/s -> convert v to m/s
+    # Result in Pascals, convert to nPa (1e9)
+    # Scale by (r/1AU)^2 to account for spherical expansion
+    r_sub = model.r.to(u.km).value
+    r_1au = 1.496e8  # 1 AU in km
+    
+    # Create 2D radius array matching sub shape (nr, nlon)
+    if rho_sub.ndim == 2:
+        r_grid_sub = np.tile(r_sub[:, np.newaxis], (1, rho_sub.shape[1]))
+    else:
+        r_grid_sub = r_sub
+        
+    pdyn_r2_sub = 0.5 * rho_sub * (v_sub * 1e3)**2 * 1e9 * (r_grid_sub / r_1au)**2
+    
+    # Insert into full array
+    if lon_arr.size != model.lon.size:
+        pdyn_r2 = np.zeros((model.nr, nlon)) * np.nan
+        if model.lon.size != 1:
+            for i, lo in enumerate(model.lon):
+                id_match = np.argwhere(lon_arr == lo)[0][0]
+                pdyn_r2[:, id_match] = pdyn_r2_sub[:, i]
+        else:
+            print('Warning: Trying to contour single radial solution will fail.')
+    else:
+        pdyn_r2 = pdyn_r2_sub
+
+    # Pad out to fill the full 2pi of contouring
+    pad = lon[:, 0].reshape((lon.shape[0], 1)) + model.twopi
+    lon = np.concatenate((lon, pad), axis=1)
+    pad = rad[:, 0].reshape((rad.shape[0], 1))
+    rad = np.concatenate((rad, pad), axis=1)
+    
+    pad_pdyn = pdyn_r2[:, 0].reshape((pdyn_r2.shape[0], 1))
+    pdyn_r2 = np.concatenate((pdyn_r2, pad_pdyn), axis=1)
+
+    # Define colormap and levels (same as temperature in plot_compressible)
+    cmap_P = mpl.cm.inferno.copy()
+    cmap_P.set_over('white')
+    cmap_P.set_under([0, 0, 0])
+    # Use log10 of r^2*pdyn
+    P_log = np.log10(pdyn_r2)
+    Pmin, Pmax, dP = -1, 1, 0.1  # log10 scale: 10^-1 to 10^1
+    levels_P = np.arange(Pmin, Pmax + dP, dP)
+
+    # Plot r^2 * P_dyn
+    cnt_P = ax_polar.contourf(lon, rad, P_log, levels=levels_P, cmap=cmap_P, extend='both')
+    cnt_P.set(edgecolor="face")
+    ax_polar.set_ylim(0, model.r.value.max())
+    ax_polar.set_yticklabels([])
+    ax_polar.set_xticklabels([])
+    ax_polar.plot(0, 0, 'o', color=[1.0, 0.5, 0.25], markersize=16)
+
+    # Add CME boundaries
+    if model.track_cmes:
+        cme_colors = get_cme_colors()
+        for j, cme in enumerate(model.cmes):
+            cid = np.mod(j, len(cme_colors))
+            cme_lons = cme.coords[id_t]['lon']
+            cme_r = cme.coords[id_t]['r'].to(u.solRad)
+            if np.any(np.isfinite(cme_r)):
+                cme_lons = np.append(cme_lons, cme_lons[0])
+                cme_r = np.append(cme_r, cme_r[0])
+                ax_polar.plot(cme_lons, cme_r, '-', color=cme_colors[cid], linewidth=3)
+
+    # Plot HCS
+    if plotHCS and hasattr(model, 'b_grid'):
+        for i in range(0, len(model.hcs_particles_r[:, 0, 0, 0])):
+            r = model.hcs_particles_r[i, id_t, 0, :] * u.km.to(u.solRad)
+            lons = model.lon
+            ax_polar.plot(lons, r, 'w.')
+
+    # Plot streaklines
+    if model.track_streak:
+        nstreak = len(model.streak_particles_r[0, :, 0, 0])
+        r_max = model.r[-1].to(u.solRad).value
+        dr = (model.r[1] - model.r[0]).to(u.solRad).value
+        
+        for istreak in range(0, nstreak):
+            nrot = len(model.streak_particles_r[0, 0, :, 0])
+            streak_r = []
+            streak_lon = []
+            
+            for irot in range(0, nrot):
+                streak_lon = streak_lon + model.lon.value.tolist()
+                streak_r = streak_r + (
+                        model.streak_particles_r[id_t, istreak, irot, :] * u.km.to(u.solRad)).value.tolist()
+                
+            streak_lon = np.array(streak_lon)
+            streak_r = np.array(streak_r)
+            
+            mask = np.isfinite(streak_r) & (streak_r < (r_max - 2*dr))
+            plotlon = streak_lon[mask]
+            plotr = streak_r[mask]
+            
+            if len(plotr) > 0:
+                r_min = model.r[0].to(u.solRad).value
+                if plotr[-1] > r_min:
+                    dr_inner = plotr[-1] - r_min
+                    dt = (dr_inner * u.solRad / (350 * u.km / u.s)).to(u.s)
+                    dlon_streak = (2*np.pi)*(dt/model.rotation_period).value 
+                    inner_lon = zerototwopi(plotlon[-1] + dlon_streak)
+                    if np.nanmin(abs(model.lon - inner_lon*u.rad)) < dlon:
+                        plotr = np.append(plotr, r_min)
+                        plotlon = np.append(plotlon, inner_lon)
+                
+            if len(plotr) > 0:
+                ax_polar.plot(plotlon, plotr, 'k')
+
+    if not minimalplot:
+        # Determine which bodies should be plotted
+        planet_list = get_planets_to_plot(model)
+        spacecraft_list = get_spacecraft_to_plot(model)
+        observers_list = planet_list + spacecraft_list
+
+        # Add observers
+        styles = observer_styles()
+        for body in observers_list:
+            obs = model.get_observer(body)
+            deltalon = 0.0 * u.rad
+            if model.frame == 'sidereal':
+                earth_pos = model.get_observer('EARTH')
+                deltalon = earth_pos.lon_hae[id_t] - earth_pos.lon_hae[0]
+
+            obslon = zerototwopi(obs.lon[id_t] + deltalon)
+            ax_polar.plot(obslon, obs.r[id_t], markersize=14, color=styles[body]['color'], 
+                       marker=styles[body]['marker'], linestyle='', label=body)
+        
+        # Set background color
+        ax_polar.patch.set_facecolor('slategrey')
+        
+        # Shift polar plot to the right
+        pos = ax_polar.get_position()
+        ax_polar.set_position([pos.x0 + 0.08, pos.y0, pos.width, pos.height])
+
+        # Add colorbar on the left
+        pos = ax_polar.get_position()
+        cb_width = 0.03
+        cb_height = 0.7  # Height of colorbar
+        left = pos.x0 - 0.05  # Position to the left
+        bottom = pos.y0 + (pos.height - cb_height) / 2
+        cbaxes = subfigs[0].add_axes([left, bottom, cb_width, cb_height])
+        cbar = subfigs[0].colorbar(cnt_P, cax=cbaxes, orientation='vertical')
+        cbar.set_ticks(np.arange(Pmin, Pmax, 1.0))
+        cbar.ax.tick_params(labelsize=12)
+        cbar.ax.yaxis.set_ticks_position('left')
+        cbar.ax.yaxis.set_label_position('left')
+        cbar.set_label(r"$\log_{10}(r^2 P_{dyn})$ [nPa at 1 AU]", fontsize=18)
+
+        # Add legend for observers below plot
+        if len(observers_list) > 0:
+            ax_polar.legend(loc='upper center', bbox_to_anchor=(0.45, -0.05), 
+                          framealpha=0.8, fontsize=13, ncol=3)
+            
+    if annotateplot:
+        # Add model and time labels to main figure
+        model_label = "HUXt2D Compressible | Lat: {:3.0f}°".format(model.latitude.to(u.deg).value)
+        fig.text(0.02, 0.98, model_label, fontsize=16, fontweight='bold',
+                ha='left', va='top', transform=fig.transFigure)
+        
+        time_label = "{:3.2f} days | ".format(model.time_out[id_t].to(u.day).value)
+        time_label = time_label + (model.time_init + time).strftime('%Y-%m-%d %H:%M')
+        fig.text(0.02, 0.95, time_label, fontsize=14, fontweight='bold',
+                ha='left', va='top', transform=fig.transFigure)
+
+    if plot_rmax:
+        ax_polar.set_rmax(plot_rmax)
+
+    # Right subfigure: timeseries panel
+    # Cache the timeseries to avoid recomputing
+    if not hasattr(model, '_cached_earth_timeseries'):
+        model._cached_earth_timeseries = get_observer_timeseries(model, observer='Earth')
+    
+    ts = model._cached_earth_timeseries
+    
+    # Compute P_dyn from timeseries: P_dyn = 0.5 * rho * v^2
+    # n is in protons/cm³, convert to kg/m³
+    m_p = 1.6726e-27  # Proton mass in kg
+    rho_ts = ts['n'].values * m_p * 1e6  # Convert to kg/m³
+    v_ts = ts['vsw'].values * 1e3  # Convert km/s to m/s
+    pdyn_ts = 0.5 * rho_ts * v_ts**2 * 1e9  # Convert Pa to nPa
+    
+    # Create 4 horizontal subplots in right subfigure
+    axes_ts = subfigs[1].subplots(4, 1, sharex=True)
+    
+    # Current time for vertical line
+    current_time = model.time_init + time
+    
+    # Plot 1: Velocity (left y-axis)
+    axes_ts[0].plot(ts['time'], ts['vsw'], 'k-', linewidth=1.5)
+    axes_ts[0].axvline(current_time.datetime, color='r', linestyle='--', linewidth=2, alpha=0.7)
+    axes_ts[0].yaxis.tick_left()
+    axes_ts[0].yaxis.set_label_position('left')
+    axes_ts[0].grid(True, alpha=0.3)
+    axes_ts[0].set_ylim(200, 1000)
+    axes_ts[0].set_yticks(np.arange(200, 1001, 200))
+    axes_ts[0].text(0.98, 0.90, 'V [km/s]', transform=axes_ts[0].transAxes,
+                   fontsize=11, fontweight='bold', ha='right', va='top',
+                   bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
+    
+    # Plot 2: Number Density (log scale, right y-axis)
+    axes_ts[1].semilogy(ts['time'], ts['n'], 'k-', linewidth=1.5)
+    axes_ts[1].axvline(current_time.datetime, color='r', linestyle='--', linewidth=2, alpha=0.7)
+    axes_ts[1].yaxis.tick_right()
+    axes_ts[1].yaxis.set_label_position('right')
+    axes_ts[1].set_ylim(1e-1, 1e3)
+    axes_ts[1].set_yticks([1e-1, 1e0, 1e1, 1e2, 1e3])
+    axes_ts[1].minorticks_off()
+    axes_ts[1].grid(True, alpha=0.3, which='major')
+    axes_ts[1].text(0.98, 0.90, 'n [cm$^{-3}$]', transform=axes_ts[1].transAxes,
+                   fontsize=11, fontweight='bold', ha='right', va='top',
+                   bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
+    
+    # Plot 3: Temperature (log scale, left y-axis)
+    axes_ts[2].semilogy(ts['time'], ts['T'], 'k-', linewidth=1.5)
+    axes_ts[2].axvline(current_time.datetime, color='r', linestyle='--', linewidth=2, alpha=0.7)
+    axes_ts[2].yaxis.tick_left()
+    axes_ts[2].yaxis.set_label_position('left')
+    axes_ts[2].set_ylim(1e4, 1e7)
+    axes_ts[2].set_yticks([1e4, 1e5, 1e6, 1e7])
+    axes_ts[2].grid(True, alpha=0.3, which='both')
+    axes_ts[2].text(0.98, 0.90, 'T [K]', transform=axes_ts[2].transAxes,
+                   fontsize=11, fontweight='bold', ha='right', va='top',
+                   bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
+    
+    # Plot 4: Dynamic Pressure (log scale, right y-axis)
+    axes_ts[3].semilogy(ts['time'], pdyn_ts, 'k-', linewidth=1.5)
+    axes_ts[3].axvline(current_time.datetime, color='r', linestyle='--', linewidth=2, alpha=0.7)
+    axes_ts[3].yaxis.tick_right()
+    axes_ts[3].yaxis.set_label_position('right')
+    axes_ts[3].set_ylim(1e-2, 1e2)
+    axes_ts[3].set_yticks([1e-2, 1e-1, 1e0, 1e1, 1e2])
+    axes_ts[3].set_xlabel('Time', fontsize=12, fontweight='bold')
+    axes_ts[3].grid(True, alpha=0.3, which='both')
+    axes_ts[3].text(0.98, 0.90, 'P$_{dyn}$ [nPa]', transform=axes_ts[3].transAxes,
+                   fontsize=11, fontweight='bold', ha='right', va='top',
+                   bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
+    
+    # Format x-axis
+    import matplotlib.dates as mdates
+    
+    # Set tight x-limits to model time range
+    t_start = ts['time'].iloc[0]
+    t_end = ts['time'].iloc[-1]
+    for ax in axes_ts:
+        ax.set_xlim(t_start, t_end)
+    
+    # Determine if short run (<=7 days) for daily ticks
+    duration_days = (t_end - t_start).total_seconds() / 86400
+    
+    if duration_days <= 7:
+        # Daily ticks for short runs
+        axes_ts[3].xaxis.set_major_locator(mdates.DayLocator())
+    else:
+        # Auto locator for longer runs
+        axes_ts[3].xaxis.set_major_locator(mdates.AutoDateLocator())
+    
+    axes_ts[3].xaxis.set_major_formatter(mdates.DateFormatter('%d-%m'))
+    subfigs[1].autofmt_xdate(rotation=0, ha='center')
+    
+    # Add xlabel with year from the data
+    year = t_start.year
+    axes_ts[3].set_xlabel(f'DD-MM of {year}', fontsize=12, fontweight='bold')
+    
+    # Add title to right subfigure
+    subfigs[1].suptitle('Earth', fontsize=14, fontweight='bold', y=0.99)
+    
+    # Adjust spacing
+    subfigs[1].subplots_adjust(hspace=0.15, top=0.96, bottom=0.08)
+
+    if save:
+        cr_num = np.int32(model.cr_num.value)
+        filename = "HUXt_compressible_ts_CR{:03d}_{}_frame_{:03d}.png".format(cr_num, tag, id_t)
+        figure_dir = get_figure_dir()
+        filepath = figure_dir.joinpath(filename)
+        fig.savefig(filepath, dpi=150, bbox_inches='tight')
+
+    return fig, subfigs, ax_polar, axes_ts
+
+
+def animate_compressible_with_ts(model, tag='', duration=10, fps=20, outputfilepath='', 
+                                  minimalplot=False, annotateplot=True, plot_rmax=None, plotHCS=True):
+    """
+    Animate the compressible solar wind solution with timeseries, and save as an MP4.
+    Creates an animation using plot_compressible_with_ts showing the polar plot and Earth timeseries.
+    
+    Args:
+        model: An instance of the HUXt class with a completed compressible solution.
+        tag: String to append to the filename of the animation.
+        duration: the movie duration, in seconds
+        fps: frames per second
+        outputfilepath: full path, including filename if output is to be saved anywhere other than huxt/figures
+        minimalplot: Boolean, if True removes colorbar, planets, spacecraft, and labels.
+        annotateplot: Boolean, whether to include text and legends
+        plot_rmax: float (no units, but in Rs). Limit outer boundary to help with field lines during CMEs
+        plotHCS: Boolean, if True plots heliospheric current sheet coordinates
+    Returns:
+        None
+    """
+    
+    if not hasattr(model, 'rho_grid') or not hasattr(model, 'temp_grid'):
+        raise ValueError("Model must be run with compressible=True to use animate_compressible_with_ts")
+    
+    interval = (1/fps)*1000
+    nframes = int(duration*1000/interval)
+    
+    exp_time = int(nframes*0.2)
+    print('Rendering ' + str(nframes) + ' frames. Expected time: ' + str(exp_time) + ' secs')
+    
+    def make_frame(frame):
+        """
+        Produce the frame required for the animation.
+        Args:
+            frame: frame number of the movie
+        Returns:
+            frame: An image array for rendering to movie clip.
+        """
+        plt.clf()  # Clear the previous frame
+        
+        # Get the time index closest to this fraction of movie duration
+        i = np.int32((model.nt_out - 1) * frame / nframes)
+        plot_compressible_with_ts(model, model.time_out[i], save=False, tag=tag,
+                                  fighandle=fig, minimalplot=minimalplot, annotateplot=annotateplot,
+                                  plot_rmax=plot_rmax, plotHCS=plotHCS)
+        return frame
+    
+    # Create a new figure with appropriate size for dual-panel layout
+    fig = plt.figure(figsize=(18, 8))
+    
+    # Create the animation
+    ani = FuncAnimation(fig, make_frame, frames=range(nframes), interval=interval)
+    
+    # Set up the save path
+    if outputfilepath:
+        filepath = outputfilepath
+    else:
+        cr_num = np.int32(model.cr_num.value)
+        filename = "HUXt_compressible_ts_CR{:03d}_{}_movie.mp4".format(cr_num, tag)
+        figure_dir = get_figure_dir()
+        filepath = figure_dir.joinpath(filename)
+    
+    # Save the animation as a movie file
+    ani.save(filepath, writer='ffmpeg')
+    print('mp4 file written to ' + str(filepath))
+    
+    return
+
+
 def plot_radial(model, time, lon, save=False, tag=''):
     """
     Plot the radial solar wind profile at model time closest to specified time.
