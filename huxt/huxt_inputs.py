@@ -442,7 +442,85 @@ def map_v_inwards(v_orig, r_orig, lon_orig, r_new):
     return vnew * u.km / u.s, phi_new * u.rad
 
 
-def map_v_boundary_inwards(v_orig, r_orig, r_new, b_orig=np.nan):
+def map_v_inwards_parker(v_orig, r_orig, lon_orig, r_new, gamma=1.5):
+    """
+    Function to map v from r_orig to r_new using the Parker nozzle solution, neglecting
+    stream interactions. Density and temperature at r_orig are computed from the 1 AU
+    OMNI look-up table mapped via the Parker nozzle, then all three quantities are mapped
+    to r_new. The longitude shift accounts for the radially-varying Parker velocity profile
+    via numerical integration of dr/v(r).
+
+    Args:
+        v_orig: Solar wind speed at original radial distance. Units of km/s.
+        r_orig: Radial distance at original position. Astropy Quantity with length units.
+        lon_orig: Carrington longitude at original distance. Units of rad.
+        r_new: Radial distance at new position. Astropy Quantity with length units.
+        gamma: Adiabatic index (default 1.5 for solar wind).
+
+    Returns:
+        v_new: Solar wind speed mapped from r_orig to r_new. Units of km/s.
+        n_new: Number density at r_new. Units of cm^-3.
+        T_new: Temperature at r_new. Units of K.
+        lon_new: Carrington longitude at r_new. Units of rad.
+    """
+
+    constants = h.huxt_constants()
+    Tsyn = constants['synodic_period'].to(u.s).value
+
+    # Get velocity in km/s and radial distances
+    v_kms = v_orig.to(u.km / u.s).value
+    r_orig_rs = r_orig.to(u.solRad).value
+    r_orig_km = r_orig.to(u.km).value
+    r_new_km = r_new.to(u.km).value
+
+    # Get density and temperature at r_orig from 1 AU look-up table
+    n_orig, T_orig = h.get_density_temperature_from_velocity(v_kms, r_orig_rs, gamma=gamma)
+
+    # Map v, n, T from r_orig to r_new using the Parker nozzle solution
+    v_new, n_new, T_new = h.map_properties_parker(
+        v_orig, r_orig, r_new,
+        n_orig * u.cm**-3, T_orig * u.K, gamma=gamma
+    )
+
+    # Compute transit time via numerical integration of dr / v(r) along the Parker profile
+    # Optimized approach: vectorize the radial integration
+    nsteps = 100
+    r_grid_km = np.linspace(r_new_km, r_orig_km, nsteps)
+    
+    # The JIT-compiled Parker function can handle scalar r_from with array r_to
+    # We'll map from r_orig to each point in r_grid_km
+    v_kms_arr = np.atleast_1d(v_kms)
+    n_orig_arr = np.atleast_1d(n_orig)
+    T_orig_arr = np.atleast_1d(T_orig)
+    
+    # Broadcast arrays for vectorized computation: each velocity gets the full radial profile
+    # Shape will be (nsteps, nvelocities)
+    v_profile_list = []
+    for r_i_km in r_grid_km:
+        v_i_arr, _, _ = h._compute_parker_mapping(
+            v_kms_arr, T_orig_arr, n_orig_arr, r_orig_km, r_i_km, gamma
+        )
+        v_profile_list.append(v_i_arr)
+    
+    v_profile = np.array(v_profile_list)  # Shape: (nsteps, nvelocities)
+    
+    # Trapezoidal integration: dt = dr / v_mid
+    dr_km = np.diff(r_grid_km)  # step sizes in km
+    v_mid = 0.5 * (v_profile[:-1, :] + v_profile[1:, :])
+    dt = dr_km[:, np.newaxis] / v_mid  # (nsteps-1, nvelocities)
+    T_integral = np.sum(dt, axis=0)  # transit time in seconds
+
+    # If input was scalar, squeeze back to scalar
+    if np.isscalar(v_orig.value) or (hasattr(v_orig.value, 'shape') and v_orig.value.shape == ()):
+        T_integral = T_integral[0]
+
+    # Compute the longitudinal shift
+    phi_new = zerototwopi(lon_orig.value + (T_integral / Tsyn) * 2 * np.pi)
+
+    return v_new, n_new, T_new, phi_new * u.rad
+
+
+def map_v_boundary_inwards(v_orig, r_orig, r_new, b_orig=np.nan, acc_profile='huxt', gamma=1.5):
     """
     Function to map a longitudinal V series from r_outer (in rs) to r_inner (in rs) accounting for residual
     acceleration, but neglecting stream interactions. Produces the required longitude shift and remaps the data
@@ -453,6 +531,8 @@ def map_v_boundary_inwards(v_orig, r_orig, r_new, b_orig=np.nan):
         r_orig: Radial distance at original radial boundary. Units of km.
         r_new: Radial distance at new radial boundary. Units of km.
         b_orig: b_r to be optionally mapped using the same time/long delay as v
+        acc_profile: Acceleration profile to use. Default is 'huxt'. Option is 'parker'
+        gamma: Polytropic index. Default is 1.5.
 
     Returns:
         v_new: Solar wind speed as function of long mapped from r_orig to r_new. Units of km/s.
@@ -465,7 +545,10 @@ def map_v_boundary_inwards(v_orig, r_orig, r_new, b_orig=np.nan):
     lon = np.arange(dlon / 2, 2 * np.pi - dlon / 2 + dlon / 10, dlon) * u.rad
 
     # Map each point in to a new speed and longitude
-    v0, phis_new = map_v_inwards(v_orig, r_orig, lon, r_new)
+    if acc_profile == 'huxt':
+        v0, phis_new = map_v_inwards(v_orig, r_orig, lon, r_new)
+    elif acc_profile == 'parker':
+         v0, phis_new = map_v_inwards_parker(v_orig, r_orig, lon, r_new, gamma=gamma)[0:2]
 
     # Interpolate the mapped speeds back onto the regular Carr long grid,
     # making boundaries periodic
