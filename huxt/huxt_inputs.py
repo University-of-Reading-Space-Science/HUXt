@@ -399,10 +399,6 @@ def get_MAS_br_map(cr):
     return br_map.T, br_longs, br_lats
 
 
-@u.quantity_input(v_outer=u.km / u.s)
-@u.quantity_input(r_outer=u.solRad)
-@u.quantity_input(lon_outer=u.rad)
-@u.quantity_input(r_inner=u.solRad)
 def map_v_inwards(v_orig, r_orig, lon_orig, r_new):
     """
     Function to map v from r_orig (in rs) to r_inner (in rs) accounting for residual acceleration, but neglecting
@@ -446,9 +442,6 @@ def map_v_inwards(v_orig, r_orig, lon_orig, r_new):
     return vnew * u.km / u.s, phi_new * u.rad
 
 
-@u.quantity_input(v_orig=u.km / u.s)
-@u.quantity_input(r_orig=u.solRad)
-@u.quantity_input(r_inner=u.solRad)
 def map_v_boundary_inwards(v_orig, r_orig, r_new, b_orig=np.nan):
     """
     Function to map a longitudinal V series from r_outer (in rs) to r_inner (in rs) accounting for residual
@@ -485,11 +478,6 @@ def map_v_boundary_inwards(v_orig, r_orig, r_new, b_orig=np.nan):
         return v_new
 
 
-@u.quantity_input(v_map=u.km / u.s)
-@u.quantity_input(v_map_lat=u.rad)
-@u.quantity_input(v_map_long=u.rad)
-@u.quantity_input(r_outer=u.solRad)
-@u.quantity_input(r_inner=u.solRad)
 def map_vmap_inwards(v_map, v_map_lat, v_map_long, r_orig, r_new, b_map=np.nan):
     """
     Function to map a V Carrington map from r_orig (in rs) to r_new (in rs), accounting for acceleration, but ignoring

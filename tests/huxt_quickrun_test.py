@@ -14,7 +14,7 @@ import huxt.huxt_insitu as Hinsitu
 
 standard_tests = True
 compressible_tests = True
-insitu_compressible_tests = False
+insitu_compressible_tests = True
 
 simtime = 5*u.day
 

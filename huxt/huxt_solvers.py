@@ -51,8 +51,8 @@ __all__ = [
     'create_solver',
     'benchmark_solvers',
     'list_available_methods',
-    # Constants
-    'K_B_CGS', 'M_P_CGS', 'KM_TO_CM', 'KGM3_TO_GCM3',
+    # Constants (SI units)
+    'K_B_SI', 'M_P_SI',
 ]
 
 # Constants
@@ -132,13 +132,9 @@ def _advect_particle_rk2(r_p, v_grid, r_grid, dt, behavior):
             
     return r_final, v_mid, is_active
 
-# Physical constants (CGS units)
-K_B_CGS = 1.380649e-16      # erg/K
-M_P_CGS = 1.67262192e-24    # g
-K_B_SI = 1.38064852e-23     # J/K  
-M_P_SI = 1.67262192e-27     # kg
-KM_TO_CM = 1e5              # cm/km
-KGM3_TO_GCM3 = 1e-3         # g/cm³ per kg/m³
+# Physical constants (SI units)
+K_B_SI = 1.380649e-23       # J/K (Boltzmann constant)
+M_P_SI = 1.67262192e-27     # kg (proton mass)
 
 
 # =============================================================================
@@ -614,10 +610,17 @@ def _get_dt_fast(U, nr, min_dx, gamma, cfl):
 
 
 @njit(cache=True)
-def _extract_snapshot(U, nr, gamma, M_P_CGS_val, K_B_CGS_val):
+def _extract_snapshot(U, nr, gamma, M_P_val, K_B_val):
     """
     JIT-compiled snapshot extraction: convert conserved to (v, rho, T) arrays.
     Avoids per-cell Python overhead in the main solve loop.
+    
+    Args:
+        U: Conserved state array, shape (nr, 3)
+        nr: Number of radial grid points
+        gamma: Adiabatic index
+        M_P_val: Proton mass (SI: kg)
+        K_B_val: Boltzmann constant (SI: J/K)
     """
     v_out = np.zeros(nr)
     rho_out = np.zeros(nr)
@@ -629,7 +632,7 @@ def _extract_snapshot(U, nr, gamma, M_P_CGS_val, K_B_CGS_val):
         p = max(rho * eint * (gamma - 1.0), SMALL_P)
         v_out[i] = v
         rho_out[i] = rho
-        T_out[i] = p * M_P_CGS_val / (rho * K_B_CGS_val)
+        T_out[i] = p * M_P_val / (rho * K_B_val)
     return v_out, rho_out, T_out
 
 
@@ -734,7 +737,7 @@ class CompressibleSolver:
         Initialize the solver.
         
         Args:
-            r_grid: Radial grid (cell centers) in cm
+            r_grid: Radial grid (cell centers) in m (SI units)
             gamma: Adiabatic index (default 5/3 for monoatomic gas)
             cfl: CFL number for timestep control (default: 0.8 for PCM, 0.4 for PLM)
             riemann: Riemann solver choice ('hllc' - only option)
@@ -787,9 +790,9 @@ class CompressibleSolver:
         self.min_dx = np.min(self.dx)
         
     def set_initial_conditions(self, rho, v, T):
-        """Set initial conditions from primitive variables (CGS units)."""
+        """Set initial conditions from primitive variables (SI units: kg/m³, m/s, K)."""
         for i in range(self.nr):
-            p = rho[i] * K_B_CGS * T[i] / M_P_CGS
+            p = rho[i] * K_B_SI * T[i] / M_P_SI
             p = max(p, SMALL_P)
             self.U[i] = prim_to_cons(np.array([rho[i], v[i], p]), self.gamma)
             
@@ -889,7 +892,7 @@ class CompressibleSolver:
     def step(self, dt, bc_func):
         """Advance solution by dt using selected time integration."""
         rho_bc, v_bc, T_bc = bc_func(self.time + dt)
-        p_bc = rho_bc * K_B_CGS * T_bc / M_P_CGS
+        p_bc = rho_bc * K_B_SI * T_bc / M_P_SI
         U_bc = prim_to_cons(np.array([rho_bc, v_bc, p_bc]), self.gamma)
         
         # Use JIT-compiled step functions for speed
@@ -917,8 +920,8 @@ class CompressibleSolver:
         
         Args:
             t_grid: Output times (seconds)
-            v_bc_func: Velocity boundary condition function v(t) in cm/s
-            rho_bc_func: Density boundary condition function rho(t) in g/cm³
+            v_bc_func: Velocity boundary condition function v(t) in m/s
+            rho_bc_func: Density boundary condition function rho(t) in kg/m³
             T_bc_func: Temperature boundary condition function T(t) in K
             num_particles: Number of tracer particles or dict of particle groups
             particle_injection_rate: Particle injection times
@@ -1005,7 +1008,7 @@ class CompressibleSolver:
         # Save first snapshot
         if abs(t_grid[0] - self.time) < 1e-5:
             v_snap, rho_snap, T_snap = _extract_snapshot(
-                self.U, self.nr, self.gamma, M_P_CGS, K_B_CGS)
+                self.U, self.nr, self.gamma, M_P_SI, K_B_SI)
             v_out[0, :] = v_snap
             rho_out[0, :] = rho_snap
             T_out[0, :] = T_snap
@@ -1066,7 +1069,7 @@ class CompressibleSolver:
             
             # Save snapshot
             v_snap, rho_snap, T_snap = _extract_snapshot(
-                self.U, self.nr, self.gamma, M_P_CGS, K_B_CGS)
+                self.U, self.nr, self.gamma, M_P_SI, K_B_SI)
             v_out[t_idx, :] = v_snap
             rho_out[t_idx, :] = rho_snap
             T_out[t_idx, :] = T_snap
@@ -1133,7 +1136,7 @@ def create_solver(r_grid, gamma=5.0/3.0, method='hllc-plm', cfl=0.8, verbose=Fal
     Create a compressible solver with specified method.
     
     Args:
-        r_grid: Radial grid in cm
+        r_grid: Radial grid in m (SI units)
         gamma: Adiabatic index
         method: Solver configuration string, e.g.:
                 'hllc-plm' (default) - HLLC Riemann solver with PLM reconstruction
@@ -1168,7 +1171,7 @@ def benchmark_solvers(r_grid, t_end, v_bc, rho_bc, T_bc, gamma=5.0/3.0,
     Compare different solver methods on the same problem.
     
     Args:
-        r_grid: Radial grid in cm
+        r_grid: Radial grid in m (SI units)
         t_end: End time in seconds
         v_bc, rho_bc, T_bc: Boundary condition values (constant)
         gamma: Adiabatic index

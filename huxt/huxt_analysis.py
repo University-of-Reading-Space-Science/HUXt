@@ -31,7 +31,6 @@ def get_figure_dir():
     return figure_dir
 
 
-@u.quantity_input(time=u.day)
 def plot(model, time, save=False, tag='', fighandle=np.nan, axhandle=np.nan, minimalplot=False, plotHCS=True,
          annotateplot=True, trace_earth_connection=False, plot_rmax=None):
     """
@@ -317,7 +316,6 @@ def animate(model, tag, duration=10, fps=20, plotHCS=True, trace_earth_connectio
     return
 
 
-@u.quantity_input(time=u.day)
 def plot_compressible(model, time, save=False, tag='', fighandle=np.nan, minimalplot=False, 
                       annotateplot=True, plot_rmax=None, plotHCS=True):
     """
@@ -655,7 +653,6 @@ def plot_compressible(model, time, save=False, tag='', fighandle=np.nan, minimal
     return fig, axes
 
 
-@u.quantity_input(time=u.day)
 def plot_compressible_with_ts(model, time, save=False, tag='', fighandle=np.nan, minimalplot=False, 
                                annotateplot=True, plot_rmax=None, plotHCS=True):
     """
@@ -1612,7 +1609,6 @@ def plot_earth_timeseries(model, plot_omni=True, save=False, tag=''):
     return fig, axs
 
 
-@u.quantity_input(time=u.day)
 def plot3d_radial_lat_slice(model3d, time, lon=np.nan * u.deg, save=False, tag='', fighandle=np.nan, axhandle=np.nan):
     """
     Make a contour plot on polar axis of a radial-latitudinal plane of the solar wind solution at a fixed time and
@@ -1843,7 +1839,6 @@ def animate_3d(model3d, lon=0.0 * u.deg, tag='', duration=10, fps=20, outputfile
     return
 
 
-@u.quantity_input(time=u.day)
 def plot_bpol(model, time, save=False, tag='', fighandle=np.nan, axhandle=np.nan, minimalplot=False, plotHCS=True):
     """
     Make a contour plot on polar axis of the solar wind solution at a specific time.

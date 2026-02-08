@@ -160,16 +160,6 @@ class ConeCME:
                 model time step.
     """
 
-    # Some decorators for checking the units of input arguments
-    @u.quantity_input(t_launch=u.s)
-    @u.quantity_input(longitude=u.deg)
-    @u.quantity_input(latitude=u.deg)
-    @u.quantity_input(v=(u.km / u.s))
-    @u.quantity_input(width=u.deg)
-    @u.quantity_input(thickness=u.solRad)
-    @u.quantity_input(fixed_duration=u.s)
-    @u.quantity_input(cme_density=(u.kg / u.m**3))
-    @u.quantity_input(cme_temperature=u.K)
     def __init__(self, t_launch=0.0 * u.s, longitude=0.0 * u.deg, latitude=0.0 * u.deg, v=1000.0 * (u.km / u.s),
                  width=30.0 * u.deg, thickness=0.0 * u.solRad, initial_height=30 * u.solRad, cme_expansion=False,
                  cme_fixed_duration=True, fixed_duration=12 * 60 * 60 * u.s, 
@@ -244,11 +234,11 @@ class ConeCME:
         """
         if model.compressible == True:
             # Check if CME density was provided (not NaN)
-            if np.isnan(self.cme_density.value if hasattr(self.cme_density, 'value') else self.cme_density):
+            if np.isnan(self.cme_density.value):
                 # If CME density not provided, set to density fraction of ambient solar wind density at initial height
                 self.cme_density = self.density_fraction * model.rho_sw_inner
             # Check if CME temperature was provided (not NaN)
-            if np.isnan(self.cme_temperature.value if hasattr(self.cme_temperature, 'value') else self.cme_temperature):
+            if np.isnan(self.cme_temperature.value):
                 # If CME temperature not provided, set to temperature fraction of ambient solar wind temperature at initial height
                 self.cme_temperature = self.cme_temperature_fraction * model.T_sw_inner
 
@@ -558,10 +548,6 @@ class HUXt:
         v_grid: Array of model speed including ConeCMEs for each time, radius, and longitude (in km/s).
     """
 
-    # Decorators to check units on input arguments
-    @u.quantity_input(v_boundary=(u.km / u.s))
-    @u.quantity_input(simtime=u.day)
-    @u.quantity_input(cr_lon_init=u.deg)
     def __init__(self, v_boundary=np.nan * (u.km / u.s), b_boundary=np.nan, 
                  rho_boundary=np.nan, temp_boundary=np.nan,
                  cr_num=np.nan, cr_lon_init=360.0 * u.deg,
@@ -761,9 +747,9 @@ class HUXt:
                 n_sw, _ = get_density_temperature_from_velocity(v_kms, r_inner, gamma=self.gamma)
                 
                 # Convert density from cm^-3 to kg/m^3
-                # n [cm^-3] * m_p [g] * 1e6 [cm^3/m^3] * 1e-3 [kg/g] = rho [kg/m^3]
-                m_p = 1.67262192e-24  # proton mass in g
-                self.rho_boundary = n_sw * m_p * 1e6 * 1e-3 * (u.kg / u.m**3)
+                # n [cm^-3] * m_p [kg] * 1e6 [cm^3/m^3] = rho [kg/m^3]
+                m_p = 1.67262192e-27  # proton mass in kg
+                self.rho_boundary = n_sw * m_p * 1e6 * (u.kg / u.m**3)
                 self.rho_boundary_lons = self.v_boundary_lons
             elif not np.all(np.isnan(rho_boundary)):
                 assert rho_boundary.size < 4600  # this equates to about 9 mins
@@ -831,14 +817,14 @@ class HUXt:
             lon_shifted = lon_shifted[id_sort]
             rho_b_shifted = self.rho_boundary[id_sort]
             rho_unit = self.rho_boundary.unit
-            self.rho_boundary = np.interp(self.rho_boundary_lons.value, lon_shifted, rho_b_shifted.value if hasattr(rho_b_shifted, 'value') else rho_b_shifted, period=self.twopi) * rho_unit
+            self.rho_boundary = np.interp(self.rho_boundary_lons.value, lon_shifted, rho_b_shifted.value, period=self.twopi) * rho_unit
 
             lon_shifted = zerototwopi((self.temp_boundary_lons - self.cr_lon_init).value)
             id_sort = np.argsort(lon_shifted)
             lon_shifted = lon_shifted[id_sort]
             temp_b_shifted = self.temp_boundary[id_sort]
             temp_unit = self.temp_boundary.unit
-            self.temp_boundary = np.interp(self.temp_boundary_lons.value, lon_shifted, temp_b_shifted.value if hasattr(temp_b_shifted, 'value') else temp_b_shifted, period=self.twopi) * temp_unit
+            self.temp_boundary = np.interp(self.temp_boundary_lons.value, lon_shifted, temp_b_shifted.value, period=self.twopi) * temp_unit
 
         # Compute the buffertime required to spin up HUXt, based on minimum speed on the inner boundary
         # and span of radial grid
@@ -950,7 +936,7 @@ class HUXt:
             elif compressible:
                 # Create default temperature values based on V, same as for 1D case
                 # Calculate temperature using empirical velocity-temperature relation
-                v_kms = self.input_v_ts.to(u.km/u.s).value if hasattr(self.input_v_ts, 'unit') else self.input_v_ts
+                v_kms = self.input_v_ts.to(u.km/u.s).value
                 r_inner = self.r[0].to(u.solRad).value
                 _, temp_from_velocity = get_density_temperature_from_velocity(
                     v_kms, r_inner, gamma=self.gamma
@@ -1146,11 +1132,11 @@ class HUXt:
                     if np.any(cme_mask):
                         # Leading edge injected at start of CME
                         leading_idx = np.where(cme_mask)[0][0]
-                        t_leading = self.model_time[leading_idx].value if hasattr(self.model_time[leading_idx], 'value') else self.model_time[leading_idx]
+                        t_leading = self.model_time[leading_idx].value
                         
                         # Trailing edge injected at end of CME
                         trailing_idx = np.where(cme_mask)[0][-1]
-                        t_trailing = self.model_time[trailing_idx].value if hasattr(self.model_time[trailing_idx], 'value') else self.model_time[trailing_idx]
+                        t_trailing = self.model_time[trailing_idx].value
                         
                         num_particles[f'cme_{cme_id}_leading'] = 1
                         num_particles[f'cme_{cme_id}_trailing'] = 1
@@ -1168,12 +1154,10 @@ class HUXt:
             if self.track_b and n_hcs_max > 0:
                 hcs_times = []
                 b_input = self.input_b_ts[:, i]
-                if hasattr(b_input, 'value'):
-                    b_input = b_input.value
                 for t in range(1, len(b_input)):
                     diff = b_input[t] - b_input[t-1]
                     if diff != 0:  # Polarity change
-                        t_hcs = self.model_time[t].value if hasattr(self.model_time[t], 'value') else self.model_time[t]
+                        t_hcs = self.model_time[t].value
                         # Track HCS crossings including during spin-up period
                         hcs_times.append(t_hcs)
                         # Store polarity direction: +1 if B increases, -1 if B decreases
@@ -1200,7 +1184,7 @@ class HUXt:
                         if not np.isnan(time_idx):
                             streak_name = f'streak_{istreak}_rot_{irot}'
                             t_inject = self.model_time[int(time_idx)]
-                            t_inject = t_inject.value if hasattr(t_inject, 'value') else t_inject
+                            t_inject = t_inject.value
                             num_particles[streak_name] = 1
                             particle_injection_rate[streak_name] = [t_inject]
             
@@ -1211,8 +1195,8 @@ class HUXt:
         
         # Call compressible solver function with selected Riemann solver and particle tracking
         # Strip units from time arrays for solver
-        model_time_sec = self.model_time.value if hasattr(self.model_time, 'value') else self.model_time
-        time_out_sec = self.time_out.value if hasattr(self.time_out, 'value') else self.time_out
+        model_time_sec = self.model_time.value
+        time_out_sec = self.time_out.value
         
         v_out_kms, rho_out_kgm3, temp_out_K, particle_data = solve_radial_compressible(
             v_bc_kms=v_bc_kms,
@@ -1248,8 +1232,8 @@ class HUXt:
         if particle_data is not None and 'groups' in particle_data:
             groups = particle_data['groups']
             
-            # Get time_out as plain array (strip units if present)
-            time_out_sec = self.time_out.value if hasattr(self.time_out, 'value') else self.time_out
+            # Get time_out as plain array
+            time_out_sec = self.time_out.value
             
             # Process CME particles
             if self.track_cmes:
@@ -1384,7 +1368,6 @@ class HUXt:
                 )
                 self.temp_boundary = temp_from_velocity * u.K
     
-    @u.quantity_input(streak_carr=u.rad)
     def solve(self, cme_list, streak_carr=np.array([])*u.rad, save=False, tag=''):
         """
         Solve HUXt for the provided longitudinal boundary conditions and cme list. Updates the HUXt.v_grid
@@ -1900,14 +1883,6 @@ class HUXt3d:
     
     """
 
-    # Decorators to check units on input arguments
-    @u.quantity_input(v_map=(u.km / u.s))
-    @u.quantity_input(v_map_lat=u.rad)
-    @u.quantity_input(v_map_long=u.rad)
-    @u.quantity_input(latitude_max=u.deg)
-    @u.quantity_input(latitude_min=u.deg)
-    @u.quantity_input(simtime=u.day)
-    @u.quantity_input(cr_lon_init=u.deg)
     def __init__(self, v_map=np.nan * (u.km / u.s), v_map_lat=np.nan * u.rad, v_map_long=np.nan * u.rad,
                  cr_num=np.nan, cr_lon_init=360.0 * u.deg, latitude_max=30 * u.deg, latitude_min=-30 * u.deg,
                  r_min=30 * u.solRad, r_max=240 * u.solRad, lon_out=np.nan * u.rad, lon_start=np.nan * u.rad,
@@ -2023,20 +1998,30 @@ def huxt_constants():
 
 # JIT-compiled core computation function (defined at module level for caching)
 @jit(nopython=True, cache=True)
-def _compute_parker_mapping(v_from_kms, T_from, n_from, r_from_cm, r_to_cm, gamma, max_iter=50, tol=1e-12):
-    """Core Parker mapping computation (fully vectorized and JIT-compiled)"""
-    # Physical constants (CGS)
-    k_B_CGS = 1.380649e-16  # erg/K
-    m_p_CGS = 1.6726e-24    # g
+def _compute_parker_mapping(v_from_kms, T_from, n_from, r_from_km, r_to_km, gamma, max_iter=50, tol=1e-12):
+    """
+    Core Parker mapping computation (fully vectorized and JIT-compiled).
     
-    # Convert to CGS
-    v_from_cms = v_from_kms * 1e5  # cm/s
-    rho_from = n_from * m_p_CGS  # g/cm^3
+    All inputs/outputs in HUXt standard units:
+        v in km/s, T in K, n in cm^-3, r in km
+    
+    Physical constants in SI used internally.
+    """
+    # Physical constants (SI)
+    k_B = 1.380649e-23   # J/K
+    m_p = 1.67262192e-27  # kg
+    
+    # Convert to SI for consistent computation
+    v_from_ms = v_from_kms * 1e3  # m/s
+    r_from_m = r_from_km * 1e3    # m
+    r_to_m = r_to_km * 1e3        # m
+    n_from_m3 = n_from * 1e6      # cm^-3 -> m^-3
+    rho_from = n_from_m3 * m_p    # kg/m^3
     
     # Compute Mach number and stagnation conditions at r_from
-    p_from = n_from * k_B_CGS * T_from
-    c_from = np.sqrt(gamma * p_from / rho_from)
-    M_from = v_from_cms / c_from
+    p_from = n_from_m3 * k_B * T_from  # Pa
+    c_from = np.sqrt(gamma * p_from / rho_from)  # m/s
+    M_from = v_from_ms / c_from
     
     # Stagnation temperature - CONSERVED
     T_t = T_from * (1.0 + (gamma - 1.0)/2.0 * M_from**2)
@@ -2047,12 +2032,12 @@ def _compute_parker_mapping(v_from_kms, T_from, n_from, r_from_cm, r_to_cm, gamm
     b = (gamma - 1.0) / 2.0
     c = (gamma + 1.0) / (2.0 * (gamma - 1.0))
     
-    A_from = r_from_cm**2
+    A_from = r_from_m**2
     A_norm_from = (1.0/M_from) * (a * (1.0 + b * M_from**2))**c
     A_star = A_from / A_norm_from
     
     # Compute area and normalized area at r_to
-    A_to = r_to_cm**2
+    A_to = r_to_m**2
     A_norm_to = A_to / A_star
     
     # Solve for Mach number at r_to using vectorized Newton's method
@@ -2078,12 +2063,12 @@ def _compute_parker_mapping(v_from_kms, T_from, n_from, r_from_cm, r_to_cm, gamm
     
     # Compute temperature and velocity at r_to
     T_to = T_t / (1.0 + (gamma - 1.0)/2.0 * M_to**2)
-    c_to = np.sqrt(gamma * k_B_CGS * T_to / m_p_CGS)
-    v_to_cms = M_to * c_to
-    v_to_kms = v_to_cms / 1e5
+    c_to = np.sqrt(gamma * k_B * T_to / m_p)  # m/s
+    v_to_ms = M_to * c_to
+    v_to_kms = v_to_ms / 1e3  # back to km/s
     
-    # Compute density using mass conservation
-    n_to = n_from * (r_from_cm / r_to_cm)**2 * (v_from_cms / v_to_cms)
+    # Compute density using mass conservation (n * v * r^2 = const)
+    n_to = n_from * (r_from_km / r_to_km)**2 * (v_from_kms / v_to_kms)  # cm^-3
     
     return v_to_kms, n_to, T_to
 
@@ -2093,29 +2078,18 @@ def map_properties_parker(velocity, r_from, r_to, density_from, temperature_from
     Map solar wind parameters between two heliocentric distances using Parker nozzle equations.
     
     Uses the full Parker nozzle (area-Mach) relation for adiabatic isentropic flow.
-    This solves for the Mach number at both locations using the area ratio (r²)
-    and isentropic flow relations, then computes all parameters consistently.
-    
-    OPTIMIZED: Uses vectorized Newton's method with JIT compilation for ~40x speedup.
-    
-    The Parker nozzle equations are:
-    1. Area-Mach relation: (A/A*)² = (1/M²) * [(2/(γ+1)) * (1 + (γ-1)/2 * M²)]^((γ+1)/(γ-1))
-    2. Isentropic relations: T = T_t / (1 + (γ-1)/2 * M²)
-    3. Sound speed: c = sqrt(γ * k_B * T / m_p)
-    4. Mass conservation: ρ*v*r² = constant
-    
-    NOTE: Stagnation temperature T_t is exactly conserved in this mapping.
     
     Args:
-        velocity: Velocity at r_from (scalar or array). Can be in km/s or astropy Quantity.
-        r_from: Initial heliocentric distance (astropy Quantity with length units)
-        r_to: Final heliocentric distance (astropy Quantity with length units)
-        density_from: Number density at r_from (in cm^-3 or astropy Quantity)
-        temperature_from: Temperature at r_from (in K or astropy Quantity)
+        velocity: Velocity at r_from. Astropy Quantity in km/s.
+        r_from: Initial heliocentric distance. Astropy Quantity with length units.
+        r_to: Final heliocentric distance. Astropy Quantity with length units.
+        density_from: Number density at r_from. Astropy Quantity in cm^-3.
+        temperature_from: Temperature at r_from. Astropy Quantity in K.
         gamma: Adiabatic index (default 1.5 for solar wind)
     
     Returns:
-        tuple: (velocity at r_to, density at r_to, temperature at r_to) with same units as inputs
+        tuple: (velocity at r_to [km/s], density at r_to [cm^-3], temperature at r_to [K])
+               All returned as astropy Quantities.
     
     Example:
         >>> v_1AU = 400 * u.km / u.s
@@ -2124,29 +2098,14 @@ def map_properties_parker(velocity, r_from, r_to, density_from, temperature_from
         >>> v_01AU, n_01AU, T_01AU = map_properties_parker(v_1AU, 215*u.solRad, 21.5*u.solRad, n_1AU, T_1AU)
     """
     
-    # Extract scalar values
-    if hasattr(velocity, 'unit'):
-        v_from_kms = velocity.to(u.km/u.s).value
-        has_velocity_unit = True
-    else:
-        v_from_kms = velocity
-        has_velocity_unit = False
+    # Extract values in standard units
+    v_from_kms = velocity.to(u.km/u.s).value
+    T_from = temperature_from.to(u.K).value
+    n_from = density_from.to(u.cm**-3).value
     
-    if hasattr(temperature_from, 'unit'):
-        T_from = temperature_from.to(u.K).value
-    else:
-        T_from = temperature_from
-    
-    if hasattr(density_from, 'unit'):
-        n_from = density_from.to(u.cm**-3).value
-        has_density_unit = True
-    else:
-        n_from = density_from
-        has_density_unit = False
-    
-    # Convert radii to cm
-    r_from_cm = r_from.to(u.cm).value
-    r_to_cm = r_to.to(u.cm).value
+    # Convert radii to km for the JIT function
+    r_from_km = r_from.to(u.km).value
+    r_to_km = r_to.to(u.km).value
     
     # Check if we have scalar or array input
     is_scalar = np.isscalar(v_from_kms) or (hasattr(v_from_kms, 'shape') and v_from_kms.shape == ())
@@ -2157,9 +2116,9 @@ def map_properties_parker(velocity, r_from, r_to, density_from, temperature_from
     else:
         v_from_kms = np.asarray(v_from_kms)
     
-    # Call the JIT-compiled core function
+    # Call the JIT-compiled core function (takes km, km/s, cm^-3, K)
     v_to_kms, n_to, T_to = _compute_parker_mapping(
-        v_from_kms, T_from, n_from, r_from_cm, r_to_cm, gamma
+        v_from_kms, T_from, n_from, r_from_km, r_to_km, gamma
     )
     
     # Convert back to scalar if input was scalar
@@ -2168,14 +2127,8 @@ def map_properties_parker(velocity, r_from, r_to, density_from, temperature_from
         n_to = n_to[0]
         T_to = T_to[0]
     
-    # Return with appropriate units
-    if has_velocity_unit:
-        if has_density_unit:
-            return v_to_kms * u.km / u.s, n_to * u.cm**-3, T_to * u.K
-        else:
-            return v_to_kms * u.km / u.s, n_to, T_to * u.K
-    else:
-        return v_to_kms, n_to, T_to
+    # Return with units
+    return v_to_kms * u.km / u.s, n_to * u.cm**-3, T_to * u.K
 
 
 def get_omni_lookup_table_at_distance(r_target, lookup_table_path=None):
@@ -2286,8 +2239,6 @@ def get_density_temperature_from_velocity(v_value, r_target, gamma=1.5):
     return n_interp, T_interp
 
 
-@u.quantity_input(r_min=u.solRad)
-@u.quantity_input(r_max=u.solRad)
 def radial_grid(r_min=30.0 * u.solRad, r_max=240. * u.solRad):
     """
     Define the radial grid of the HUXt model. Step size is fixed, but inner and outer boundary may be specified.
@@ -2323,9 +2274,6 @@ def radial_grid(r_min=30.0 * u.solRad, r_max=240. * u.solRad):
     return r, dr, rrel, nr
 
 
-@u.quantity_input(lon_out=u.rad)
-@u.quantity_input(lon_start=u.rad)
-@u.quantity_input(lon_stop=u.rad)
 def longitude_grid(lon_out=np.nan * u.rad, lon_start=np.nan * u.rad, lon_stop=np.nan * u.rad):
     """
     Define the longitude grid of the HUXt model.
@@ -2391,8 +2339,6 @@ def longitude_grid(lon_out=np.nan * u.rad, lon_start=np.nan * u.rad, lon_stop=np
     return lon, dlon, nlon
 
 
-@u.quantity_input(latitude_min=u.rad)
-@u.quantity_input(latitude_max=u.rad)
 def latitude_grid(latitude_min=np.nan, latitude_max=np.nan):
     """
     Define the latitude grid of the HUXt model. This is constant in sine latitude
@@ -2583,21 +2529,18 @@ def solve_radial_compressible(v_bc_kms, rho_bc_kgm3, T_bc_K, model_time, time_ou
     - Uses PCM (piecewise constant) reconstruction for stability
     - Initializes with Parker nozzle solution for smooth startup
     """
-    # Physical constants (CGS)
-    AU = 1.496e13  # cm
-    PROTON_MASS = 1.67262192e-24  # grams
-    KM_TO_CM = 1e5  # cm/km
+    KM_TO_M = 1e3  # m/km
     
-    # Strip units from times if needed
-    model_time_seconds = model_time.value if hasattr(model_time, 'value') else model_time
-    time_out_seconds = time_out.value if hasattr(time_out, 'value') else time_out
+    # Times are already plain arrays (units stripped by caller)
+    model_time_seconds = model_time
+    time_out_seconds = time_out
     
-    # Convert to CGS
-    v_bc_cgs = v_bc_kms * KM_TO_CM  # cm/s
-    rho_bc_cgs = rho_bc_kgm3 * 0.001  # kg/m³ to g/cm³
+    # Convert to SI (m, m/s, kg/m³)
+    v_bc_si = v_bc_kms * KM_TO_M  # m/s
+    rho_bc_si = rho_bc_kgm3  # already kg/m³
     
-    # Convert HUXt radial grid to cm
-    r_grid_cm = r_grid * KM_TO_CM
+    # Convert HUXt radial grid to m
+    r_grid_m = r_grid * KM_TO_M
     
     # Create output time grid for solver - include spin-up snapshots
     spinup_time_seconds = time_out_seconds[0] - model_time_seconds[0]
@@ -2607,10 +2550,10 @@ def solve_radial_compressible(v_bc_kms, rho_bc_kgm3, T_bc_K, model_time, time_ou
     
     # Boundary condition functions (MUST return plain floats, no units)
     def v_bc_func(t):
-        return float(np.interp(t, model_time_seconds, v_bc_cgs))
+        return float(np.interp(t, model_time_seconds, v_bc_si))
     
     def rho_bc_func(t):
-        return float(np.interp(t, model_time_seconds, rho_bc_cgs))
+        return float(np.interp(t, model_time_seconds, rho_bc_si))
     
     def T_bc_func(t):
         return float(np.interp(t, model_time_seconds, T_bc_K))
@@ -2629,7 +2572,7 @@ def solve_radial_compressible(v_bc_kms, rho_bc_kgm3, T_bc_K, model_time, time_ou
             method = f"{riemann}-pcm"
             
         solver = create_compressible_solver(
-            r_grid=r_grid_cm,
+            r_grid=r_grid_m,
             gamma=gamma,
             method=method,
             cfl=0.7 if 'plm' in method else 0.8, # Lower CFL for PLM
@@ -2653,14 +2596,14 @@ def solve_radial_compressible(v_bc_kms, rho_bc_kgm3, T_bc_K, model_time, time_ou
     n_spinup = len(spinup_sampled)
     
     # Skip spin-up snapshots, extract only output times
-    v_out_cgs = results['v'][n_spinup:]
-    rho_out_cgs = results['rho'][n_spinup:]
+    v_out_si = results['v'][n_spinup:]
+    rho_out_si = results['rho'][n_spinup:]
     temp_out_K = results['T'][n_spinup:]
     
     # If solver returned fewer points than expected, interpolate
-    if v_out_cgs.shape[0] != nt_out:
+    if v_out_si.shape[0] != nt_out:
         if verbose:
-            print(f"  Warning: solver returned {v_out_cgs.shape[0]} points, expected {nt_out}, interpolating...")
+            print(f"  Warning: solver returned {v_out_si.shape[0]} points, expected {nt_out}, interpolating...")
         
         v_interp = np.zeros((nt_out, nr))
         rho_interp = np.zeros((nt_out, nr))
@@ -2670,40 +2613,40 @@ def solve_radial_compressible(v_bc_kms, rho_bc_kgm3, T_bc_K, model_time, time_ou
         solver_out_times = results['t'][n_spinup:]
         
         for ir in range(nr):
-            v_interp[:, ir] = np.interp(time_out_seconds, solver_out_times, v_out_cgs[:, ir])
-            rho_interp[:, ir] = np.interp(time_out_seconds, solver_out_times, rho_out_cgs[:, ir])
+            v_interp[:, ir] = np.interp(time_out_seconds, solver_out_times, v_out_si[:, ir])
+            rho_interp[:, ir] = np.interp(time_out_seconds, solver_out_times, rho_out_si[:, ir])
             temp_interp[:, ir] = np.interp(time_out_seconds, solver_out_times, temp_out_K[:, ir])
         
-        v_out_cgs = v_interp
-        rho_out_cgs = rho_interp
+        v_out_si = v_interp
+        rho_out_si = rho_interp
         temp_out_K = temp_interp
     
     # Convert to HUXt units
-    v_out_kms = v_out_cgs / KM_TO_CM  # cm/s -> km/s
-    rho_out_kgm3 = rho_out_cgs / 0.001  # g/cm³ -> kg/m³
+    v_out_kms = v_out_si / KM_TO_M  # m/s -> km/s
+    rho_out_kgm3 = rho_out_si  # already kg/m³
     temp_out = temp_out_K  # K (no conversion)
     
     # Extract and convert particle data if present
     particle_data = None
     if 'particles' in results:
-        particle_data_cgs = results['particles']
+        particle_data_si = results['particles']
         
         if isinstance(num_particles, dict):
             # Multi-group mode - convert positions to km
             particle_data = {'groups': {}}
-            for group_name, group_data in particle_data_cgs['groups'].items():
-                # Convert positions from cm to km
-                r_cgs = np.asarray(group_data['r'])
-                v_cgs = np.asarray(group_data['v'])
+            for group_name, group_data in particle_data_si['groups'].items():
+                # Convert positions from m to km
+                r_si = np.asarray(group_data['r'])
+                v_si = np.asarray(group_data['v'])
                 t_sec = np.asarray(group_data['t'])
                 
-                if r_cgs.size == 0:
+                if r_si.size == 0:
                     r_km = np.array([])
                     v_km = np.array([])
                     t_sec = np.array([])
                 else:
-                    r_km = r_cgs / KM_TO_CM
-                    v_km = v_cgs / KM_TO_CM
+                    r_km = r_si / KM_TO_M
+                    v_km = v_si / KM_TO_M
                 
                 particle_data['groups'][group_name] = {
                     'r': r_km,  # km
@@ -2715,24 +2658,24 @@ def solve_radial_compressible(v_bc_kms, rho_bc_kgm3, T_bc_K, model_time, time_ou
                 }
         else:
             # Single group mode - convert positions to km
-            r_cgs = np.asarray(particle_data_cgs['r'])
-            v_cgs = np.asarray(particle_data_cgs['v'])
-            t_sec = np.asarray(particle_data_cgs['t'])
+            r_si = np.asarray(particle_data_si['r'])
+            v_si = np.asarray(particle_data_si['v'])
+            t_sec = np.asarray(particle_data_si['t'])
             
-            if r_cgs.size == 0:
+            if r_si.size == 0:
                 r_km = np.array([])
                 v_km = np.array([])
                 t_sec = np.array([])
             else:
-                r_km = r_cgs / KM_TO_CM
-                v_km = v_cgs / KM_TO_CM
+                r_km = r_si / KM_TO_M
+                v_km = v_si / KM_TO_M
             
             particle_data = {
                 'r': r_km,  # km
                 'v': v_km,  # km/s
                 't': t_sec,  # seconds
-                't_inject': particle_data_cgs['t_inject'],  # seconds
-                'active': particle_data_cgs['active'],
+                't_inject': particle_data_si['t_inject'],  # seconds
+                'active': particle_data_si['active'],
             }
     
     return v_out_kms, rho_out_kgm3, temp_out, particle_data
