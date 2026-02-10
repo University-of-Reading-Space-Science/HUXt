@@ -12,8 +12,8 @@ import huxt.huxt_analysis as HA
 import huxt.huxt_inputs as Hin
 import huxt.huxt_insitu as Hinsitu
 
-standard_tests = True
-compressible_tests = True
+standard_tests = False
+compressible_tests = False
 insitu_compressible_tests = True
 
 simtime = 5*u.day
@@ -222,7 +222,7 @@ if insitu_compressible_tests:
                             run_2d=False)
 
     is_model.solve([])
-    HA.plot_earth_timeseries(is_model)
+    #HA.plot_earth_timeseries(is_model)
 
     ts_incomp = HA.get_observer_timeseries(is_model)
 

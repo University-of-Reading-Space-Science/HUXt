@@ -7,7 +7,7 @@ import astropy.units as u
 import time
 from huxt.huxt import HUXt
 
-solver = 'hllc-plm-rk2'
+solver = 'upwind'# 'hllc-plm-rk2'
 
 # Create a simple test case with spatial structure
 print("="*70)

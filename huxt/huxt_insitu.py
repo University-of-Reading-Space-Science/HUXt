@@ -1062,15 +1062,16 @@ def omniHUXt_forecast(ftime, simtime=27.27*u.day,
     Earth_R_km = np.interp(Time(ftime).mjd, all_time, ephem['EARTH']['HEEQ']['radius'][:]) * u.km
     ephem.close()
     
-    vcarr_rmin_back = Hin.map_v_boundary_inwards(omni_lon['V'].to_numpy()*u.km/u.s, 
+    # backmap to the inner boundary using either the upwind or euler solver mapping functions
+    if solver == 'upwind':
+        vcarr_rmin_back, bcarr_rmin_back = Hin.map_v_boundary_inwards(omni_lon['V'].to_numpy()*u.km/u.s, 
                                     Earth_R_km.to(u.solRad), rmin,
                                     b_orig=-omni_lon['BX_GSE'].to_numpy())
-    
-    # Extract mapped velocity and magnetic field
-    if isinstance(vcarr_rmin_back, tuple):
-        vcarr_rmin_back, bcarr_rmin_back = vcarr_rmin_back
     else:
-        bcarr_rmin_back = None  
+        vcarr_rmin_back, bcarr_rmin_back = Hin.map_v_boundary_inwards(omni_lon['V'].to_numpy()*u.km/u.s,
+                                    Earth_R_km.to(u.solRad), rmin,
+                                    b_orig=-omni_lon['BX_GSE'].to_numpy(), acc_profile='huxt', gamma=1.5)
+    
     
     # interp to typical HUXt resolution
     dphi = 2*np.pi/H.huxt_constants()['nlong']
@@ -1081,8 +1082,8 @@ def omniHUXt_forecast(ftime, simtime=27.27*u.day,
     # apply the CNN to the backmapped data
     vcarr_rmin_back_cnn = correct_inner_vlon_cnn_onnx(vlon.reshape(-1, 1))
 
-    #teh HUXXt equation has stronger acceleration than Parker nozzle. so increase speeds slightly 
-    #to compensate
+    # #teh HUXXt equation has stronger acceleration than Parker nozzle. so increase speeds slightly 
+    # #to compensate
     if solver != 'upwind':
         vcarr_rmin_back_cnn = vcarr_rmin_back_cnn * 1.1
         #smooth the series, periodic at the edges
