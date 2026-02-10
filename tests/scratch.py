@@ -142,7 +142,7 @@ ts_plm = HA.get_observer_timeseries(model_plm)
 ts_huxt = HA.get_observer_timeseries(model_incomp)
 
 fig, ax = plt.subplots(3, 1, figsize=(10, 8), sharex=True)
-ax[0].plot(ts_huxt['time'], ts_huxt['vsw'], 'k', label='HUXt')
+ax[0].plot(ts_huxt['time'], ts_huxt['vsw'], 'k', label='SURF-HUXt')
 ax[0].plot(ts_pcm['time'], ts_pcm['vsw'], 'b', label='SURF-hydro-PCM')
 ax[0].plot(ts_plm['time'], ts_plm['vsw'], 'r', label='SURF-hydro-PLM')
 ax[0].set_ylabel('Velocity [km/s]')
@@ -166,7 +166,56 @@ ax[2].xaxis.set_major_locator(mdates.DayLocator(interval=2))
 year = ts_pcm['time'][0].year
 ax[2].set_xlabel(f'Date of {year}')
 
+# Set x-axis limits to the data range
+ax[2].set_xlim(ts_pcm['time'].iloc[0], ts_pcm['time'].iloc[-1])
+
+# Add CME arrival and end times as vertical lines
+if len(cme_list) > 0:
+    # Get CME particle data for each model (assuming single longitude, nlon=1)
+    for cme_id in range(len(cme_list)):
+        # HUXt/upwind (black lines)
+        cme_r_incomp = model_incomp.cme_particles_r[cme_id, :, 0, 0].value
+        valid_incomp = np.isfinite(cme_r_incomp)
+        if np.any(valid_incomp):
+            t_arrival_incomp = model_incomp.time_out[valid_incomp][0]
+            t_end_incomp = model_incomp.time_out[valid_incomp][-1]
+            for ax_i in ax:
+                ax_i.axvline(t_arrival_incomp, color='k', linestyle='--', linewidth=0.8, alpha=0.7)
+                ax_i.axvline(t_end_incomp, color='k', linestyle='--', linewidth=0.8, alpha=0.7)
+        
+        # PCM (blue lines)
+        cme_r_pcm = model_pcm.cme_particles_r[cme_id, :, 0, 0].value
+        valid_pcm = np.isfinite(cme_r_pcm)
+        if np.any(valid_pcm):
+            t_arrival_pcm = model_pcm.time_out[valid_pcm][0]
+            t_end_pcm = model_pcm.time_out[valid_pcm][-1]
+            for ax_i in ax:
+                ax_i.axvline(t_arrival_pcm, color='b', linestyle='--', linewidth=0.8, alpha=0.7)
+                ax_i.axvline(t_end_pcm, color='b', linestyle='--', linewidth=0.8, alpha=0.7)
+        
+        # PLM (red lines)
+        cme_r_plm = model_plm.cme_particles_r[cme_id, :, 0, 0].value
+        valid_plm = np.isfinite(cme_r_plm)
+        if np.any(valid_plm):
+            t_arrival_plm = model_plm.time_out[valid_plm][0]
+            t_end_plm = model_plm.time_out[valid_plm][-1]
+            for ax_i in ax:
+                ax_i.axvline(t_arrival_plm, color='r', linestyle='--', linewidth=0.8, alpha=0.7)
+                ax_i.axvline(t_end_plm, color='r', linestyle='--', linewidth=0.8, alpha=0.7)
+
 plt.tight_layout()
+
+# Save figure as PDF
+dbox = os.getenv('DBOX')
+if dbox:
+    save_dir = os.path.join(dbox, 'Apps', 'Overleaf', 'SHUXt')
+    os.makedirs(save_dir, exist_ok=True)
+    save_path = os.path.join(save_dir, 'solver_comparison.pdf')
+    fig.savefig(save_path, format='pdf', dpi=300, bbox_inches='tight')
+    print(f"\nFigure saved to: {save_path}")
+else:
+    print("\nWarning: DBOX environment variable not set. Figure not saved.")
+
 
 
 
