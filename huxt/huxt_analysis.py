@@ -654,9 +654,9 @@ def plot_compressible(model, time, save=False, tag='', fighandle=np.nan, minimal
 
 
 def plot_compressible_with_ts(model, time, save=False, tag='', fighandle=np.nan, minimalplot=False, 
-                               annotateplot=True, plot_rmax=None, plotHCS=True):
+                               annotateplot=True, plot_rmax=None, plotHCS=True, polar_var='P_DYN'):
     """
-    Make a plot with two subfigures: left shows top-down polar view of r^2*P_dyn,
+    Make a plot with two subfigures: left shows top-down polar view of selected variable,
     right shows Earth timeseries of V, n, T, and P_dyn.
     
     Args:
@@ -669,6 +669,8 @@ def plot_compressible_with_ts(model, time, save=False, tag='', fighandle=np.nan,
         annotateplot: Boolean, whether to include text and legends
         plot_rmax: float (no units, but in Rs). Limit outer boundary to help with field lines during CMEs
         plotHCS: Boolean, if True plots heliospheric current sheet coordinates
+        polar_var: String specifying variable to plot in left polar subplot.
+                   Options: 'P_DYN' (default), 'V', 'n', 'T'
     Returns:
         fig: Figure handle.
         subfigs: Array of subfigure handles [subfig_left, subfig_right].
@@ -701,11 +703,9 @@ def plot_compressible_with_ts(model, time, save=False, tag='', fighandle=np.nan,
     # Prepare data arrays
     v_sub = model.v_grid.value[id_t, :, :].copy()
     rho_sub = model.rho_grid.value[id_t, :, :].copy()
+    temp_sub = model.temp_grid.value[id_t, :, :].copy()
     
-    # Compute r^2 * P_dyn = 0.5 * r^2 * rho * v^2
-    # rho in kg/m^3, v in km/s -> convert v to m/s
-    # Result in Pascals, convert to nPa (1e9)
-    # Scale by (r/1AU)^2 to account for spherical expansion
+    # Calculate the selected variable for plotting
     r_sub = model.r.to(u.km).value
     r_1au = 1.496e8  # 1 AU in km
     
@@ -714,20 +714,38 @@ def plot_compressible_with_ts(model, time, save=False, tag='', fighandle=np.nan,
         r_grid_sub = np.tile(r_sub[:, np.newaxis], (1, rho_sub.shape[1]))
     else:
         r_grid_sub = r_sub
-        
-    pdyn_r2_sub = 0.5 * rho_sub * (v_sub * 1e3)**2 * 1e9 * (r_grid_sub / r_1au)**2
+    
+    # Calculate data based on selected variable
+    if polar_var == 'P_DYN':
+        # Compute r^2 * P_dyn = 0.5 * r^2 * rho * v^2
+        # rho in kg/m^3, v in km/s -> convert v to m/s
+        # Result in Pascals, convert to nPa (1e9)
+        # Scale by (r/1AU)^2 to account for spherical expansion
+        plot_data_sub = 0.5 * rho_sub * (v_sub * 1e3)**2 * 1e9 * (r_grid_sub / r_1au)**2
+    elif polar_var == 'V':
+        # Velocity in km/s
+        plot_data_sub = v_sub
+    elif polar_var == 'n':
+        # Number density: convert kg/m^3 to protons/cm^3
+        m_p = 1.6726e-27  # Proton mass in kg
+        plot_data_sub = rho_sub / m_p / 1e6  # Convert to cm^-3
+    elif polar_var == 'T':
+        # Temperature in K
+        plot_data_sub = temp_sub
+    else:
+        raise ValueError(f"polar_var must be 'P_DYN', 'V', 'n', or 'T', got '{polar_var}'")
     
     # Insert into full array
     if lon_arr.size != model.lon.size:
-        pdyn_r2 = np.zeros((model.nr, nlon)) * np.nan
+        plot_data = np.zeros((model.nr, nlon)) * np.nan
         if model.lon.size != 1:
             for i, lo in enumerate(model.lon):
                 id_match = np.argwhere(lon_arr == lo)[0][0]
-                pdyn_r2[:, id_match] = pdyn_r2_sub[:, i]
+                plot_data[:, id_match] = plot_data_sub[:, i]
         else:
             print('Warning: Trying to contour single radial solution will fail.')
     else:
-        pdyn_r2 = pdyn_r2_sub
+        plot_data = plot_data_sub
 
     # Pad out to fill the full 2pi of contouring
     pad = lon[:, 0].reshape((lon.shape[0], 1)) + model.twopi
@@ -735,20 +753,52 @@ def plot_compressible_with_ts(model, time, save=False, tag='', fighandle=np.nan,
     pad = rad[:, 0].reshape((rad.shape[0], 1))
     rad = np.concatenate((rad, pad), axis=1)
     
-    pad_pdyn = pdyn_r2[:, 0].reshape((pdyn_r2.shape[0], 1))
-    pdyn_r2 = np.concatenate((pdyn_r2, pad_pdyn), axis=1)
+    pad_data = plot_data[:, 0].reshape((plot_data.shape[0], 1))
+    plot_data = np.concatenate((plot_data, pad_data), axis=1)
 
-    # Define colormap and levels (same as temperature in plot_compressible)
-    cmap_P = mpl.cm.inferno.copy()
-    cmap_P.set_over('white')
-    cmap_P.set_under([0, 0, 0])
-    # Use log10 of r^2*pdyn
-    P_log = np.log10(pdyn_r2)
-    Pmin, Pmax, dP = -1, 1, 0.1  # log10 scale: 10^-1 to 10^1
-    levels_P = np.arange(Pmin, Pmax + dP, dP)
+    # Define colormap and levels based on variable
+    if polar_var == 'P_DYN':
+        cmap_var = mpl.cm.inferno.copy()
+        cmap_var.set_over('white')
+        cmap_var.set_under([0, 0, 0])
+        # Use log10 of r^2*pdyn
+        plot_data_scaled = np.log10(plot_data)
+        vmin, vmax, dv = -1, 1, 0.1  # log10 scale: 10^-1 to 10^1
+        levels_var = np.arange(vmin, vmax + dv, dv)
+        cbar_label = r"$\log_{10}(r^2 P_{dyn})$ [nPa at 1 AU]"
+        cbar_ticks = np.arange(vmin, vmax, 1.0)
+    elif polar_var == 'V':
+        cmap_var = mpl.cm.viridis.copy()
+        cmap_var.set_over('white')
+        cmap_var.set_under([0, 0, 0])
+        plot_data_scaled = plot_data
+        vmin, vmax, dv = 200, 900, 20
+        levels_var = np.arange(vmin, vmax + dv, dv)
+        cbar_label = r"V [km/s]"
+        cbar_ticks = np.arange(200, 901, 100)
+    elif polar_var == 'n':
+        cmap_var = mpl.cm.plasma.copy()
+        cmap_var.set_over('white')
+        cmap_var.set_under([0, 0, 0])
+        # Use log10 for number density
+        plot_data_scaled = np.log10(plot_data)
+        vmin, vmax, dv = -1, 2.5, 0.1  # log10 scale: 10^-1 to 10^2.5
+        levels_var = np.arange(vmin, vmax + dv, dv)
+        cbar_label = r"$\log_{10}(n)$ [cm$^{-3}$]"
+        cbar_ticks = np.arange(-1, 3, 1.0)
+    elif polar_var == 'T':
+        cmap_var = mpl.cm.inferno.copy()
+        cmap_var.set_over('white')
+        cmap_var.set_under([0, 0, 0])
+        # Use log10 for temperature
+        plot_data_scaled = np.log10(plot_data)
+        vmin, vmax, dv = 4, 6.5, 0.1  # log10 scale: 10^4 to 10^6.5 K
+        levels_var = np.arange(vmin, vmax + dv, dv)
+        cbar_label = r"$\log_{10}(T)$ [K]"
+        cbar_ticks = np.arange(4, 7, 1.0)
 
-    # Plot r^2 * P_dyn
-    cnt_P = ax_polar.contourf(lon, rad, P_log, levels=levels_P, cmap=cmap_P, extend='both')
+    # Plot the selected variable
+    cnt_P = ax_polar.contourf(lon, rad, plot_data_scaled, levels=levels_var, cmap=cmap_var, extend='both')
     cnt_P.set(edgecolor="face")
     ax_polar.set_ylim(0, model.r.value.max())
     ax_polar.set_yticklabels([])
@@ -845,11 +895,11 @@ def plot_compressible_with_ts(model, time, save=False, tag='', fighandle=np.nan,
         bottom = pos.y0 + (pos.height - cb_height) / 2
         cbaxes = subfigs[0].add_axes([left, bottom, cb_width, cb_height])
         cbar = subfigs[0].colorbar(cnt_P, cax=cbaxes, orientation='vertical')
-        cbar.set_ticks(np.arange(Pmin, Pmax, 1.0))
+        cbar.set_ticks(cbar_ticks)
         cbar.ax.tick_params(labelsize=12)
         cbar.ax.yaxis.set_ticks_position('left')
         cbar.ax.yaxis.set_label_position('left')
-        cbar.set_label(r"$\log_{10}(r^2 P_{dyn})$ [nPa at 1 AU]", fontsize=18)
+        cbar.set_label(cbar_label, fontsize=18)
 
         # Add legend for observers below plot
         if len(observers_list) > 0:
@@ -983,7 +1033,7 @@ def plot_compressible_with_ts(model, time, save=False, tag='', fighandle=np.nan,
 
 
 def animate_compressible_with_ts(model, tag='', duration=10, fps=20, outputfilepath='', 
-                                  minimalplot=False, annotateplot=True, plot_rmax=None, plotHCS=True):
+                                  minimalplot=False, annotateplot=True, plot_rmax=None, plotHCS=True, polar_var='P_DYN'):
     """
     Animate the compressible solar wind solution with timeseries, and save as an MP4.
     Creates an animation using plot_compressible_with_ts showing the polar plot and Earth timeseries.
@@ -998,6 +1048,8 @@ def animate_compressible_with_ts(model, tag='', duration=10, fps=20, outputfilep
         annotateplot: Boolean, whether to include text and legends
         plot_rmax: float (no units, but in Rs). Limit outer boundary to help with field lines during CMEs
         plotHCS: Boolean, if True plots heliospheric current sheet coordinates
+        polar_var: String specifying variable to plot in left polar subplot.
+                   Options: 'P_DYN' (default), 'V', 'n', 'T'
     Returns:
         None
     """
@@ -1025,7 +1077,7 @@ def animate_compressible_with_ts(model, tag='', duration=10, fps=20, outputfilep
         i = np.int32((model.nt_out - 1) * frame / nframes)
         plot_compressible_with_ts(model, model.time_out[i], save=False, tag=tag,
                                   fighandle=fig, minimalplot=minimalplot, annotateplot=annotateplot,
-                                  plot_rmax=plot_rmax, plotHCS=plotHCS)
+                                  plot_rmax=plot_rmax, plotHCS=plotHCS, polar_var=polar_var)
         return frame
     
     # Create a new figure with appropriate size for dual-panel layout

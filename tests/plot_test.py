@@ -95,10 +95,10 @@ print(f"Solve complete in {dt_plm:.2f}s!")
 
 
 print("Creating plot 6: Compressible spatial plot (PLM)...")
-HA.plot_compressible_with_ts(model_plm, time=t_interest)
+HA.plot_compressible_with_ts(model_plm, time=t_interest, polar_var='V')
 
-HA.plot_compressible(model_plm, time=t_interest)
-HA.animate_compressible_with_ts(model_plm, tag='test', duration=10, fps=20)
+#HA.plot_compressible(model_plm, time=t_interest)
+#HA.animate_compressible_with_ts(model_plm, tag='test', duration=10, fps=20)
 
 plt.show(block=True)
 print("\nPlots displayed. Press Enter to close all plots and exit...")

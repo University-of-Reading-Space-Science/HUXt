@@ -177,8 +177,10 @@ if len(cme_list) > 0:
         cme_r_incomp = model_incomp.cme_particles_r[cme_id, :, 0, 0].value
         valid_incomp = np.isfinite(cme_r_incomp)
         if np.any(valid_incomp):
-            t_arrival_incomp = model_incomp.time_out[valid_incomp][0]
-            t_end_incomp = model_incomp.time_out[valid_incomp][-1]
+            # Use timeseries times which are already datetime objects
+            times_incomp = np.array(ts_huxt['time'])
+            t_arrival_incomp = times_incomp[valid_incomp][0]
+            t_end_incomp = times_incomp[valid_incomp][-1]
             for ax_i in ax:
                 ax_i.axvline(t_arrival_incomp, color='k', linestyle='--', linewidth=0.8, alpha=0.7)
                 ax_i.axvline(t_end_incomp, color='k', linestyle='--', linewidth=0.8, alpha=0.7)
@@ -187,8 +189,9 @@ if len(cme_list) > 0:
         cme_r_pcm = model_pcm.cme_particles_r[cme_id, :, 0, 0].value
         valid_pcm = np.isfinite(cme_r_pcm)
         if np.any(valid_pcm):
-            t_arrival_pcm = model_pcm.time_out[valid_pcm][0]
-            t_end_pcm = model_pcm.time_out[valid_pcm][-1]
+            times_pcm = np.array(ts_pcm['time'])
+            t_arrival_pcm = times_pcm[valid_pcm][0]
+            t_end_pcm = times_pcm[valid_pcm][-1]
             for ax_i in ax:
                 ax_i.axvline(t_arrival_pcm, color='b', linestyle='--', linewidth=0.8, alpha=0.7)
                 ax_i.axvline(t_end_pcm, color='b', linestyle='--', linewidth=0.8, alpha=0.7)
@@ -197,8 +200,9 @@ if len(cme_list) > 0:
         cme_r_plm = model_plm.cme_particles_r[cme_id, :, 0, 0].value
         valid_plm = np.isfinite(cme_r_plm)
         if np.any(valid_plm):
-            t_arrival_plm = model_plm.time_out[valid_plm][0]
-            t_end_plm = model_plm.time_out[valid_plm][-1]
+            times_plm = np.array(ts_plm['time'])
+            t_arrival_plm = times_plm[valid_plm][0]
+            t_end_plm = times_plm[valid_plm][-1]
             for ax_i in ax:
                 ax_i.axvline(t_arrival_plm, color='r', linestyle='--', linewidth=0.8, alpha=0.7)
                 ax_i.axvline(t_end_plm, color='r', linestyle='--', linewidth=0.8, alpha=0.7)
