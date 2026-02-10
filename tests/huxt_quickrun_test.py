@@ -89,7 +89,7 @@ if standard_tests:
     print("="*60)
     model_incomp = H.HUXt(v_boundary=vr_in, b_boundary=br_in, #lon_start=350*u.deg, lon_stop = 10*u.deg, 
                         #lon_out=0.0*u.rad,
-                        simtime=simtime, dt_scale=4, 
+                        r_min=21.5*u.solRad, simtime=simtime, dt_scale=4, 
                         solver ='upwind')
     print("Model initialized. Starting solve...")
     t0 = datetime.datetime.now()
@@ -116,7 +116,7 @@ if compressible_tests:
     # print("Starting compressible model (HLLC + PCM 1st Order)...")
     # print("="*60)
     # model_pcm = H.HUXt(v_boundary=vr_in, b_boundary=br_in,
-    #                         simtime=simtime, dt_scale=4, 
+    #                         simtime=simtime, dt_scale=4, r_min=21.5*u.solRad, 
     #                     solver ='hllc-pcm') # Explicitly request PCM
     # print("Model initialized. Starting solve...")
     # t0 = datetime.datetime.now()
@@ -141,7 +141,7 @@ if compressible_tests:
     print("Starting compressible model (HLLC + PLM + RK2 2nd Order)...")
     print("="*60)
     model_plm = H.HUXt(v_boundary=vr_in, b_boundary=br_in,
-                            simtime=simtime, dt_scale=4, 
+                            simtime=simtime, dt_scale=4, r_min=21.5*u.solRad, 
                         solver ='hllc-plm-rk2') # Explicitly request PLM+RK2
     print("Model initialized. Starting solve...")
     t0 = datetime.datetime.now()

@@ -161,7 +161,7 @@ class ConeCME:
     """
 
     def __init__(self, t_launch=0.0 * u.s, longitude=0.0 * u.deg, latitude=0.0 * u.deg, v=1000.0 * (u.km / u.s),
-                 width=30.0 * u.deg, thickness=0.0 * u.solRad, initial_height=30 * u.solRad, cme_expansion=False,
+                 width=30.0 * u.deg, thickness=0.0 * u.solRad, initial_height=21.5 * u.solRad, cme_expansion=False,
                  cme_fixed_duration=True, fixed_duration=12 * 60 * 60 * u.s, 
                  cme_density=np.nan * (u.kg / u.m**3), cme_temperature=np.nan * u.K, 
                  density_fraction=1, temperature_fraction=1,
@@ -551,7 +551,7 @@ class HUXt:
     def __init__(self, v_boundary=np.nan * (u.km / u.s), b_boundary=np.nan, 
                  rho_boundary=np.nan, temp_boundary=np.nan,
                  cr_num=np.nan, cr_lon_init=360.0 * u.deg,
-                 latitude=0 * u.deg, r_min=30 * u.solRad, r_max=240 * u.solRad, lon_out=np.nan * u.rad,
+                 latitude=0 * u.deg, r_min=21.5 * u.solRad, r_max=240 * u.solRad, lon_out=np.nan * u.rad,
                  lon_start=np.nan * u.rad, lon_stop=np.nan * u.rad, simtime=5.0 * u.day, dt_scale=1.0, frame='synodic',
                  input_v_ts=np.nan * (u.km / u.s), input_b_ts=np.nan, 
                  input_rho_ts=np.nan * (u.kg / u.m**3), input_temp_ts=np.nan * u.K, 
@@ -1585,7 +1585,9 @@ class HUXt:
                 self.streak_lon_r0[:, istreak] = np.interp(self.time_out, self.model_time,
                                                            streak_lon_t, period=2 * np.pi)
 
-                for ilon, lon in enumerate(self.lon):
+                # Handle both scalar and array longitude cases
+                lon_array = [self.lon] if self.lon.size == 1 else self.lon
+                for ilon, lon in enumerate(lon_array):
                     for irot in range(0, nrot):
                         # find the time index of the streakline at the given lon
                         id_in = np.argmin(abs(streak_lon_t -
