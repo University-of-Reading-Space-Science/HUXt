@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "huxt"
-version = "5.0.0"
+version = "5.0.2"
 description = "Heliospheric Upwind eXtrapolation with Time-dependence. A computationally efficient solar wind model."
 readme = "README.md"
 authors = [
