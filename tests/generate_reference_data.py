@@ -47,7 +47,7 @@ def make_time_dependent_test_data():
     # Now also compute CME arrival statistics and save to HDF5
     arrival_stats = cme_test.compute_arrival_at_body('Earth')
 
-    # Make lon in -pi:pi domain, as otherwise the 0-2pi boundary can confuse comparison.
+    # Make lon in -pi:pi domain, as otherwise the 0-2 pi boundary can confuse comparison.
     if arrival_stats['lon'].to(u.rad).value > np.pi:
         arrival_stats['lon'] = arrival_stats['lon'].to(u.rad) - 2 * np.pi * u.rad
 
@@ -77,11 +77,11 @@ def make_streakline_test_data():
     v_boundary[30:50] = 600 * kms
     v_boundary[95:125] = 700 * kms
 
-    #  Add a CME
+    # Add a CME
     cme = h.ConeCME(t_launch=0.5 * u.day, longitude=0.0 * u.deg, width=30 * u.deg, v=1000 * kms)
     cme_list = [cme]
 
-    #  Setup HUXt to do a 5-day simulation, with model output every 4 timesteps
+    # Set up HUXt to do a 5-day simulation, with model output every 4 timesteps
     model_test = h.HUXt(v_boundary=v_boundary, cr_num=2080, cr_lon_init=180 * u.deg,
                         simtime=5 * u.day, dt_scale=4)
 

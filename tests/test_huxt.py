@@ -137,11 +137,11 @@ def test_streaklines():
     v_boundary[30:50] = 600 * kms
     v_boundary[95:125] = 700 * kms
 
-    #  Add a CME
+    # Add a CME
     cme = H.ConeCME(t_launch=0.5 * u.day, longitude=0.0 * u.deg, width=30 * u.deg, v=1000 * kms)
     cme_list = [cme]
 
-    #  Setup HUXt to do a 5-day simulation, with model output every 4 timesteps
+    # Set up HUXt to do a 5-day simulation, with model output every 4 timesteps
     model_test = H.HUXt(v_boundary=v_boundary, cr_num=2080, cr_lon_init=180 * u.deg,
                         simtime=5 * u.day, dt_scale=4)
 

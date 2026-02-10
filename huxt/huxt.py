@@ -178,7 +178,7 @@ class ConeCME:
     def __init__(self, t_launch=0.0 * seconds, longitude=0.0 * deg, latitude=0.0 * deg,
                  v=1000.0 * km_per_s, width=30.0 * deg, thickness=0.0 * solRad,
                  initial_height=30 * solRad, cme_expansion=False, cme_fixed_duration=True,
-                 fixed_duration=12 * 60 * 60 * seconds, label=None):
+                 fixed_duration=8.5 * 60 * 60 * seconds, label=None):
 
         """
         Set up a Cone CME with specified parameters.
@@ -540,7 +540,7 @@ class HUXt:
                  r_max=240 * solRad, lon_out=np.nan * rad, lon_start=np.nan * rad,
                  lon_stop=np.nan * rad, simtime=5.0 * day, dt_scale=1.0, frame='synodic',
                  input_v_ts=np.nan * km_per_s, input_b_ts=np.nan, input_iscme_ts=np.nan,
-                 input_t_ts=np.nan * seconds, track_cmes=True, accel_limit=True):
+                 input_t_ts=np.nan * seconds, track_cmes=True):
         """
         Initialise the HUXt model instance.
 
@@ -578,8 +578,6 @@ class HUXt:
                          saved for post-processing.
             track_cmes: Boolean flag to determine if CMEs are tracked at run time, which costs a
                         small reduction in computational speed reduction.
-            accel_limit: Boolean flag to determine if acceleration is switched for speeds above 650
-                         km/s.
         """
 
         # some constants and units
@@ -728,13 +726,12 @@ class HUXt:
         self.cmes = []
 
         self.track_cmes = track_cmes
-        self.accel_limit = accel_limit  # If true, no acceleration is applied to speeds >650 km/s
 
         # Numpy array of model parameters for parsing to external functions that use numba
         self.model_params = np.array([self.dtdr.value, self.alpha.value, self.r_accel.value,
                                       self.dt_scale.value, self.nt_out, self.nr, self.nlon,
                                       self.r[0].to('km').value,
-                                     self.rotation_period.to(seconds).value, int(self.accel_limit)])
+                                     self.rotation_period.to(seconds).value])
 
         # Process inputs for time-dependent boundary conditions, e.g. from in-situ data
         self.input_b_ts = np.nan
@@ -1175,7 +1172,7 @@ class HUXt:
                 'dt_scale', 'time_out', 'dt_out', 'r', 'dr', 'lon', 'dlon', 'r_grid', 'lon_grid',
                 'v_grid', 'latitude', 'v_boundary', '_v_boundary_init_', 'cme_particles_r',
                 'cme_particles_v', 'streak_particles_r', 'streak_lon_r0', 'hcs_particles_r',
-                'frame', 'track_cmes', 'accel_limit', 'track_b', 'track_streak']
+                'frame', 'track_cmes', 'track_b', 'track_streak']
 
         # Handle keys to magnetic field arrays seperately
         mag_keys = ['_b_boundary_init_', 'b_boundary_lons', 'b_boundary', 'b_grid']
@@ -1629,7 +1626,6 @@ def solve_radial(vinput, binput, iscmeinput, model_time, rrel, params,
     nt_out = np.int32(params[4])
     nr = np.int32(params[5])
     r_boundary = params[7]
-    accel_limit = bool(params[9])  # switch used to determine if a limit is applied to acceleration.
     # Compute the radial grid for the test particles
     rgrid = (rrel - rrel[0]) * 695700.0 + r_boundary  # Can't use astropy.units because numba
     dr = rgrid[1] - rgrid[0]
@@ -1718,10 +1714,7 @@ def solve_radial(vinput, binput, iscmeinput, model_time, rrel, params,
         u_dn = v[:-1].copy()
 
         # Do a single model time step
-        if accel_limit:
-            u_up_next = _upwind_step_accel_limit(u_up, u_dn, dtdr, alpha, r_accel, rrel)
-        else:
-            u_up_next = _upwind_step_(u_up, u_dn, dtdr, alpha, r_accel, rrel)
+        u_up_next = _upwind_step_(u_up, u_dn, dtdr, alpha, r_accel, rrel)
 
         # Save the updated time step
         v[1:] = u_up_next.copy()
@@ -1876,51 +1869,6 @@ def _upwind_step_(v_up, v_dn, dtdr, alpha, r_accel, rrel):
 
 
 @jit(nopython=True)
-def _upwind_step_accel_limit(v_up, v_dn, dtdr, alpha, r_accel, rrel):
-    """
-    Compute the next step in the upwind scheme of Burgers equation with added acceleration of the
-    solar wind. Here, no acceleration is applied to speeds above 650 km/s
-    Args:
-        v_up: A numpy array of the upwind radial values. Units of km/s.
-        v_dn: A numpy array of the downwind radial values. Units of km/s.
-        dtdr: Ratio of HUXts time step and radial grid step. Units of s/km.
-        alpha: Scale parameter for residual Solar wind acceleration.
-        r_accel: Spatial scale parameter of residual solar wind acceleration. Units of km.
-        rrel: The model radial grid relative to the radial inner boundary coordinate. Units of km.
-    Returns:
-         v_up_next: The upwind values at the next time step, numpy array with units of km/s.
-    """
-
-    n = len(v_dn)
-    v_up_next = np.empty(n, dtype=np.float64)
-
-    for i in range(n):
-        # compute indices for accel arguments safely
-        if i >= len(rrel) - 1:
-            continue  # skip the last point to avoid out-of-bounds
-
-        accel_arg = -rrel[i] / r_accel
-        accel_arg_p = -rrel[i + 1] / r_accel
-
-        # Upwind scheme
-        v_up_next[i] = v_up[i] - dtdr * v_up[i] * (v_up[i] - v_dn[i])
-
-        # Acceleration factor
-        denom = 1.0 + alpha * (1.0 - np.exp(accel_arg))
-        v_source = v_dn[i] / denom
-
-        # Residual acceleration
-        v_diff = 0.0
-        if v_source < 650.0:
-            v_diff = alpha * v_source * (np.exp(accel_arg) - np.exp(accel_arg_p))
-
-        # Add residual acceleration to the upwind step
-        v_up_next[i] += v_dn[i] * dtdr * v_diff
-
-    return v_up_next
-
-
-@jit(nopython=True)
 def _is_in_cme_boundary_(r_boundary, lon, lat, time, cme_params):
     """
     Check whether a given lat, lon point on the inner boundary is within a given CME.
@@ -2018,7 +1966,6 @@ def load_HUXt_run(filepath):
         nlon = lon.size
         frame = data['frame'][()].decode("utf-8")
         track_cmes = bool(data['track_cmes'][()])
-        accel_limit = bool(data['accel_limit'][()])
         track_b = bool(data['track_b'][()])
         track_streak = bool(data['track_streak'][()])
 
@@ -2034,14 +1981,13 @@ def load_HUXt_run(filepath):
                              r_min=r.min(), r_max=r.max(),
                              lon_out=lon, simtime=simtime,
                              dt_scale=dt_scale, latitude=lat, frame=frame,
-                             track_cmes=track_cmes, accel_limit=accel_limit)
+                             track_cmes=track_cmes)
             elif nlon > 1:
                 model = HUXt(v_boundary=v_boundary, cr_num=cr_num, cr_lon_init=cr_lon_init,
                              r_min=r.min(), r_max=r.max(),
                              lon_start=lon.min(), lon_stop=lon.max(),
                              simtime=simtime, dt_scale=dt_scale,
-                             latitude=lat, frame=frame, track_cmes=track_cmes,
-                             accel_limit=accel_limit)
+                             latitude=lat, frame=frame, track_cmes=track_cmes)
         elif track_b:
             if nlon == 1:
                 model = HUXt(v_boundary=v_boundary, b_boundary=b_boundary, cr_num=cr_num,
@@ -2049,15 +1995,14 @@ def load_HUXt_run(filepath):
                              r_min=r.min(), r_max=r.max(),
                              lon_out=lon, simtime=simtime,
                              dt_scale=dt_scale, latitude=lat, frame=frame,
-                             track_cmes=track_cmes, accel_limit=accel_limit)
+                             track_cmes=track_cmes)
             elif nlon > 1:
                 model = HUXt(v_boundary=v_boundary, b_boundary=b_boundary, cr_num=cr_num,
                              cr_lon_init=cr_lon_init,
                              r_min=r.min(), r_max=r.max(),
                              lon_start=lon.min(), lon_stop=lon.max(),
                              simtime=simtime, dt_scale=dt_scale,
-                             latitude=lat, frame=frame, track_cmes=track_cmes,
-                             accel_limit=accel_limit)
+                             latitude=lat, frame=frame, track_cmes=track_cmes)
 
         # Reset the longitudes, as when onlyt a wedge is simulated, it gets confused.
         model.lon = lon
