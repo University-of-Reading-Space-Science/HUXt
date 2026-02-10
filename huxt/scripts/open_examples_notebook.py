@@ -1,3 +1,4 @@
+"""Copy the examples notebook to the user's data directory and open in browser"""
 import shutil
 import subprocess
 import sys
@@ -20,9 +21,7 @@ def main():
 
     # Now open the copied notebook.
     print(f"Opening notebook: {nbk_out_path}")
-    subprocess.run([sys.executable, "-m", "jupyter", "lab", nbk_out_path])
-
-    return
+    subprocess.run([sys.executable, "-m", "jupyter", "lab", nbk_out_path], check=True)
 
 
 if __name__ == '__main__':

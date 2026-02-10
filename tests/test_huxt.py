@@ -1,3 +1,8 @@
+"""
+Functions for testing aspects of HUXt. It's not an exhaustive set of tests, but it does capute
+all the core functionality.
+"""
+
 import os
 
 import astropy.units as u
@@ -17,7 +22,7 @@ def test_analytic_solution():
     # Form longitudinal boundary conditions - background wind of 350 km/s.
     v_boundary = np.ones(128) * 350 * (u.km / u.s)
 
-    # Setup HUXt to do a 1-day simulation, with model output every 8 timesteps (roughly an hour time step),
+    # Setup HUXt to do a 1-day simulation, with model output every 8 timesteps
     # looking at 0 longitude
     model = H.HUXt(v_boundary=v_boundary, lon_out=0.0 * u.deg, simtime=5 * u.day, dt_scale=8)
 
@@ -25,7 +30,7 @@ def test_analytic_solution():
     cme_list = []
     model.solve(cme_list)
 
-    # Compute analytical solution from equation 5 in Owens et al. 2020
+    # Compute the analytical solution from equation 5 in Owens et al. 2020
     const = H.huxt_constants()
     alpha = const['alpha']
     rh = const['r_accel']
@@ -35,39 +40,40 @@ def test_analytic_solution():
     r0 = r[0]
     v = v0 * (1 + alpha * (1 - np.exp((r0 - r) / rh)))
 
-    # Compute fractional differnce of model solution with analytical 
+    # Compute the fractional difference of the model solution with analytical
     dv = np.abs((model.v_grid.squeeze().value - v.value) / v.value)
 
     # These differences should be less than 1e-3 in an absolute sense.
     assert np.allclose(dv, np.zeros(dv.shape), atol=1e-3)
 
-    return
-
 
 def test_time_dependent():
     """
-    Test HUXt against a reference HUXt solution for a structured solar wind inner boundary with a ConeCME addded.
-    Checks consistency of the HUXt flow field, as well as the CME tracer particle coordinates, and CME arrival 
-    time calculation.
+    Test HUXt against a reference HUXt solution for a structured solar wind inner boundary with a
+    ConeCME addded. Checks consistency of the HUXt flow field, as well as the CME tracer particle
+    coordinates, and CME arrival time calculation.
     """
 
-    v_boundary = np.ones(128) * 400 * (u.km / u.s)
-    v_boundary[30:50] = 600 * (u.km / u.s)
-    v_boundary[95:125] = 700 * (u.km / u.s)
+    kms = u.km / u.s
+    v_boundary = np.ones(128) * 400 * kms
+    v_boundary[30:50] = 600 * kms
+    v_boundary[95:125] = 700 * kms
 
     #  Add a CME
-    cme = H.ConeCME(t_launch=0.5 * u.day, longitude=0.0 * u.deg, width=30 * u.deg, v=1000 * (u.km / u.s))
+    cme = H.ConeCME(t_launch=0.5 * u.day, longitude=0.0 * u.deg, width=30 * u.deg, v=1000 * kms)
     cme_list = [cme]
 
-    #  Setup HUXt to do a 5-day simulation, with model output every 4 timesteps (roughly half and hour time step)
-    model_test = H.HUXt(v_boundary=v_boundary, cr_num=2080, cr_lon_init=180 * u.deg, simtime=5 * u.day, dt_scale=4)
+    #  Set up HUXt to do a 5-day simulation, with model output every 4 timesteps
+    model_test = H.HUXt(v_boundary=v_boundary, cr_num=2080, cr_lon_init=180 * u.deg,
+                        simtime=5 * u.day, dt_scale=4)
 
     model_test.solve(cme_list)
     cme_test = model_test.cmes[0]
 
     # Load the reference model output
     test_dir = os.path.abspath(os.path.dirname(__file__))
-    test_case_path = os.path.join(test_dir, 'reference_data', 'HUXt_CR2080_time_dependent_test_case.hdf5')
+    test_case_path = os.path.join(test_dir, 'reference_data',
+                                  'HUXt_CR2080_time_dependent_test_case.hdf5')
     model_ref, cme_list_ref = H.load_HUXt_run(test_case_path)
     cme_ref = model_ref.cmes[0]
 
@@ -78,7 +84,7 @@ def test_time_dependent():
 
     # CME tracking particles match
     test_cme_coords = []
-    for (kt, vt), (kr, vr) in zip(cme_test.coords.items(), cme_ref.coords.items()):
+    for vt, vr in zip(cme_test.coords.values(), cme_ref.coords.values()):
         test_cme_coords.append(np.allclose(vt['time'].jd, vr['time'].jd))
         test_cme_coords.append(np.allclose(vt['model_time'].value, vr['model_time'].value))
         test_cme_coords.append(np.allclose(vt['lon'].value, vr['lon'].value))
@@ -116,31 +122,28 @@ def test_time_dependent():
     assert arrival_stats_test['hit_id'] == hit_id_ref
     assert np.allclose(arrival_stats_test['t_arrive'].jd, t_arrive_ref.jd)
     assert np.allclose(arrival_stats_test['t_transit'], t_transit_ref)
-    print(lon_ref)
-    print(arrival_stats_test['lon'])
     assert np.allclose(arrival_stats_test['lon'], lon_ref)
     assert np.allclose(arrival_stats_test['r'], r_ref)
     assert np.allclose(arrival_stats_test['v'], v_ref)
 
-    return
-
 
 def test_streaklines():
     """
-    Test HUXt against a reference HUXt solution for a structured solar wind inner boundary with a ConeCME addded.
-    Checks consistency of the HUXt flow field, and the streakline positions
+    Test HUXt against a reference HUXt solution for a structured solar wind inner boundary with a
+    ConeCME addded. Checks consistency of the HUXt flow field, and the streakline positions.
     """
-
-    v_boundary = np.ones(128) * 400 * (u.km / u.s)
-    v_boundary[30:50] = 600 * (u.km / u.s)
-    v_boundary[95:125] = 700 * (u.km / u.s)
+    kms = u.km / u.s
+    v_boundary = np.ones(128) * 400 * kms
+    v_boundary[30:50] = 600 * kms
+    v_boundary[95:125] = 700 * kms
 
     #  Add a CME
-    cme = H.ConeCME(t_launch=0.5 * u.day, longitude=0.0 * u.deg, width=30 * u.deg, v=1000 * (u.km / u.s))
+    cme = H.ConeCME(t_launch=0.5 * u.day, longitude=0.0 * u.deg, width=30 * u.deg, v=1000 * kms)
     cme_list = [cme]
 
-    #  Setup HUXt to do a 5-day simulation, with model output every 4 timesteps (roughly half and hour time step)
-    model_test = H.HUXt(v_boundary=v_boundary, cr_num=2080, cr_lon_init=180 * u.deg, simtime=5 * u.day, dt_scale=4)
+    #  Setup HUXt to do a 5-day simulation, with model output every 4 timesteps
+    model_test = H.HUXt(v_boundary=v_boundary, cr_num=2080, cr_lon_init=180 * u.deg,
+                        simtime=5 * u.day, dt_scale=4)
 
     # trace a bunch of field lines from a range of evenly spaced Carrington longitudes
     dlon = (20 * u.deg).to(u.rad).value
@@ -151,7 +154,8 @@ def test_streaklines():
 
     # load in the test data
     test_dir = os.path.abspath(os.path.dirname(__file__))
-    test_case_path = os.path.join(test_dir, 'reference_data', 'HUXt_CR2080_streaklines_test_case.hdf5')
+    test_case_path = os.path.join(test_dir, 'reference_data',
+                                  'HUXt_CR2080_streaklines_test_case.hdf5')
     h5f = h5py.File(test_case_path, 'r')
     vgrid = np.array(h5f['v_grid'])
     streakline_particles_r = np.array(h5f['streak_particles_r'])
@@ -162,10 +166,7 @@ def test_streaklines():
 
     # only compare non-nan values of streakline positions
     mask = np.isfinite(streakline_particles_r)
-    assert np.allclose(streakline_particles_r[mask],
-                       model_test.streak_particles_r[mask].value)
-
-    return
+    assert np.allclose(streakline_particles_r[mask], model_test.streak_particles_r[mask].value)
 
 
 def test_input_mapping():
@@ -184,9 +185,10 @@ def test_input_mapping():
     vtol = 1  # % tolerance for agreement in 1-AU values of V [1]
     btol = 5  # % tolerance for agreement in 1-AU values of bpolarity [5]
 
-    v_orig = np.ones(128) * 400 * (u.km / u.s)
-    v_orig[30:50] = 600 * (u.km / u.s)
-    v_orig[95:125] = 500 * (u.km / u.s)
+    kms = u.km / u.s
+    v_orig = np.ones(128) * 400 * kms
+    v_orig[30:50] = 600 * kms
+    v_orig[95:125] = 500 * kms
 
     b_orig = np.ones(128)
     b_orig[15:75] = -1
@@ -212,16 +214,13 @@ def test_input_mapping():
     b_frac = np.nanmean(abs(model_orig.b_grid[:, -1, :] - model_new.b_grid[:, -1, :])
                         / np.nanmean(abs(model_orig.b_grid[:, -1, :])))
 
-    assert (v_frac * 100 < vtol)
-    assert (b_frac * 100 < btol)
+    assert v_frac * 100 < vtol
+    assert b_frac * 100 < btol
 
     # check the map mapping
-    # ======================
-
     test_dir = os.path.abspath(os.path.dirname(__file__))
     wsafilepath = os.path.join(test_dir, 'reference_data', '2022-02-24T22Z.wsa.gong.fits')
-    wsa_vr_map, vr_longs, vr_lats, br_map, br_longs, br_lats, cr_fits \
-        = Hin.get_WSA_maps(wsafilepath)
+    wsa_vr_map, vr_longs, vr_lats, br_map, _, _, _ = Hin.get_WSA_maps(wsafilepath)
 
     # map the map inwards
     v_map_new, b_map_new = Hin.map_vmap_inwards(wsa_vr_map, vr_lats, vr_longs,
@@ -229,7 +228,7 @@ def test_input_mapping():
 
     # extract a 128-length long profile near the equator
     neq = int(np.floor(len(vr_lats) / 2))
-    lon, dlon, nlon = H.longitude_grid()
+    lon, _, _ = H.longitude_grid()
     v_orig = np.interp(lon, vr_longs, wsa_vr_map[neq, :], period=2 * np.pi)
     v_new = np.interp(lon, vr_longs, v_map_new[neq, :], period=2 * np.pi)
     b_orig = np.interp(lon, vr_longs, br_map[neq, :], period=2 * np.pi)
@@ -250,7 +249,5 @@ def test_input_mapping():
     b_frac = np.nanmean(abs(model_orig.b_grid[:, -1, :] - model_new.b_grid[:, -1, :])
                         / np.nanmean(abs(model_orig.b_grid[:, -1, :])))
 
-    assert (v_frac * 100 < vtol)
-    assert (b_frac * 100 < btol)
-
-    return
+    assert v_frac * 100 < vtol
+    assert b_frac * 100 < btol

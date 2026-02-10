@@ -1,7 +1,13 @@
+"""
+These functions generate an offline ephemeris file for use with HUXt. This file needs to be
+updated periodically to ensure that the model is up to date with the latest solar system
+ephemeris data.
+"""
+import datetime
+
 from astropy.time import Time
 import astropy.units as u
 import astropy.coordinates as acoords
-import datetime
 import h5py
 import numpy as np
 import requests
@@ -11,7 +17,8 @@ from huxt import huxt as h
 
 
 def get_naif_body_codes_dict():
-    """ Return a dictionary with the names and naif codes of bodies that can be looked up in Horizons for use in
+    """ Return a dictionary with the names and naif codes of bodies that can be looked up in
+    Horizons for use in
     generating an offline ephemeris for HUXt."""
 
     bodies = {'PSP': -96,
@@ -46,12 +53,13 @@ def zerototwopi(angles):
 
 def main():
     """
-    This function uses SunPy's JPL Horizons integration to generate an ephemeris file for use with HUXt. This enables
-    using HUXt offline. The ephemeris includes the planets out to Saturn, and has a 6-hour cadence. It also includes
-    the ephemeris for ACE, STEREO-A, STEREO-B, Parker Solar Probe, and Solar Orbiter, at 3-hour cadence. JPL Horizons
-    only provides ephemeris data for ACE and STEREO-A for a short window ahead (roughly 70 days and 100 days,
-    respectively). So the ephemeris file will need periodically updating if HUXt is going to be used for case studies
-    of new events or for forecasting.
+    This function uses SunPy's JPL Horizons integration to generate an ephemeris file for use
+    with HUXt. This enables using HUXt offline. The ephemeris includes the planets out to
+    Saturn and has a 6-hour cadence. It also includes the ephemeris for ACE, STEREO-A,
+    STEREO-B, Parker Solar Probe, and Solar Orbiter, at 3-hour cadence. JPL Horizons only
+    provides ephemeris data for ACE and STEREO-A for a short window ahead (roughly 70 days and
+    100 days, respectively). So the ephemeris file will need periodically updating if HUXt is
+    going to be used for case studies of new events or for forecasting.
     Returns:
 
     """
@@ -71,7 +79,7 @@ def main():
         t_stop = Time('2029-01-01T00:00:00').to_datetime()
         if body == 'STA':
             t_start = Time('2007-01-01T00:00:00')
-            t_stop = get_STA_latest_horizons_date()
+            t_stop = get_sta_latest_horizons_date()
         elif body == 'STB':
             t_start = Time('2007-01-01T00:00:00')
             t_stop = Time('2024-10-25T00:00:00').to_datetime()
@@ -81,7 +89,7 @@ def main():
             t_start = Time('2020-02-11T00:00:00')
         elif body == 'ACE':
             t_start = Time('2006-07-03T00:00:00')
-            t_stop = get_ACE_latest_horizons_date()
+            t_stop = get_ace_latest_horizons_date()
         elif body == 'ULYSSES':
             t_start = Time('1990-10-7T00:00:00')
             t_stop = Time('2009-06-29T00:00:00')
@@ -98,39 +106,42 @@ def main():
             coord_group.create_dataset('time', data=body_coords.obstime.jd)
 
             if coord_sys == 'CARR':
-                this_coord = body_coords.transform_to(coords.HeliographicCarrington(observer="self"))
+                state = body_coords.transform_to(coords.HeliographicCarrington(observer="self"))
             elif coord_sys == 'HEEQ':
-                this_coord = body_coords.transform_to(coords.HeliographicStonyhurst())
+                state = body_coords.transform_to(coords.HeliographicStonyhurst())
             elif coord_sys == 'HAE':
-                this_coord = body_coords.transform_to(acoords.HeliocentricMeanEcliptic())
+                state = body_coords.transform_to(acoords.HeliocentricMeanEcliptic())
 
             if coord_sys == 'HAE':
-                rad = coord_group.create_dataset('radius', data=this_coord.distance.to(u.km).value)
+                rad = coord_group.create_dataset('radius', data=state.distance.to(u.km).value)
             else:
-                rad = coord_group.create_dataset('radius', data=this_coord.radius.to(u.km).value)
+                rad = coord_group.create_dataset('radius', data=state.radius.to(u.km).value)
 
             rad.attrs['unit'] = u.km.to_string()
-            lon = coord_group.create_dataset('longitude', data=np.rad2deg(zerototwopi(this_coord.lon.radian)))
+            lon = coord_group.create_dataset('longitude',
+                                             data=np.rad2deg(zerototwopi(state.lon.radian)))
             lon.attrs['unit'] = u.deg.to_string()
-            lat = coord_group.create_dataset('latitude', data=np.rad2deg(this_coord.lat.radian))
+            lat = coord_group.create_dataset('latitude', data=np.rad2deg(state.lat.radian))
             lat.attrs['unit'] = u.deg.to_string()
 
             ephem.flush()
 
     ephem.close()
-    return
 
 
-def get_STA_latest_horizons_date():
+def get_sta_latest_horizons_date():
     """
-    This function queries JPL Horizons to find the current latest available date of ephemeris data for STEREO-A.
-    Typically, JPL Horizons only has 3-4 months of planned predicted ephemeris data for STEREO-A
+    This function queries JPL Horizons to find the current latest available date of ephemeris
+    data for STEREO-A. Typically, JPL Horizons only has 3-4 months of planned predicted ephemeris
+    data for STEREO-A
     """
-    # In the query, -234 is the NAIF code of STEREO-A. This query URL was given in an email exchange with JPL Horizons
-    # by Jon Giorgini.
-    query = "https://ssd.jpl.nasa.gov/api/horizons.api?format=text&OBJ_DATA='YES'&MAKE_EPHEM='NO'&COMMAND='-234'"
+    # In the query, -234 is the NAIF code of STEREO-A. This query URL was given in an email
+    # exchange with JPL Horizons by Jon Giorgini.
+    query = ("https://ssd.jpl.nasa.gov/api/"
+             "horizons.api?format=text&OBJ_DATA='YES'&MAKE_EPHEM='NO'&COMMAND='-234'")
     response = requests.get(query)
-    # This response is some paragraphs and a table. We want the date in the bottom right corner of the table.
+    # This response is some paragraphs and a table. We want the date in the bottom right corner
+    # of the table.
     lines = response.text.split("\n")
     final_line = lines[-3].split()
     final_date = final_line[-1]
@@ -141,16 +152,19 @@ def get_STA_latest_horizons_date():
     return ephemeris_date_limit
 
 
-def get_ACE_latest_horizons_date():
+def get_ace_latest_horizons_date():
     """
-    This function queries JPL Horizons to find the current latest available date of ephemeris data for ACE.
-    Typically, JPL Horizons only has 2-3 months of planned predicted ephemeris data for ACE
+    This function queries JPL Horizons to find the current latest available date of ephemeris
+    data for ACE. Typically, JPL Horizons only has 2-3 months of planned predicted ephemeris data
+    for ACE
     """
-    # In the query, -92 is the NAIF code of ACE. This query URL was given in an email exchange with JPL Horizons
-    # by Jon Giorgini.
-    query = "https://ssd.jpl.nasa.gov/api/horizons.api?format=text&OBJ_DATA='YES'&MAKE_EPHEM='NO'&COMMAND='-92'"
+    # In the query, -92 is the NAIF code of ACE. This query URL was given in an email exchange
+    # with JPL Horizons by Jon Giorgini.
+    query = ("https://ssd.jpl.nasa.gov/api/"
+             "horizons.api?format=text&OBJ_DATA='YES'&MAKE_EPHEM='NO'&COMMAND='-92'")
     response = requests.get(query)
-    # This response is some paragraphs and a table. We want the date in the bottom right corner of the table.
+    # This response is some paragraphs and a table. We want the date in the bottom right corner
+    # of the table.
     lines = response.text.split("\n")
     final_line = lines[-3].split()
     final_date = final_line[-1]

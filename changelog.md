@@ -1,4 +1,19 @@
 # HUXt Changelog
+# V5.0.2
+## Bug Fixes
+- Fixed a bug in `huxt.load_HUXt_run()`, where the CME label was not being correctly loaded. See 
+  issue 26.
+## Breaking changes
+- The `bgrid_Carr` argument in `huxt_inputs.set_time_dependent_boundary()` has been renamed to 
+  `bgrid_carr`.
+## Additions
+- The code has been linted and the documentation has been tidied up. 
+- `pyhdf` dependency has been removed.
+
+# V5.0.1
+## Bug Fixes
+- v5.0.0 had very tightly pinned dependencies that was going to cause trouble keeping the 
+environment up to date. This version just makes this more flexible.
 
 # V5.0.0
 ## Additions

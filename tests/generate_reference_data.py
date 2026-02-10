@@ -1,7 +1,11 @@
-import h5py
+"""
+Functions to generate reference data for testing.
+"""
+
 import os
 import shutil
 
+import h5py
 import numpy as np
 import astropy.units as u
 
@@ -10,20 +14,23 @@ import huxt.huxt as h
 
 def make_time_dependent_test_data():
     """
-    Generate a HUXt simulation with time dependent inner boundary and a Cone CME. Save these data (and CME arrival
-    statistics) into data/reference_data to serve as reference cases in the test suite.
+    Generate a HUXt simulation with time dependent inner boundary and a Cone CME. Save these data
+    (and CME arrival statistics) into data/reference_data to serve as reference cases in the test
+    suite.
     Returns:
     """
-    v_boundary = np.ones(128) * 400 * (u.km / u.s)
-    v_boundary[30:50] = 600 * (u.km / u.s)
-    v_boundary[95:125] = 700 * (u.km / u.s)
+    kms = u.km / u.s
+    v_boundary = np.ones(128) * 400 * kms
+    v_boundary[30:50] = 600 * kms
+    v_boundary[95:125] = 700 * kms
 
     #  Add a CME
-    cme = h.ConeCME(t_launch=0.5 * u.day, longitude=0.0 * u.deg, width=30 * u.deg, v=1000 * (u.km / u.s))
+    cme = h.ConeCME(t_launch=0.5 * u.day, longitude=0.0 * u.deg, width=30 * u.deg, v=1000 * kms)
     cme_list = [cme]
 
-    #  Setup HUXt to do a 5-day simulation, with model output every 4 timesteps (roughly half and hour time step)
-    model_test = h.HUXt(v_boundary=v_boundary, cr_num=2080, cr_lon_init=180 * u.deg, simtime=5 * u.day, dt_scale=4)
+    #  Setup HUXt to do a 5-day simulation, with model output every 4 timesteps
+    model_test = h.HUXt(v_boundary=v_boundary, cr_num=2080, cr_lon_init=180 * u.deg,
+                        simtime=5 * u.day, dt_scale=4)
 
     model_test.solve(cme_list)
     cme_test = model_test.cmes[0]
@@ -57,26 +64,26 @@ def make_time_dependent_test_data():
 
     cme_out.close()
 
-    return
-
 
 def make_streakline_test_data():
     """
-    Generate a HUXt simulation with time dependent inner boundary and a Cone CME, and a set of streaklines.
-    Save these data into data/reference_data to serve as reference cases in the test suite.
+    Generate a HUXt simulation with time dependent inner boundary and a Cone CME, and a set of
+    streaklines. Save these data into data/reference_data to serve as reference cases in the test
+    suite.
     Returns:
     """
-
-    v_boundary = np.ones(128) * 400 * (u.km / u.s)
-    v_boundary[30:50] = 600 * (u.km / u.s)
-    v_boundary[95:125] = 700 * (u.km / u.s)
+    kms = u.km / u.s
+    v_boundary = np.ones(128) * 400 * kms
+    v_boundary[30:50] = 600 * kms
+    v_boundary[95:125] = 700 * kms
 
     #  Add a CME
-    cme = h.ConeCME(t_launch=0.5 * u.day, longitude=0.0 * u.deg, width=30 * u.deg, v=1000 * (u.km / u.s))
+    cme = h.ConeCME(t_launch=0.5 * u.day, longitude=0.0 * u.deg, width=30 * u.deg, v=1000 * kms)
     cme_list = [cme]
 
-    #  Setup HUXt to do a 5-day simulation, with model output every 4 timesteps (roughly half and hour time step)
-    model_test = h.HUXt(v_boundary=v_boundary, cr_num=2080, cr_lon_init=180 * u.deg, simtime=5 * u.day, dt_scale=4)
+    #  Setup HUXt to do a 5-day simulation, with model output every 4 timesteps
+    model_test = h.HUXt(v_boundary=v_boundary, cr_num=2080, cr_lon_init=180 * u.deg,
+                        simtime=5 * u.day, dt_scale=4)
 
     # trace a bunch of field lines from a range of evenly spaced Carrington longitudes
     dlon = (20 * u.deg).to(u.rad).value
@@ -93,8 +100,6 @@ def make_streakline_test_data():
 
     # Copy the file over to the test data
     shutil.copy(src_file_path, dst_file_path)
-
-    return
 
 
 if __name__ == '__main__':
