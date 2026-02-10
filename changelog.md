@@ -6,6 +6,7 @@
 ## Breaking changes
 - The `bgrid_Carr` argument in `huxt_inputs.set_time_dependent_boundary()` has been renamed to 
   `bgrid_carr`.
+- The `accel_limit` feature in huxt has been removed as it was found to be not useful.
 ## Additions
 - The code has been linted and the documentation has been tidied up. 
 - `pyhdf` dependency has been removed.
