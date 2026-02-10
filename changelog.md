@@ -13,7 +13,7 @@
 
 # V5.0.1
 ## Bug Fixes
-- v5.0.0 had very tightly pinned dependencies that was going to cause trouble keeping the 
+- v5.0.0 had very tightly pinned dependancies that was going to cause trouble keeping the 
 environment up to date. This version just makes this more flexible.
 
 # V5.0.0
