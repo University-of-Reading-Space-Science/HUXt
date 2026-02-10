@@ -5,6 +5,7 @@ import astropy.units as u
 import matplotlib
 matplotlib.use('TkAgg')  # Set backend explicitly for Windows
 import matplotlib.pyplot as plt
+import matplotlib.dates as mdates
 import datetime
 import os
 import huxt.huxt as H
@@ -155,7 +156,15 @@ ax[1].set_ylabel(r'Density [cm$^-3$]')
 ax[2].plot(ts_pcm['time'], ts_pcm['T']/10**5, 'b')
 ax[2].plot(ts_plm['time'], ts_plm['T']/10**5, 'r')
 ax[2].set_ylabel(r'Temperature [$10^5$ K]')
-ax[2].set_xlabel('Time (days)')
+
+# Format x-axis with DD-MM format
+date_format = mdates.DateFormatter('%d-%m')
+ax[2].xaxis.set_major_formatter(date_format)
+ax[2].xaxis.set_major_locator(mdates.DayLocator(interval=2))
+
+# Get the year from the first time point
+year = ts_pcm['time'][0].year
+ax[2].set_xlabel(f'Date of {year}')
 
 plt.tight_layout()
 
