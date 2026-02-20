@@ -174,7 +174,7 @@ def plot(model, time, save=False, tag='', fighandle=np.nan, axhandle=np.nan, min
             label = label + '\n ' + (model.time_init + time).strftime('%Y-%m-%d %H:%M')
             ax.text(0.98, -0.01, label, fontsize=15, transform=ax.transAxes, horizontalalignment='right')
     
-            label = "HUXt2D \nLat: {:3.0f} deg".format(model.latitude.to(u.deg).value)
+            label = "SURF-HUXt \nLat: {:3.0f} deg".format(model.latitude.to(u.deg).value)
             ax.text(0.02, -0.01, label, fontsize=15, transform=ax.transAxes,)
 
         # plot any tracked streaklines
@@ -237,7 +237,7 @@ def plot(model, time, save=False, tag='', fighandle=np.nan, axhandle=np.nan, min
 
     if save:
         cr_num = np.int32(model.cr_num.value)
-        filename = "HUXt_CR{:03d}_{}_frame_{:03d}.png".format(cr_num, tag, id_t)
+        filename = "SURF-HUXt_CR{:03d}_{}_frame_{:03d}.png".format(cr_num, tag, id_t)
         figure_dir = get_figure_dir()
         filepath = figure_dir.joinpath(filename)
         fig.savefig(filepath)
@@ -549,7 +549,7 @@ def plot_compressible(model, time, save=False, tag='', fighandle=np.nan, minimal
 
         # Add colorbars below each plot
         for i, (ax, cnt, label, ticks) in enumerate([
-            (axes[0], cnt_v, r"$V_{SW}$ [km/s]", np.arange(vmin, vmax, dv * 10)),
+            (axes[0], cnt_v, r"$V_{SW}$ [km/s]", [200, 400, 600, 800]),
             (axes[1], cnt_n, r"$\log_{10}(n)$ [protons/cm³]", np.arange(nmin, nmax, 1.0)),
             (axes[2], cnt_T, r"$\log_{10}(T)$ [K]", np.arange(Tmin, Tmax, 0.5))
         ]):
@@ -609,8 +609,20 @@ def plot_compressible(model, time, save=False, tag='', fighandle=np.nan, minimal
         # Draw each observer label
         current_x = content_start_x
         for i, body in enumerate(observers_list):
-            # Add colored circle marker
-            fig.text(current_x + 0.0075, label_y, '●', fontsize=18, 
+            # Map marker types to display characters dynamically
+            marker_type = styles[body]['marker']
+            marker_map = {
+                'o': ('●', 18),      # circle
+                '^': ('▲', 16),      # triangle up
+                'x': ('✕', 16),      # cross
+                'v': ('▼', 16),      # triangle down
+                's': ('■', 16),      # square
+                '+': ('+', 18),      # plus
+                '*': ('★', 18),      # star
+            }
+            marker_char, marker_size = marker_map.get(marker_type, ('●', 18))
+            
+            fig.text(current_x + 0.0075, label_y, marker_char, fontsize=marker_size, 
                     color=styles[body]['color'], 
                     horizontalalignment='center', verticalalignment='center', zorder=11)
             # Add body name - darker and bolder for visibility
@@ -627,16 +639,14 @@ def plot_compressible(model, time, save=False, tag='', fighandle=np.nan, minimal
         pos_right = axes[2].get_position()
         
         # Add time label at top right, aligned with right edge of right panel
-        # Reduced spacing from +0.10 to +0.05 to reduce whitespace
-        time_label = "{:3.2f} days | ".format(model.time_out[id_t].to(u.day).value)
-        time_label = time_label + (model.time_init + time).strftime('%Y-%m-%d %H:%M')
-        fig.text(pos_right.x1, pos_right.y1 + 0.05, time_label, fontsize=15, fontweight='bold',
+        time_label = "{:3.2f} days".format(model.time_out[id_t].to(u.day).value)
+        #time_label = time_label +  " | " + (model.time_init + time).strftime('%Y-%m-%d %H:%M')
+        fig.text(pos_right.x1, pos_right.y1 + 0.01, time_label, fontsize=15, fontweight='bold',
                 horizontalalignment='right', verticalalignment='bottom')
         
         # Add model info at top left, aligned with left edge of left panel
-        # Reduced spacing from +0.10 to +0.05 to reduce whitespace
-        model_label = "HUXt2D Compressible | Lat: {:3.0f}°".format(model.latitude.to(u.deg).value)
-        fig.text(pos_left.x0, pos_left.y1 + 0.05, model_label, fontsize=16, fontweight='bold',
+        model_label = "SURF-hydro | Lat: {:3.0f}°".format(model.latitude.to(u.deg).value)
+        fig.text(pos_left.x0, pos_left.y1 + 0.01, model_label, fontsize=16, fontweight='bold',
                 horizontalalignment='left', verticalalignment='bottom')
 
     if plot_rmax:
@@ -645,7 +655,7 @@ def plot_compressible(model, time, save=False, tag='', fighandle=np.nan, minimal
 
     if save:
         cr_num = np.int32(model.cr_num.value)
-        filename = "HUXt_compressible_CR{:03d}_{}_frame_{:03d}.png".format(cr_num, tag, id_t)
+        filename = "SURF-hydro_CR{:03d}_{}_frame_{:03d}.png".format(cr_num, tag, id_t)
         figure_dir = get_figure_dir()
         filepath = figure_dir.joinpath(filename)
         fig.savefig(filepath, dpi=150, bbox_inches='tight')
@@ -908,7 +918,7 @@ def plot_compressible_with_ts(model, time, save=False, tag='', fighandle=np.nan,
             
     if annotateplot:
         # Add model and time labels to main figure
-        model_label = "HUXt2D Compressible | Lat: {:3.0f}°".format(model.latitude.to(u.deg).value)
+        model_label = "SURF-hydro | Lat: {:3.0f}°".format(model.latitude.to(u.deg).value)
         fig.text(0.02, 0.98, model_label, fontsize=16, fontweight='bold',
                 ha='left', va='top', transform=fig.transFigure)
         
@@ -1303,9 +1313,12 @@ def plot_timeseries(model, radius, lon, save=False, tag=''):
     fig.subplots_adjust(left=0.1, bottom=0.1, right=0.95, top=0.95)
 
     # Add label
-    radius_label = " Radius: {:3.2f}".format(r_out) + "$R_{sun}$ "
-    lon_label = " Longitude: {:3.2f}".format(lon_out) + "$^\\circ$"
-    label = "HUXt" + radius_label + lon_label
+    #radius_label = " Radius: {:3.2f}".format(r_out) + "$R_{sun}$ "
+    #lon_label = " Longitude: {:3.2f}".format(lon_out) + "$^\\circ$"
+    if is_compressible:
+        label = "SURF-hydro" #+ radius_label #+ lon_label
+    else:   
+        label = "SURF-HUXt" #+ radius_label #+ lon_label
     if is_compressible:
         axes[0].set_title(label, fontsize=20)
     else:
@@ -1538,7 +1551,7 @@ def get_HUXt_at_position_HEEQ(model, target_mjd, target_r, target_lon_heeq):
     return time_series
 
 
-def plot_earth_timeseries(model, plot_omni=True, save=False, tag=''):
+def plot_earth_timeseries(model, plot_omni=True, save=False, tag='', timefromrunstart='False'):
     """
     A function to plot the HUXt Earth time series. With option to download and plot OMNI data.
     For compressible models, also plots density and temperature.
@@ -1547,6 +1560,7 @@ def plot_earth_timeseries(model, plot_omni=True, save=False, tag=''):
         plot_omni: Boolean, if True downloads and plots OMNI data
         save: Boolean, if True saves plot
         tag: String, tag string to append to the plot title
+        timefromrunstart: String 'True'/'False', if 'True' plots against time from run start in days
     Returns:
         fig : Figure handle
         axs : Axes handles
@@ -1564,43 +1578,53 @@ def plot_earth_timeseries(model, plot_omni=True, save=False, tag=''):
     if is_compressible:
         n_panels += 2  # Add density and temperature panels
         
-    fig, axs = plt.subplots(n_panels, 1, figsize=(14, 4 * n_panels))
+    fig, axs = plt.subplots(n_panels, 1, figsize=(14, 3 * n_panels))
     if n_panels == 1:
         axs = np.array([axs])
+
+    #instead of plotting against absolute time, plot against time from start of model run (i.e. t=0 at model start time)
+    if timefromrunstart == 'True':
+        times = model.time_out.to(u.day).value
+        plot_omni = False
+    else:
+        times = huxt_ts['time']
     
     # Velocity panel (always first)
     panel_idx = 0
     if is_compressible:
-        axs[panel_idx].plot(huxt_ts['time'], huxt_ts['vsw'], 'r', label='SHUXt')
+        axs[panel_idx].plot(times, huxt_ts['vsw'], 'r', label='SURF-hydro')
     else:
-        axs[panel_idx].plot(huxt_ts['time'], huxt_ts['vsw'], 'r', label='HUXt')
+        axs[panel_idx].plot(times, huxt_ts['vsw'], 'r', label='SURF-HUXt')
     axs[panel_idx].set_ylim(250, 1000)
-    axs[panel_idx].set_ylabel('Solar Wind Speed (km/s)')
+    axs[panel_idx].set_ylabel('V [km/s]')
     
     # B polarity panel (if available)
     if hasattr(model, 'b_grid'):
         panel_idx += 1
-        axs[panel_idx].plot(huxt_ts['time'], np.sign(huxt_ts['bpol']), 'r.', label='SHUXt')
-        axs[panel_idx].set_ylabel('B polarity')
+        if is_compressible:
+            axs[panel_idx].plot(times, np.sign(huxt_ts['bpol']), 'r.', label='SURF-hydro')
+        else:
+            axs[panel_idx].plot(times, np.sign(huxt_ts['bpol']), 'r.', label='SURF-HUXt')
+        axs[panel_idx].set_ylabel(r'B$_{\text{POL}}$')
     
     # Density panel (if compressible)
     if is_compressible and 'n' in huxt_ts.columns:
         panel_idx += 1
-        axs[panel_idx].semilogy(huxt_ts['time'], huxt_ts['n'], 'r-', label='SHUXt')
-        axs[panel_idx].set_ylabel('n (protons/cm³)')
-        axs[panel_idx].set_ylim(0.1, 1000)
+        axs[panel_idx].semilogy(times, huxt_ts['n'], 'r-', label='SURF-hydro')
+        axs[panel_idx].set_ylabel(r'n$_\text{P}$ [cm$^{-3}$]')
+        axs[panel_idx].set_ylim(0.101, 999)
         axs[panel_idx].grid(True, alpha=0.3)
     
     # Temperature panel (if compressible)
     if is_compressible and 'T' in huxt_ts.columns:
         panel_idx += 1
-        axs[panel_idx].semilogy(huxt_ts['time'], huxt_ts['T'], 'r-', label='SHUXt')
-        axs[panel_idx].set_ylabel('T (K)')
-        axs[panel_idx].set_ylim(1e4, 1e7)
+        axs[panel_idx].semilogy(times, huxt_ts['T'], 'r-', label='SURF-hydro')
+        axs[panel_idx].set_ylabel(r'T [K]')
+        axs[panel_idx].set_ylim(1e4, 9.9e6)
         axs[panel_idx].grid(True, alpha=0.3)
 
-    starttime = huxt_ts['time'][0]
-    endtime = huxt_ts['time'][len(huxt_ts) - 1]
+    starttime = times[0]
+    endtime = times[len(times) - 1]
 
     if plot_omni:
         # grab the omni data
@@ -1647,9 +1671,12 @@ def plot_earth_timeseries(model, plot_omni=True, save=False, tag=''):
     # Only last panel gets x-label
     for i in range(len(axs) - 1):
         axs[i].set_xticklabels([])
-    axs[-1].set_xlabel('Date')
+    if timefromrunstart == 'True':
+        axs[-1].set_xlabel('Time from run start (days)')
+    else:
+        axs[-1].set_xlabel('Date')
 
-    fig.subplots_adjust(left=0.07, bottom=0.08, right=0.99, top=0.97, hspace=0.05)
+    fig.subplots_adjust(left=0.09, bottom=0.08, right=0.99, top=0.97, hspace=0.05)
 
     if save:
         cr_num = np.int32(model.cr_num.value)
@@ -2527,12 +2554,12 @@ def observer_styles():
               'MARS': {'marker': 'o', 'color': 'lightcoral'},
               'JUPITER': {'marker': 'o', 'color': 'darkorange'},
               'SATURN': {'marker': 'o', 'color': 'moccasin'},
-              'ACE': {'marker': '^', 'color': 'tab:gray'},
-              'STA': {'marker': '^', 'color': 'tab:red'},
-              'STB': {'marker': '^', 'color': 'tab:cyan'},
-              'PSP': {'marker': '^', 'color': 'tab:orange'},
-              'SOLO': {'marker': '^', 'color': 'tab:pink'},
-              'ULYSSES': {'marker': '^', 'color': 'tab:brown'}}
+              'ACE': {'marker': 'P', 'color': 'tab:gray'},
+              'STA': {'marker': 'P', 'color': 'tab:red'},
+              'STB': {'marker': 'P', 'color': 'tab:cyan'},
+              'PSP': {'marker': 'P', 'color': 'tab:orange'},
+              'SOLO': {'marker': 'P', 'color': 'tab:pink'},
+              'ULYSSES': {'marker': 'P', 'color': 'tab:brown'}}
 
     return styles
 

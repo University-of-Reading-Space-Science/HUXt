@@ -19,7 +19,7 @@ v_boundary = 400 * np.ones(128) * (u.km/u.s)
 v_boundary[30:50] = 600 * (u.km/u.s)  # Fast stream
 v_boundary[80:100] = 350 * (u.km/u.s)  # Slow stream
 
-print("\n1. Running pre-JIT execution...")
+# Test 1: SPin up
 t_start = time.time()
 model_serial = HUXt(
     v_boundary=v_boundary,
@@ -29,14 +29,14 @@ model_serial = HUXt(
     dt_scale=4,
     frame='synodic',
     parallel=False,  # Serial
-    solver = solver
+    solver = solver,
+    lon_out=0.0*u.rad, track_cmes=False  # Disable tracking for fair comparison
 )
 model_serial.solve(cme_list=[])
 t_serial = time.time() - t_start
 print(f"   Pre-JIT execution time: {t_serial:.2f} seconds")
 
-# Test 1: Serial execution
-print("\n1. Running SERIAL execution in 1D...")
+# Test 1: 1d serial
 t_start = time.time()
 model_serial = HUXt(
     v_boundary=v_boundary,
@@ -52,12 +52,26 @@ model_serial = HUXt(
 model_serial.solve(cme_list=[])
 t_serial = time.time() - t_start
 
-
-print(f"   Serial execution time: {t_serial:.2f} seconds")
+print(f"   Serial 1d execution time: {t_serial:.2f} seconds")
 print(f"   nlon: {model_serial.nlon:.2f}")
 
+# Test 1: SPin up
+t_start = time.time()
+model_serial = HUXt(
+    v_boundary=v_boundary,
+    cr_num=2050,
+    cr_lon_init=0 * u.deg,
+    simtime=5 * u.day,
+    dt_scale=4,
+    frame='synodic',
+    parallel=False,  # Serial
+    solver = solver,  
+)
+model_serial.solve(cme_list=[])
+t_serial = time.time() - t_start
+
+
 # Test 1: Serial execution
-print("\n1. Running SERIAL execution...")
 t_start = time.time()
 model_serial = HUXt(
     v_boundary=v_boundary,
@@ -74,11 +88,10 @@ model_serial.solve(cme_list=[])
 t_serial = time.time() - t_start
 
 
-print(f"   Serial execution time: {t_serial:.2f} seconds")
+print(f"   Serial 2d execution time: {t_serial:.2f} seconds")
 print(f"   nlon: {model_serial.nlon:.2f}")
 
 # Test 2: Parallel execution
-print("\n2. Running PARALLEL execution...")
 t_start = time.time()
 model_parallel = HUXt(
     v_boundary=v_boundary,
@@ -93,7 +106,7 @@ model_parallel = HUXt(
 )
 model_parallel.solve(cme_list=[])
 t_parallel = time.time() - t_start
-print(f"   Parallel execution time: {t_parallel:.2f} seconds")
+print(f"   Parallel 2d execution time: {t_parallel:.2f} seconds")
 print(f"   nlon: {model_parallel.nlon:.2f}")
 print(f"   Speedup factor: {t_serial/t_parallel:.2f}x")
 

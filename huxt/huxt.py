@@ -644,7 +644,7 @@ class HUXt:
         compressible_solvers = ['hllc', 'hll', 'roe', 'rusanov']
         if base_solver in compressible_solvers:
             riemann_names = {'hllc': 'HLLC', 'hll': 'HLL', 'roe': 'Roe', 'rusanov': 'Rusanov'}
-            print(f"[OK] {riemann_names[base_solver]} Riemann solver (HUXt-native) available")
+            #print(f"[OK] {riemann_names[base_solver]} Riemann solver (HUXt-native) available")
         
         self.solver = solver
         
@@ -1324,7 +1324,7 @@ class HUXt:
                     for irot in range(n_rots):
                         streak_name = f'streak_{istreak}_rot_{irot}'
                         if streak_name in groups:
-                            # Compressible solver returns 1D trajectory arrays (already converted in solve_radial_compressible)
+                            # Compressible solver returns 1D trajectory arrays (already converted in Riemann solver)
                             r_traj = groups[streak_name]['r']
                             t_traj = groups[streak_name]['t']
                             valid_mask = ~np.isnan(r_traj)
@@ -1611,20 +1611,20 @@ class HUXt:
         # ======================================================================
         # Print solver information
         # ======================================================================
-        if self.compressible:
-            import time
-            solve_start = time.time()
-            
-            print("\n" + "="*70)
-            print(f"USING COMPRESSIBLE SOLVER: {self.solver.upper()}")
-            print("="*70)
-            print(f"Riemann solver: {self.solver}")
-            print(f"Frame: {self.frame}")
-            print(f"Parallel: {self.parallel}")
-            if self.parallel:
-                print(f"\n⚠ WARNING: Parallel execution for compressible solver is typically SLOWER than serial")
-                print(f"  Recommended: Set parallel=False for better performance")
-            print("="*70 + "\n")
+        # if self.compressible:
+        #     import time
+        #     solve_start = time.time()
+        #     
+        #     print("\n" + "="*70)
+        #     print(f"USING COMPRESSIBLE SOLVER: {self.solver.upper()}")
+        #     print("="*70)
+        #     print(f"Riemann solver: {self.solver}")
+        #     print(f"Frame: {self.frame}")
+        #     print(f"Parallel: {self.parallel}")
+        #     if self.parallel:
+        #         print(f"\n⚠ WARNING: Parallel execution for compressible solver is typically SLOWER than serial")
+        #         print(f"  Recommended: Set parallel=False for better performance")
+        #     print("="*70 + "\n")
         
         # ======================================================================
         # Solve the time series at each longitude (UPWIND and COMPRESSIBLE SOLVERS)
@@ -2577,7 +2577,7 @@ def solve_radial_compressible(v_bc_kms, rho_bc_kgm3, T_bc_K, model_time, time_ou
             r_grid=r_grid_m,
             gamma=gamma,
             method=method,
-            cfl=0.7 if 'plm' in method else 0.8, # Lower CFL for PLM
+            cfl=0.6 if 'plm' in method else 0.8, # Lower CFL for PLM
             verbose=verbose
         )
     else:
