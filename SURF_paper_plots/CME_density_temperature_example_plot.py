@@ -18,10 +18,10 @@ import huxt.huxt_insitu as Hinsitu
 
 
 
-simtime = 2.2*u.day
-t_interest = 2.1*u.day
-cme_speed = 500 * u.km/u.s
-cr_lon_init = (2*np.pi -0.2)*u.rad
+simtime = 2.0*u.day
+t_interest = 1.7*u.day
+cme_speed = 800 * u.km/u.s
+cr_lon_init = (2*np.pi)*u.rad
 
 # <codecell> Upwind and compressible tests
 
@@ -94,8 +94,8 @@ print(f"Solve complete in {dt:.2f}s!")
 # now do the parameter space study
 #==================================================================
 
-n_0p1au = np.arange(300, 2501, 150)*u.cm**-3
-T_0p1au = np.arange(7e5, 2.8e6, 1.5e5)*u.K
+n_0p1au = np.arange(300, 2501, 300)*u.cm**-3
+T_0p1au = np.arange(7e5, 2.8e6, 3e5)*u.K
 
 # Create arrays to store results
 n_vals = []
@@ -124,8 +124,8 @@ for n in n_0p1au:
     for T in T_0p1au:
         cme = H.ConeCME(t_launch=0*u.day, longitude=0*u.deg, width=60*u.deg,
                         v=cme_speed, 
-                cme_density= n.to(u.m**-3) * mp * 1000,
-                cme_temperature=T,  profile_type='sinusoidal')
+                cme_density= n.to(u.m**-3) * mp * 1000, cme_temperature=T,  
+                profile_type='sinusoidal')
         
         model_plm = H.HUXt(v_boundary=vr_in,  
                                 simtime=simtime, dt_scale=4, r_max=215*u.solRad, r_min=21.5*u.solRad,
@@ -145,8 +145,12 @@ for n in n_0p1au:
             print("  CME did not arrive at 1 AU within simulation time.")
             arrival_time = np.nan * u.day
         
-        # Find maximum speed at 1 AU over entire run
-        v_max_at_1au = np.max(vcme)
+        # Find maximum speed at 1 AU within 0.2 days of the arrival time
+        if not np.isnan(arrival_time.value):
+            time_window = np.abs(time_grid - arrival_time) <= 0.2 * u.day
+            v_max_at_1au = np.max(vcme[time_window])
+        else:
+            v_max_at_1au = np.nan * u.km / u.s
         print(f"  Maximum CME speed at 1 AU: {v_max_at_1au:.1f}")
         
         # Store values
