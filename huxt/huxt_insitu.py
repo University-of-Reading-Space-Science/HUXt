@@ -1239,75 +1239,99 @@ def omniHUXt_reconstruction(start_time, end_time,
     ref_r = 215 * u.solRad
     
     # Backmap from 215 Rsun to rmin for each time step
-    # This applies both the acceleration profile AND the longitudinal shift
-    # due to solar wind transit time (~3-4 days)
+    # Use different acceleration profile for compressible solvers (same as omniHUXt_forecast)
     nlon, nt = vcarr_215.shape
     vcarr_rmin = np.zeros_like(vcarr_215.value)
     bcarr_rmin = np.zeros_like(bcarr_215)
     
-    for t in range(nt):
-        # Map both velocity and magnetic field with the same longitudinal shift
-        vcarr_rmin[:, t], bcarr_rmin[:, t] = Hin.map_v_boundary_inwards(
-            vcarr_215[:, t], 
-            ref_r, 
-            rmin,
-            b_orig=bcarr_215[:, t]
-        )
+    if solver == 'upwind':
+        for t in range(nt):
+            vcarr_rmin[:, t], bcarr_rmin[:, t] = Hin.map_v_boundary_inwards(
+                vcarr_215[:, t], 
+                ref_r, 
+                rmin,
+                b_orig=bcarr_215[:, t]
+            )
+    else:
+        for t in range(nt):
+            vcarr_rmin[:, t], bcarr_rmin[:, t] = Hin.map_v_boundary_inwards(
+                vcarr_215[:, t], 
+                ref_r, 
+                rmin,
+                b_orig=bcarr_215[:, t],
+                acc_profile='huxt', gamma=1.5
+            )
     
     # Apply CNN correction to backmapped data
     vcarr_rmin_cnn = correct_inner_vlon_cnn_onnx(vcarr_rmin)
+    
+    # For non-upwind solvers, apply post-processing (same as omniHUXt_forecast)
+    if solver != 'upwind':
+        for t in range(vcarr_rmin_cnn.shape[1]):
+            col = vcarr_rmin_cnn[:, t]
+            # smooth the series, periodic at the edges
+            col = np.convolve(col.flatten(), np.ones(5)/5, mode='same')
+            # ensure no speeds below 250
+            col[col < 250] = 250
+            vcarr_rmin_cnn[:, t] = col
     
     # Handle density and temperature for compressible solvers
     rhogrid_carr = np.nan
     tempgrid_carr = np.nan
     
     if need_compressible:
+        m_p = 1.67262192e-27  # proton mass in kg
+        r_inner = rmin.to(u.solRad).value
+        
         # Density
         if rho_source == 'speed':
-            # Use empirical relation derived from OMNI data
-            rhogrid_carr = density_from_speed(vcarr_rmin_cnn, rmin)
+            # Use empirical velocity-density relation via Parker nozzle lookup table
+            # (same approach HUXt uses internally). Pass np.nan to let HUXt auto-derive.
+            rhogrid_carr = np.nan
         elif rho_source == 'omni':
-            # Map OMNI density from ref_r (1 AU) to rmin (inner boundary)
-            # Scale UP using Parker solution: rho ∝ 1/r², so rho(0.1 AU) = rho(1 AU) × (1 AU/0.1 AU)²
-            # HUXt's compressible solver will then evolve it forward, bringing it back down
-            # Also apply longitudinal shift for solar wind transit time
-            rhogrid_carr_rmin = np.zeros_like(rhocarr_215.value)
+            # Map OMNI density from ref_r (~1 AU) to rmin using Parker nozzle solution
+            rhogrid_carr_rmin = np.zeros((nlon, nt))
             for t in range(nt):
-                # Scale density from 1 AU to inner boundary using Parker solution
-                rho_scaled = map_density_parker(rhocarr_215[:, t], ref_r, rmin)
-                # Apply longitudinal shift
-                _, rho_shifted = Hin.map_v_boundary_inwards(
-                    vcarr_215[:, t],
-                    ref_r,
-                    rmin,
-                    b_orig=rho_scaled.value
+                v_col = vcarr_215[:, t]
+                rho_col = rhocarr_215[:, t]  # kg/m^3
+                # Convert mass density to number density (cm^-3) for Parker mapping
+                n_col = (rho_col.value / m_p / 1e6) * u.cm**-3
+                # Get temperature at ref_r from empirical relation
+                _, T_col = H.get_density_temperature_from_velocity(
+                    v_col.to(u.km/u.s).value, ref_r.to(u.solRad).value, gamma=1.5
                 )
-                rhogrid_carr_rmin[:, t] = rho_shifted
+                # Map all properties from ref_r to rmin using Parker nozzle
+                _, n_new, _ = H.map_properties_parker(
+                    v_col, ref_r, rmin,
+                    n_col, T_col * u.K, gamma=1.5
+                )
+                # Convert number density back to mass density (kg/m^3)
+                rhogrid_carr_rmin[:, t] = (n_new.value * m_p * 1e6)
             rhogrid_carr = rhogrid_carr_rmin * (u.kg / u.m**3)
         else:
             raise ValueError(f"Unknown rho_source: {rho_source}. Use 'speed' or 'omni'.")
         
         # Temperature
         if temp_source == 'speed':
-            # Use empirical relation derived from OMNI data
-            tempgrid_carr = temperature_from_speed(vcarr_rmin_cnn, rmin)
+            # Use empirical velocity-temperature relation via Parker nozzle lookup table
+            # (same approach HUXt uses internally). Pass np.nan to let HUXt auto-derive.
+            tempgrid_carr = np.nan
         elif temp_source == 'omni':
-            # Map OMNI temperature from ref_r (1 AU) to rmin (inner boundary)
-            # Scale UP using Parker solution: T ∝ r^(-0.3), so T(0.1 AU) = T(1 AU) × (1 AU/0.1 AU)^0.3
-            # HUXt's compressible solver will then evolve it forward, bringing it back down
-            # Also apply longitudinal shift for solar wind transit time
-            tempgrid_carr_rmin = np.zeros_like(tcarr_215.value)
+            # Map OMNI temperature from ref_r (~1 AU) to rmin using Parker nozzle solution
+            tempgrid_carr_rmin = np.zeros((nlon, nt))
             for t in range(nt):
-                # Scale temperature from 1 AU to inner boundary using Parker solution
-                temp_scaled = map_temperature_parker(tcarr_215[:, t] * u.K, ref_r, rmin)
-                # Apply longitudinal shift
-                _, temp_shifted = Hin.map_v_boundary_inwards(
-                    vcarr_215[:, t],
-                    ref_r,
-                    rmin,
-                    b_orig=temp_scaled.value
+                v_col = vcarr_215[:, t]
+                T_col = tcarr_215[:, t]  # K
+                # Get density at ref_r from empirical relation
+                n_col, _ = H.get_density_temperature_from_velocity(
+                    v_col.to(u.km/u.s).value, ref_r.to(u.solRad).value, gamma=1.5
                 )
-                tempgrid_carr_rmin[:, t] = temp_shifted
+                # Map all properties from ref_r to rmin using Parker nozzle
+                _, _, T_new = H.map_properties_parker(
+                    v_col, ref_r, rmin,
+                    n_col * u.cm**-3, T_col, gamma=1.5
+                )
+                tempgrid_carr_rmin[:, t] = T_new.value
             tempgrid_carr = tempgrid_carr_rmin * u.K
         else:
             raise ValueError(f"Unknown temp_source: {temp_source}. Use 'speed' or 'omni'.")
