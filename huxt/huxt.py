@@ -593,9 +593,8 @@ class HUXt:
             track_cmes: Boolean flag to determine if CMEs are tracked at run time (small speed reduction).
             accel_limit: Boolean flag to determine if acceleration is switched for speeds above 650 km/s
             solver: String specifying the numerical solver to use. Options:
-                   'upwind' (default): First-order upwind scheme (Godunov-type, incompressible)
-                   'hllc-plm' or 'hllc-plm-rk2': HLLC Riemann solver with PLM reconstruction (compressible, 2nd order)
-                   'hllc-pcm': HLLC Riemann solver with PCM reconstruction (compressible, 1st order, more robust)
+                   'upwind' or 'huxt' (default): First-order upwind scheme (Godunov-type, incompressible)
+                   'hllc' or 'hydro': HLLC Riemann solver with PLM reconstruction + RK2 (compressible, 2nd order)
             parallel: Boolean flag to enable parallel computation across longitude slices (default True).
                      Uses joblib threading backend for parallelization. Set to False for debugging
                      or if running on a single-core system.
@@ -618,22 +617,33 @@ class HUXt:
         self.__version__ = get_version()
         
         # Validate and store solver choice
-        # Map legacy 'cgf' to 'hllc-plm'
-        if solver == 'cgf':
-            solver = 'hllc-plm'
-            print("[Note] 'cgf' solver renamed to 'hllc-plm' - using HLLC Riemann solver")
+        # Map legacy names and aliases
+        solver_map = {
+            'cgf': 'hllc',        # Legacy name
+            'huxt': 'upwind',     # Alias for HUXt's original solver
+            'hydro': 'hllc',      # Alias for hydrodynamic solver
+            'hllc-plm': 'hllc',   # Old detailed names map to hllc
+            'hllc-pcm': 'hllc',
+            'hllc-plm-rk2': 'hllc'
+        }
         
-        valid_solvers = ['upwind', 'hllc', 'hllc-plm', 'hllc-pcm', 'hllc-plm-rk2']
+        if solver in solver_map:
+            original = solver
+            solver = solver_map[solver]
+            if original == 'cgf':
+                print(f"[Note] '{original}' solver renamed to '{solver}' - using HLLC Riemann solver")
+        
+        valid_solvers = ['upwind', 'hllc']
         
         # Check if solver is valid
         if solver not in valid_solvers:
-            raise ValueError(f"Invalid solver '{solver}'. Must be one of: {valid_solvers}")
+            raise ValueError(f"Invalid solver '{solver}'. Must be one of: {valid_solvers} (or aliases: 'huxt', 'hydro')")
         
         self.solver = solver
         
         # Auto-determine compressible mode based on solver choice
-        # upwind is incompressible, all hllc variants are compressible
-        compressible = solver.startswith('hllc')
+        # upwind is incompressible, hllc is compressible
+        compressible = (solver == 'hllc')
         
         # Store parallel computation flag
         self.parallel = parallel
@@ -1020,8 +1030,7 @@ class HUXt:
         Returns:
             Tuple of (i, v, cme_r_bounds, cme_v_bounds, hcs_r, streak_r, rho_out, temp_out)
         """
-        # Compressible Riemann solvers: hllc, hll, roe, rusanov
-        # Check if using compressible solver (including derived variants like hllc-plm-rk2)
+        # Check if using compressible solver
         
         if self.compressible:
             # Use solve_radial_compressible with selected Riemann solver
@@ -2867,7 +2876,7 @@ def solve_radial(vinput, binput, iscmeinput, model_time, rrel, params,
                 v[1:] = u_up_next
         
         else:
-            raise ValueError(f"Unknown solver: {solver}. Supported solvers: 'upwind', 'hllc', 'hllc-plm', 'hllc-pcm', 'hllc-plm-rk2'")
+            raise ValueError(f"Unknown solver: {solver}. Supported solvers: 'upwind', 'hllc' (or aliases 'huxt', 'hydro')")
 
         # Move the CME test particles forward
         if t > 0 and do_cme:
