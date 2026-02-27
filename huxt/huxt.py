@@ -2238,7 +2238,7 @@ def get_density_temperature_from_velocity(v_value, r_target, gamma=1.5):
     T_interp = np.interp(v_value, v_lookup, T_lookup,
                          left=T_lookup[0], right=T_lookup[-1])
     
-    return n_interp, T_interp
+    return n_interp*1.2, T_interp*1.2
 
 
 def radial_grid(r_min=30.0 * u.solRad, r_max=240. * u.solRad):
