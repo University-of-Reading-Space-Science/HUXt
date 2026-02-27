@@ -13,6 +13,8 @@ import huxt.huxt_inputs as Hin
 import huxt.huxt_insitu as Hinsitu
 
 
+save_figs = False
+
 standard_tests = True
 compressible_tests = True
 insitu_compressible_tests = False
@@ -210,20 +212,21 @@ if compressible_tests:
             if t_end is not None:
                 for a in axes:
                     a.axvline(t_end, color='r', linestyle='--', linewidth=2, alpha=0.6)
-    
-    dbox = os.environ.get('DBOX')
-    overleaf_dir = os.path.join(dbox, 'Apps', 'Overleaf', 'SHUXt')
-    pdf_path = os.path.join(overleaf_dir, 'CME_example_ts.pdf')
-    plt.savefig(pdf_path, dpi=150)
+    if save_figs:
+        dbox = os.environ.get('DBOX')
+        overleaf_dir = os.path.join(dbox, 'Apps', 'Overleaf', 'SHUXt')
+        pdf_path = os.path.join(overleaf_dir, 'CME_example_ts.pdf')
+        plt.savefig(pdf_path, dpi=150)
 
 
     print("Creating plot 6: Compressible spatial plot (PLM)...")
     HA.plot_compressible(model_plm, time=t_interest)
     #plt.suptitle("HLLC + PLM + RK2 (2nd Order)")
     print(f"  -> Created figure(s). Current figures: {plt.get_fignums()}")
+    if save_figs:
 
-    pdf_path = os.path.join(overleaf_dir, 'CME_example.pdf')
-    plt.savefig(pdf_path, dpi=150)
+        pdf_path = os.path.join(overleaf_dir, 'CME_example.pdf')
+        plt.savefig(pdf_path, dpi=150)
 
     # # ---------------------------------------------------------
     # # Comparison Plot
