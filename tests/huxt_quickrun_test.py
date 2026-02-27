@@ -96,7 +96,7 @@ if standard_tests:
                         #lon_out=0.0*u.rad,
                         r_min=21.5*u.solRad, simtime=simtime, dt_scale=4, 
                         cr_num = cr, cr_lon_init=cr_lon_init,
-                        solver ='upwind')
+                        solver ='huxt')
     print("Model initialized. Starting solve...")
     t0 = datetime.datetime.now()
     model_incomp.solve(cme_list, streak_carr=lon_grid)
@@ -149,20 +149,18 @@ if compressible_tests:
     model_plm = H.HUXt(v_boundary=vr_in, b_boundary=br_in,
                             simtime=simtime, dt_scale=4, r_min=21.5*u.solRad, 
                             cr_num = cr, cr_lon_init=cr_lon_init,
-                        solver ='hllc-plm-rk2') # Explicitly request PLM+RK2
+                        solver ='hydro') # Explicitly request PLM+RK2
     print("Model initialized. Starting solve...")
     t0 = datetime.datetime.now()
     model_plm.solve(cme_list, streak_carr=lon_grid)
     dt_plm = (datetime.datetime.now() - t0).total_seconds()
     print(f"Solve complete in {dt_plm:.2f}s!")
     
-    print(f"\nPerformance Comparison: PCM={dt_pcm:.2f}s vs PLM={dt_plm:.2f}s (Ratio: {dt_plm/dt_pcm:.2f}x)")
-
     #add the ambient series
     model_ambient = H.HUXt(v_boundary=vr_in, b_boundary=br_in,
                         simtime=simtime, dt_scale=4, r_min=21.5*u.solRad, 
                         cr_num = cr, cr_lon_init=cr_lon_init,
-                    solver ='hllc-plm-rk2') # Explicitly request PLM+RK2
+                    solver ='hydro') # Explicitly request PLM+RK2
     model_ambient.solve([])
     ts_ambient = HA.get_observer_timeseries(model_ambient)
     amb_times = model_ambient.time_out.to(u.day).value
