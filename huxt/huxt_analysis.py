@@ -338,7 +338,7 @@ def plot_compressible(model, time, save=False, tag='', fighandle=np.nan, minimal
     """
     
     if not hasattr(model, 'rho_grid') or not hasattr(model, 'temp_grid'):
-        raise ValueError("Model must be run with compressible=True to use plot_compressible")
+        raise ValueError("Model must be run with a compressible solver (e.g., 'hllc-plm') to use plot_compressible")
 
     if (time < model.time_out.min()) | (time > (model.time_out.max())):
         print("Error, input time outside span of model times. Defaulting to closest time")
@@ -689,7 +689,7 @@ def plot_compressible_with_ts(model, time, save=False, tag='', fighandle=np.nan,
     """
     
     if not hasattr(model, 'rho_grid') or not hasattr(model, 'temp_grid'):
-        raise ValueError("Model must be run with compressible=True to use plot_compressible_with_ts")
+        raise ValueError("Model must be run with a compressible solver (e.g., 'hllc-plm') to use plot_compressible_with_ts")
 
     if (time < model.time_out.min()) | (time > (model.time_out.max())):
         print("Error, input time outside span of model times. Defaulting to closest time")
@@ -1065,7 +1065,7 @@ def animate_compressible_with_ts(model, tag='', duration=10, fps=20, outputfilep
     """
     
     if not hasattr(model, 'rho_grid') or not hasattr(model, 'temp_grid'):
-        raise ValueError("Model must be run with compressible=True to use animate_compressible_with_ts")
+        raise ValueError("Model must be run with a compressible solver (e.g., 'hllc-plm') to use animate_compressible_with_ts")
     
     interval = (1/fps)*1000
     nframes = int(duration*1000/interval)
