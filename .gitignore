@@ -8,6 +8,8 @@
 
 # Compiled python modules.
 *.pyc
+*.pkl
+*.csv
 
 # Pycharms .idea can be ignored
 /.idea

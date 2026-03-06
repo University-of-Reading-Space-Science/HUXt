@@ -142,24 +142,21 @@ class Observer:
 
 class ConeCME:
     """
-    A class containing the parameters of a cone model CME.
-    
+    A class containing the parameters of a cone model cme.
     Attributes:
         t_launch: Time of Cone CME launch, in seconds after the start of the simulation.
         longitude: HEEQ Longitude of the CME launch direction, in radians.
         v: CME nose speed in km/s.
         width: Angular width of the CME, in radians.
-        initial_height: Initiation height of the CME, in km. Defaults to HUXt inner boundary at 21.5 solar radii.
+        initial_height: Initiation height of the CME, in km. Defaults to HUXt inner boundary at 30 solar radii.
         radius: Initial radius of the CME, in km.
         thickness: Thickness of the CME cone, in km.
-        cme_density: Mass density of the CME in kg/m³. Defaults to the solar wind density at initial_height.
-        cme_temperature: Temperature of the CME in Kelvin. Defaults to the solar wind temperature at initial_height.
-        density_fraction: Multiplier for ambient density (default 1.0). Use >1 for denser CMEs, <1 for rarefied.
-        temperature_fraction: Multiplier for ambient temperature (default 1.0). 
+        cme_density: Mass density of the CME in kg/m³. Defaults to x0.1 the solar wind density at initial_height.
+        cme_temperature: Temperature of the CME in Kelvin. Defaults x0.1 the solar wind temperature at initial_height.
         profile_type: Temporal profile shape ('square' or 'sinusoidal'). 
                      'square': step function from ambient to CME values
                      'sinusoidal': smooth sinusoidal pulse from ambient to CME values and back
-        coords: Dictionary containing the radial and longitudinal (for HUXt2D) coordinates of the Cone CME for each
+        coords: Dictionary containing the radial and longitudinal (for HUXT2D) coordinates of the of Cone CME for each
                 model time step.
     """
 
@@ -582,10 +579,10 @@ class HUXt:
                             in-situ observations from L1. If used as keyword input argument, overrides b_boundary input.
             input_rho_ts: Time series of inner boundary density conditions in kg/m³. For initialising HUXt with, for example,
                              in-situ observations from L1. If used as keyword input argument, overrides rho_boundary input.
-                             Only used with compressible solvers (hllc*).
+                             Only used if compressible=True.
             input_temp_ts: Time series of inner boundary temperature conditions in Kelvin. For initialising HUXt with, for example,
                               in-situ observations from L1. If used as keyword input argument, overrides temp_boundary input.
-                              Only used with compressible solvers (hllc*).             
+                              Only used if compressible=True.             
             input_t_ts: Times of input_v_ts in seconds, including spin up.
             input_iscme_ts: Boolean mask time series indicating what time steps correspond to CMEs in input_v_ts.
                                If used as keyword input argument, overrides ConeCMEs past to huxt.sovle().
@@ -593,15 +590,18 @@ class HUXt:
             track_cmes: Boolean flag to determine if CMEs are tracked at run time (small speed reduction).
             accel_limit: Boolean flag to determine if acceleration is switched for speeds above 650 km/s
             solver: String specifying the numerical solver to use. Options:
-                   'upwind' or 'huxt' (default): First-order upwind scheme (Godunov-type, incompressible)
-                   'hllc' or 'hydro': HLLC Riemann solver with PLM reconstruction + RK2 (compressible, 2nd order)
+                   'upwind' (default): First-order upwind scheme (Godunov-type, incompressible)
+                   'hllc': HLLC Riemann solver with PLM reconstruction (compressible) [recommended]
+                   'hll': HLL Riemann solver with PLM reconstruction (compressible, faster)
+                   'roe': Roe Riemann solver with PLM reconstruction (compressible, most accurate)
+                   'rusanov': Rusanov/Lax-Friedrichs solver with PLM reconstruction (compressible, most robust)
             parallel: Boolean flag to enable parallel computation across longitude slices (default True).
                      Uses joblib threading backend for parallelization. Set to False for debugging
                      or if running on a single-core system.
-            rho_boundary: Inner density boundary condition in kg/m³. An array of size nlon. Only used with compressible solvers (hllc*).
+            rho_boundary: Inner density boundary condition in kg/m³. An array of size nlon. Only used if compressible=True.
                          If not provided, defaults to realistic solar wind density scaled from 1 AU (5 protons/cm³) 
                          using r⁻² scaling to r_min.
-            temp_boundary: Inner temperature boundary condition in Kelvin. An array of size nlon. Only used with compressible solvers (hllc*).
+            temp_boundary: Inner temperature boundary condition in Kelvin. An array of size nlon. Only used if compressible=True.
                           If not provided, defaults to realistic solar wind temperature scaled from 1 AU (10⁵ K)
                           using r⁻⁰·⁶⁷ scaling to r_min.
         """
@@ -617,33 +617,40 @@ class HUXt:
         self.__version__ = get_version()
         
         # Validate and store solver choice
-        # Map legacy names and aliases
-        solver_map = {
-            'cgf': 'hllc',        # Legacy name
-            'huxt': 'upwind',     # Alias for HUXt's original solver
-            'hydro': 'hllc',      # Alias for hydrodynamic solver
-            'hllc-plm': 'hllc',   # Old detailed names map to hllc
-            'hllc-pcm': 'hllc',
-            'hllc-plm-rk2': 'hllc'
-        }
+        # Map legacy 'cgf' to 'hllc'
+        if solver == 'cgf':
+            solver = 'hllc'
+            print("[Note] 'cgf' solver renamed to 'hllc' - using HLLC Riemann solver")
         
-        if solver in solver_map:
-            original = solver
-            solver = solver_map[solver]
-            if original == 'cgf':
-                print(f"[Note] '{original}' solver renamed to '{solver}' - using HLLC Riemann solver")
+        valid_solvers = ['upwind', 'hllc', 'hll', 'roe', 'rusanov']
         
-        valid_solvers = ['upwind', 'hllc']
+        # Check if solver matches exactly OR starts with one of the valid compressible solvers (e.g. hllc-pcm)
+        is_valid = False
+        base_solver = solver
         
-        # Check if solver is valid
-        if solver not in valid_solvers:
-            raise ValueError(f"Invalid solver '{solver}'. Must be one of: {valid_solvers} (or aliases: 'huxt', 'hydro')")
+        if solver in valid_solvers:
+            is_valid = True
+        else:
+            # Check for suffixes (e.g. hllc-plm) by splitting on hyphen
+            parts = solver.split('-')
+            if parts[0] in valid_solvers:
+                is_valid = True
+                base_solver = parts[0]
+                
+        if not is_valid:
+            raise ValueError(f"Invalid solver '{solver}'. Must be one of (or variant of): {valid_solvers}")
+        
+        # Check compressible solver availability
+        compressible_solvers = ['hllc', 'hll', 'roe', 'rusanov']
+        if base_solver in compressible_solvers:
+            riemann_names = {'hllc': 'HLLC', 'hll': 'HLL', 'roe': 'Roe', 'rusanov': 'Rusanov'}
+            print(f"[OK] {riemann_names[base_solver]} Riemann solver (HUXt-native) available")
         
         self.solver = solver
         
         # Auto-determine compressible mode based on solver choice
-        # upwind is incompressible, hllc is compressible
-        compressible = (solver == 'hllc')
+        # upwind is incompressible, all others are compressible
+        compressible = base_solver in compressible_solvers
         
         # Store parallel computation flag
         self.parallel = parallel
@@ -1030,7 +1037,8 @@ class HUXt:
         Returns:
             Tuple of (i, v, cme_r_bounds, cme_v_bounds, hcs_r, streak_r, rho_out, temp_out)
         """
-        # Check if using compressible solver
+        # Compressible Riemann solvers: hllc, hll, roe, rusanov
+        # Check if using compressible solver (including derived variants like hllc-plm-rk2)
         
         if self.compressible:
             # Use solve_radial_compressible with selected Riemann solver
@@ -1316,7 +1324,7 @@ class HUXt:
                     for irot in range(n_rots):
                         streak_name = f'streak_{istreak}_rot_{irot}'
                         if streak_name in groups:
-                            # Compressible solver returns 1D trajectory arrays (already converted in Riemann solver)
+                            # Compressible solver returns 1D trajectory arrays (already converted in solve_radial_compressible)
                             r_traj = groups[streak_name]['r']
                             t_traj = groups[streak_name]['t']
                             valid_mask = ~np.isnan(r_traj)
@@ -1603,20 +1611,20 @@ class HUXt:
         # ======================================================================
         # Print solver information
         # ======================================================================
-        # if self.compressible:
-        #     import time
-        #     solve_start = time.time()
-        #     
-        #     print("\n" + "="*70)
-        #     print(f"USING COMPRESSIBLE SOLVER: {self.solver.upper()}")
-        #     print("="*70)
-        #     print(f"Riemann solver: {self.solver}")
-        #     print(f"Frame: {self.frame}")
-        #     print(f"Parallel: {self.parallel}")
-        #     if self.parallel:
-        #         print(f"\n⚠ WARNING: Parallel execution for compressible solver is typically SLOWER than serial")
-        #         print(f"  Recommended: Set parallel=False for better performance")
-        #     print("="*70 + "\n")
+        if self.compressible:
+            import time
+            solve_start = time.time()
+            
+            print("\n" + "="*70)
+            print(f"USING COMPRESSIBLE SOLVER: {self.solver.upper()}")
+            print("="*70)
+            print(f"Riemann solver: {self.solver}")
+            print(f"Frame: {self.frame}")
+            print(f"Parallel: {self.parallel}")
+            if self.parallel:
+                print(f"\n⚠ WARNING: Parallel execution for compressible solver is typically SLOWER than serial")
+                print(f"  Recommended: Set parallel=False for better performance")
+            print("="*70 + "\n")
         
         # ======================================================================
         # Solve the time series at each longitude (UPWIND and COMPRESSIBLE SOLVERS)
@@ -2230,7 +2238,7 @@ def get_density_temperature_from_velocity(v_value, r_target, gamma=1.5):
     T_interp = np.interp(v_value, v_lookup, T_lookup,
                          left=T_lookup[0], right=T_lookup[-1])
     
-    return n_interp*1.2, T_interp*1.2
+    return n_interp, T_interp
 
 
 def radial_grid(r_min=30.0 * u.solRad, r_max=240. * u.solRad):
@@ -2569,7 +2577,7 @@ def solve_radial_compressible(v_bc_kms, rho_bc_kgm3, T_bc_K, model_time, time_ou
             r_grid=r_grid_m,
             gamma=gamma,
             method=method,
-            cfl=0.6 if 'plm' in method else 0.8, # Lower CFL for PLM
+            cfl=0.7 if 'plm' in method else 0.8, # Lower CFL for PLM
             verbose=verbose
         )
     else:
@@ -2681,7 +2689,7 @@ def solve_radial(vinput, binput, iscmeinput, model_time, rrel, params,
     """
     Solve the radial profile as a function of time (including spinup), and
     return radial profile at specified output timesteps.
-    Tracks CME fronts as test particles using incompressible upwind solver.
+    Tracks CME frotns as test particles
     Args:
         vinput: Timeseries of inner boundary solar wind speeds.
         binput: Timeseries of inner boundary radial magnetic field.
@@ -2692,14 +2700,16 @@ def solve_radial(vinput, binput, iscmeinput, model_time, rrel, params,
         n_cme: Number of CMEs in the whole model run (not nec this longitude).
         n_hcs_max: Maximum number of HCS crossings at any longitude
         streak_times: time indices of streak foot points to track
-        rhoinput: Timeseries of inner boundary density (optional). Plain array without units.
-        tempinput: Timeseries of inner boundary temperature (optional). Plain array without units.
+        rhoinput: Timeseries of inner boundary density (optional, for compressible solver). Plain array without units.
+        tempinput: Timeseries of inner boundary temperature (optional, for compressible solver). Plain array without units.
+        compressible: Boolean flag indicating if compressible solver is being used
+        solver: String specifying which numerical solver to use
     Returns:
         v_grid: Array of radial solar wind speed profile as function of time.
         cme_particles_r: Array of CME tracer particle positions as function of time.
         cme_particles_v: Array of CME tracer particle speeds as a function of time.
-        rho_grid: Array of radial density profile as function of time (only if rhoinput/tempinput provided, else None).
-        temp_grid: Array of radial temperature profile as function of time (only if rhoinput/tempinput provided, else None).
+        rho_grid: Array of radial density profile as function of time (only if compressible=True, else None).
+        temp_grid: Array of radial temperature profile as function of time (only if compressible=True, else None).
     """
 
     # unpack the HUXt params
@@ -2876,7 +2886,7 @@ def solve_radial(vinput, binput, iscmeinput, model_time, rrel, params,
                 v[1:] = u_up_next
         
         else:
-            raise ValueError(f"Unknown solver: {solver}. Supported solvers: 'upwind', 'hllc' (or aliases 'huxt', 'hydro')")
+            raise ValueError(f"Unknown solver: {solver}. Supported solvers: 'upwind', 'hllc', 'hll', 'roe', 'rusanov'")
 
         # Move the CME test particles forward
         if t > 0 and do_cme:
