@@ -3,7 +3,7 @@ requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "huxt"
+name = "surf"
 version = "5.0.0"
 description = "Heliospheric Upwind eXtrapolation with Time-dependence. A computationally efficient solar wind model."
 readme = "README.md"
@@ -32,14 +32,14 @@ dependencies = [
 ]
 
 [tool.setuptools.package-data]
-"huxt.data.ephemeris" = ["*.hdf5"]
-"huxt.data.example_inputs" = ["*.fits", "*.in", "*.fits", "*.nc", "*.dat"]
-"huxt.data.example_inputs.WSA_GONGZ" = ["*.fits"]
-"huxt.notebooks" = ["*.ipynb"]
+"surf.data.ephemeris" = ["*.hdf5"]
+"surf.data.example_inputs" = ["*.fits", "*.in", "*.fits", "*.nc", "*.dat"]
+"surf.data.example_inputs.WSA_GONGZ" = ["*.fits"]
+"surf.notebooks" = ["*.ipynb"]
 
 [project.scripts]
-huxt-make-ephemeris = "huxt.scripts.make_ephemeris:main"
-huxt-open-examples = "huxt.scripts.open_examples_notebook:main"
+surf-make-ephemeris = "surf.scripts.make_ephemeris:main"
+surf-open-examples = "surf.scripts.open_examples_notebook:main"
 
 [project.urls]
 Homepage = "https://github.com/University-of-Reading-Space-Science/HUXt"
