@@ -11,7 +11,7 @@ import numpy as np
 from numba import jit
 from pathlib import Path
 from sunpy.coordinates import sun
-from huxt.huxt_solvers import create_solver as create_compressible_solver
+from surf.surf_solvers import create_solver as create_compressible_solver
 
 
 
@@ -504,9 +504,9 @@ class ConeCME:
         return arrival_stats
 
 
-class HUXt:
+class SURF:
     """
-    A class containing the HUXt model described in Owens et al. (2020, DOI: 10.1007/s11207-020-01605-3)
+    A class containing the SURF model described in Owens et al. (2020, DOI: 10.1007/s11207-020-01605-3)
 
     Users must specify the solar wind speed boundary condition through the v_boundary keyword
     argument. Failure to do so defaults to a 400 km/s boundary.
@@ -607,7 +607,7 @@ class HUXt:
         """
 
         # some constants and units
-        constants = huxt_constants()
+        constants = surf_constants()
         self.twopi = constants['twopi']
         self.daysec = constants['daysec']
         self.kms = constants['kms']
@@ -859,7 +859,7 @@ class HUXt:
             # Compute typical solar wind values at the inner boundary for use in 
             # setting default CME values. Map typical 1 AU values to the model inner boundary
             # using Parker nozzle relations.
-            const_1au = huxt_constants()
+            const_1au = surf_constants()
             r_1au = 215 * u.solRad
             self.v_sw_inner, self.n_sw_inner, self.T_sw_inner = map_properties_parker(
                 const_1au['v_sw_1au'], r_1au, self.r[0], 
@@ -1457,7 +1457,7 @@ class HUXt:
 
         # check CME speeds aren't so fast they will butt up agains the CFL condition.
         if len(self.cmes) > 0:
-            constants = huxt_constants()
+            constants = surf_constants()
             v_max = constants['v_max']
             for cme in self.cmes:
 
@@ -1870,15 +1870,15 @@ class HUXt:
         return obs
 
 
-class HUXt3d:
+class SURF3d:
     """
-    A class containing a list of HUXt classes, to enable mutliple latitudes to
+    A class containing a list of SURF classes, to enable mutliple latitudes to
     be simulated, plotted, animated, etc. together
     
-    Attributes inherited from HUXt. Additional:
-        lat: The list of latitudes of individual HUXt runs, in radians from the equator
+    Attributes inherited from SURF. Additional:
+        lat: The list of latitudes of individual SURF runs, in radians from the equator
         nlat: The number of latitudes simulated
-        HUXtlat: List of individual HUXt model classes at each latitude
+        SURFlat: List of individual SURF model classes at each latitude
         v_in: a list of Carrington longitude solar wind profiles at each simulated latitude
         br_in: a list of Carrington longitude Br profiles at each simulated latitude
         
@@ -1890,7 +1890,7 @@ class HUXt3d:
                  r_min=30 * u.solRad, r_max=240 * u.solRad, lon_out=np.nan * u.rad, lon_start=np.nan * u.rad,
                  lon_stop=np.nan * u.rad, simtime=5.0 * u.day, dt_scale=1.0):
         """
-        Initialise the HUXt3D instance.
+        Initialise the SURF3D instance.
 
             v_map: Inner solar wind speed boundary Carrington map. Must have units of km/s.
             v_map_lat: List of latitude positions for v_map, in radians
@@ -1930,13 +1930,13 @@ class HUXt3d:
             for ilong in range(0, len(v_map_long)):
                 vlong[ilong] = np.interp(thislat.value, v_map_lat.value, v_map[:, ilong].value)
 
-            # Interpolate this longitudinal profile to the HUXt resolution
+            # Interpolate this longitudinal profile to the SURF resolution
             self.v_in.append(np.interp(longs.value, v_map_long.value, vlong) * u.km / u.s)
 
         # Set up the model at each latitude
-        self.HUXtlat = []
+        self.SURFlat = []
         for i in range(0, self.nlat):
-            self.HUXtlat.append(HUXt(v_boundary=self.v_in[i],
+            self.SURFlat.append(SURF(v_boundary=self.v_in[i],
                                      latitude=self.lat[i],
                                      cr_num=cr_num, cr_lon_init=cr_lon_init,
                                      r_min=r_min, r_max=r_max,
@@ -1946,23 +1946,23 @@ class HUXt3d:
 
     def solve(self, cme_list):
         """
-        Compute solution of HUXt3d instance.
+        Compute solution of SURF3d instance.
         Args:
             cme_list: A list of ConeCME objects to solve
         Returns:
             None
         """
-        for model in self.HUXtlat:
+        for model in self.SURFlat:
             model.solve(cme_list)
 
         return
 
 
-def huxt_constants():
+def surf_constants():
     """
     Function to generate a dictionary of useful constants.
     Returns:
-        constants: A dictionary of constants that configure HUXt
+        constants: A dictionary of constants that configure SURF
     """
     nlong = 128  # Number of longitude bins for a full longitude grid [128]
     dr = 1.5 * u.solRad  # Radial grid step. With v_max, this sets the model time step [1.5 Rs]
@@ -2243,7 +2243,7 @@ def get_density_temperature_from_velocity(v_value, r_target, gamma=1.5):
 
 def radial_grid(r_min=30.0 * u.solRad, r_max=240. * u.solRad):
     """
-    Define the radial grid of the HUXt model. Step size is fixed, but inner and outer boundary may be specified.
+    Define the radial grid of the SURF model. Step size is fixed, but inner and outer boundary may be specified.
     Args:
         r_min: The heliocentric distance of the inner radial boundary.
         r_max: The heliocentric distance of the outer radial boundary.
@@ -2278,7 +2278,7 @@ def radial_grid(r_min=30.0 * u.solRad, r_max=240. * u.solRad):
 
 def longitude_grid(lon_out=np.nan * u.rad, lon_start=np.nan * u.rad, lon_stop=np.nan * u.rad):
     """
-    Define the longitude grid of the HUXt model.
+    Define the longitude grid of the SURF model.
     Args:
         lon_out: A single output longitude.
         lon_start: The first longitude (in a clockwise sense) of a longitude range, in radians.
@@ -2312,7 +2312,7 @@ def longitude_grid(lon_out=np.nan * u.rad, lon_start=np.nan * u.rad, lon_stop=np
         longitude_range = True
 
     # Form the full longitude grid.
-    nlon = huxt_constants()['nlong']
+    nlon = surf_constants()['nlong']
     dlon = twopi / nlon
     lon_min_full = dlon / 2.0
     lon_max_full = twopi - (dlon / 2.0)
@@ -2343,7 +2343,7 @@ def longitude_grid(lon_out=np.nan * u.rad, lon_start=np.nan * u.rad, lon_stop=np
 
 def latitude_grid(latitude_min=np.nan, latitude_max=np.nan):
     """
-    Define the latitude grid of the HUXt model. This is constant in sine latitude
+    Define the latitude grid of the SURF model. This is constant in sine latitude
     Args:
         latitude_min: The maximum latitude above the equator, in radians
         latitude_max: The minimum latitude below the equator, in radians
@@ -2357,7 +2357,7 @@ def latitude_grid(latitude_min=np.nan, latitude_max=np.nan):
     assert (np.absolute(latitude_min) <= (np.pi / 2) * u.rad)
 
     # Form the full longitude grid.
-    nlat = huxt_constants()['nlat']
+    nlat = surf_constants()['nlat']
 
     dsinlat = 2 / nlat
     sinlat_min_full = - 1 + dsinlat / 2.0
@@ -2406,10 +2406,10 @@ def _setup_dirs_():
     """
     Function to pull out the directories of boundary conditions, ephemeris, and to save figures and output data.
     Returns:
-        dirs: A dictionary of full paths to HUXt directories of code, data, figures, and relevant files.
+        dirs: A dictionary of full paths to SURF directories of code, data, figures, and relevant files.
     """
 
-    # Get path of huxt.py
+    # Get path of surf.py
     cwd = os.path.abspath(os.path.dirname(__file__))
 
     dirs = {'ephemeris': os.path.join(cwd, 'data', 'ephemeris', 'ephemeris.hdf5'),
@@ -2417,13 +2417,13 @@ def _setup_dirs_():
             'insitu': os.path.join(cwd, 'data', 'insitu')}
 
     # Use appdirs to get platform-specific user data directory
-    base_dir = Path(user_data_dir("huxt", ""))
+    base_dir = Path(user_data_dir("surf", ""))
     
     bc_dir = base_dir / "data" / 'boundary_conditions'
     bc_dir.mkdir(parents=True, exist_ok=True)
     dirs['boundary_conditions'] = str(bc_dir)
 
-    sim_dir = base_dir / "data" / 'huxt'
+    sim_dir = base_dir / "data" / 'surf'
     sim_dir.mkdir(parents=True, exist_ok=True)
     dirs['HUXt_data'] = str(sim_dir)
 
@@ -3316,15 +3316,15 @@ def _is_in_cme_boundary_(r_boundary, lon, lat, time, cme_params):
     return isincme, dist_from_nose
 
 
-def load_HUXt_run(filepath):
+def load_SURF_run(filepath):
     """
-    Load in data from a saved HUXt run. If Br fields are not saved, pads with
-    NaN to avoid conflicts with other HUXt routines.
+    Load in data from a saved SURF run. If Br fields are not saved, pads with
+    NaN to avoid conflicts with other SURF routines.
     Args:
-        filepath: The full path to a HDF5 file containing the output from HUXt.save()
+        filepath: The full path to a HDF5 file containing the output from SURF.save()
     Returns:
         cme_list: A list of instances of ConeCME
-        model: An instance of HUXt containing loaded results.
+        model: An instance of SURF containing loaded results.
     """
     if os.path.isfile(filepath):
 
