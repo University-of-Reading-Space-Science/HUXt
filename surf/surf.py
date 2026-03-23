@@ -1,7 +1,11 @@
+
+import os
+import sys
+
+sys.path.insert(0, os.path.abspath('..'))
+
 import copy
 import errno
-import os
-
 from appdirs import user_data_dir
 import astropy.units as u
 from astropy.time import Time, TimeDelta
@@ -11,7 +15,8 @@ import numpy as np
 from numba import jit
 from pathlib import Path
 from sunpy.coordinates import sun
-from surf.surf_solvers import create_solver as create_compressible_solver
+
+from surf_solvers import create_solver as create_compressible_solver
 
 
 
@@ -26,7 +31,7 @@ class Observer:
     linearly interpolated from a 3-hour resolution ephemeris that spans the available duration on JPL Horizons for each
     mission. JPL Horizons only provides ACE and STEREO-A data for short windows into the future (~70 and ~100 days,
     respectively). And so the ephemeris file may need to be periodically updated. The ephemeris data can be updated
-    using the HUXt/scripts/generate_huxt_ephemeris.py script.
+    using the SURF/scripts/make_ephemeris.py script.
 
     Attributes:
         body: String name of the planet or spacecraft.
@@ -68,7 +73,7 @@ class Observer:
         # STEREO-A and ACE have shorter lengths of ephemeris data. Check requested times not outside those available.
         if np.any(times > all_time[-1]):
             raise ValueError(f"{body} ephemeris extends to {all_time[-1].isot}. Requested times are outside this limit."
-                             f" Updating the HUXt ephemeris file may resolve this issue.")
+                             f" Updating the SURF ephemeris file may resolve this issue.")
 
         # Pad out the window to account for single values being passed.
         if self.body in craft:
@@ -148,7 +153,7 @@ class ConeCME:
         longitude: HEEQ Longitude of the CME launch direction, in radians.
         v: CME nose speed in km/s.
         width: Angular width of the CME, in radians.
-        initial_height: Initiation height of the CME, in km. Defaults to HUXt inner boundary at 30 solar radii.
+        initial_height: Initiation height of the CME, in km. Defaults to SURF inner boundary at 21.5 solar radii.
         radius: Initial radius of the CME, in km.
         thickness: Thickness of the CME cone, in km.
         cme_density: Mass density of the CME in kg/m³. Defaults to x0.1 the solar wind density at initial_height.
@@ -156,7 +161,7 @@ class ConeCME:
         profile_type: Temporal profile shape ('square' or 'sinusoidal'). 
                      'square': step function from ambient to CME values
                      'sinusoidal': smooth sinusoidal pulse from ambient to CME values and back
-        coords: Dictionary containing the radial and longitudinal (for HUXT2D) coordinates of the of Cone CME for each
+        coords: Dictionary containing the radial and longitudinal (for SURF2D) coordinates of the of Cone CME for each
                 model time step.
     """
 
@@ -198,12 +203,12 @@ class ConeCME:
         self.latitude = latitude.to(u.rad)  # Latitude launch direction of the CME
         self.v = v  # CME nose speed
         self.width = width  # Angular width
-        self.initial_height = initial_height  # Initial height of CME (should match inner boundary of HUXt)
+        self.initial_height = initial_height  # Initial height of CME (should match inner boundary of SURF)
         self.radius = self.initial_height * np.tan(self.width / 2.0)  # Initial radius of CME
         self.thickness = thickness  # Extra CME thickness
         self.coords = {}
         self.frame = 'NA'
-        self.longitude_huxt = -1 * u.rad  # the HUXt longitude, adjusted for sidereal frame if necessary
+        self.longitude_surf = -1 * u.rad  # the SURF longitude, adjusted for sidereal frame if necessary
         self.cme_expansion = cme_expansion
         self.cme_fixed_duration = cme_fixed_duration
         self.fixed_duration = fixed_duration
@@ -246,7 +251,7 @@ class ConeCME:
         profile_flag = 1.0 if self.profile_type == 'sinusoidal' else 0.0
         
         cme_parameters = [self.t_launch.to('s').value, 
-                          self.longitude_huxt.to('rad').value,
+                          self.longitude_surf.to('rad').value,
                           self.latitude.to('rad').value,
                           self.width.to('rad').value, 
                           self.v.value, 
@@ -264,10 +269,10 @@ class ConeCME:
 
     def _track_(self, model, cme_id):
         """
-        Tracks the perimeter of each ConeCME through the HUXt solution in model. Updates the ConeCME.coords dictionary
+        Tracks the perimeter of each ConeCME through the SURF solution in model. Updates the ConeCME.coords dictionary
         of CME coordinates.
         Args:
-            model: An HUXt instance with solution containing ConeCMEs
+            model: An SURF instance with solution containing ConeCMEs
             cme_id: ID number of the CME to link the ConeCME object with the CME tracer particle fields.
         Returns:
              None
@@ -448,7 +453,7 @@ class ConeCME:
             # If there are any CME front coords, then work out pos.
             if np.any(front_id):
 
-                # Handle case for HUXt run on multiple longitudes first
+                # Handle case for SURF run on multiple longitudes first
                 if len(lon_cme) > 1:
                     # Lookup cme front radial coord along body longitude
                     r_interp = np.interp(arrive_lon[i], lon_cme, r_cme, left=np.nan, right=np.nan)
@@ -461,7 +466,7 @@ class ConeCME:
                         continue
 
                 elif len(lon_cme) == 1:
-                    # HUXt run on a single longitude, so don't interpolate front to body lon
+                    # SURF run on a single longitude, so don't interpolate front to body longitude
                     # Instead, check when cme lon within tolerance lon of body
 
                     # If body and cme within 1.5 deg of each other, assume close enough for hit.
@@ -558,34 +563,34 @@ class SURF:
                  input_iscme_ts=np.nan, input_t_ts=np.nan * u.s,
                  track_cmes=True, accel_limit=True, solver='upwind', parallel=False):
         """
-        Initialise the HUXt model instance.
+        Initialise the SURF model instance.
 
             v_boundary: Inner solar wind speed boundary condition. An array of size nlon (default 128). Units of km/s.
             b_boundary: Inner B polarity boundary condition. An array of size nlon (default 128). Units of km/s.
             cr_num: Integer Carrington rotation number. Used to determine the planetary and spacecraft positions
             cr_lon_init: Carrington longitude of Earth at model initialisation, in degrees.
-            latitude: Helio latitude (from the equator) of HUXt plane, in degrees
-            lon_out: A specific single longitude (relative to Earth) to compute HUXt solution along, in degrees
-            lon_start: The first longitude (in a clockwise sense) of the longitude range to solve HUXt over.
-            lon_stop: The last longitude (in a clockwise sense) of the longitude range to solve HUXt over.
-            r_min: The radial inner boundary distance of HUXt.
-            r_max: The radial outer boundary distance of HUXt.
+            latitude: Helio latitude (from the equator) of SURF plane, in degrees
+            lon_out: A specific single longitude (relative to Earth) to compute SURF solution along, in degrees
+            lon_start: The first longitude (in a clockwise sense) of the longitude range to solve SURF over.
+            lon_stop: The last longitude (in a clockwise sense) of the longitude range to solve SURF over.
+            r_min: The radial inner boundary distance of SURF.
+            r_max: The radial outer boundary distance of SURF.
             simtime: Duration of the simulation window, in days.
             dt_scale: Integer scaling number to set the model output time step relative to the models CFL time.
             frame: string determining the rotation frame for the model
-            input_v_ts: Time series of inner boundary V conditions. For initialising HUXt with, for example, 
+            input_v_ts: Time series of inner boundary V conditions. For initialising SURF with, for example, 
                            in-situ observations from L1. If used as keyword input argument, overrides v_boundary input.
-            input_bv_ts: Time series of inner boundary B conditions. For initialising HUXt with, for example, 
+            input_bv_ts: Time series of inner boundary B conditions. For initialising SURF with, for example, 
                             in-situ observations from L1. If used as keyword input argument, overrides b_boundary input.
-            input_rho_ts: Time series of inner boundary density conditions in kg/m³. For initialising HUXt with, for example,
+            input_rho_ts: Time series of inner boundary density conditions in kg/m³. For initialising SURF with, for example,
                              in-situ observations from L1. If used as keyword input argument, overrides rho_boundary input.
                              Only used if compressible=True.
-            input_temp_ts: Time series of inner boundary temperature conditions in Kelvin. For initialising HUXt with, for example,
+            input_temp_ts: Time series of inner boundary temperature conditions in Kelvin. For initialising SURF with, for example,
                               in-situ observations from L1. If used as keyword input argument, overrides temp_boundary input.
                               Only used if compressible=True.             
             input_t_ts: Times of input_v_ts in seconds, including spin up.
             input_iscme_ts: Boolean mask time series indicating what time steps correspond to CMEs in input_v_ts.
-                               If used as keyword input argument, overrides ConeCMEs past to huxt.sovle().
+                               If used as keyword input argument, overrides ConeCMEs past to surf.sovle().
             save_full_v: Boolean flag to determine if full v field (including spin up) is saved for post-processing.
             track_cmes: Boolean flag to determine if CMEs are tracked at run time (small speed reduction).
             accel_limit: Boolean flag to determine if acceleration is switched for speeds above 650 km/s
@@ -644,7 +649,7 @@ class SURF:
         compressible_solvers = ['hllc', 'hll', 'roe', 'rusanov']
         if base_solver in compressible_solvers:
             riemann_names = {'hllc': 'HLLC', 'hll': 'HLL', 'roe': 'Roe', 'rusanov': 'Rusanov'}
-            print(f"[OK] {riemann_names[base_solver]} Riemann solver (HUXt-native) available")
+            print(f"[OK] {riemann_names[base_solver]} Riemann solver (SURF-native) available")
         
         self.solver = solver
         
@@ -671,8 +676,8 @@ class SURF:
         # Extract paths of figure and data directories
         dirs = _setup_dirs_()
         self._boundary_dir_ = dirs['boundary_conditions']
-        self._data_dir_ = dirs['HUXt_data']
-        self._figure_dir_ = dirs['HUXt_figures']
+        self._data_dir_ = dirs['SURF_data']
+        self._figure_dir_ = dirs['SURF_figures']
         self._ephemeris_file = dirs['ephemeris']
 
         # Setup radial coordinates - in solar radius
@@ -682,8 +687,8 @@ class SURF:
         self.lon, self.dlon, self.nlon = longitude_grid(lon_out=lon_out, lon_start=lon_start, lon_stop=lon_stop)
 
         if (self.frame == 'sidereal') & (self.nlon == 1):
-            print("Warning: HUXt configured for a 1-D run in the sidereal frame. This simulation will not work"
-                  "correctly with functions like huxt_analysis.get_observer_time_series()")
+            print("Warning: SURF configured for a 1-D run in the sidereal frame. This simulation will not work"
+                  "correctly with functions like surf_analysis.get_observer_time_series()")
 
         # Set up the latitude
         self.latitude = latitude.to(u.rad)
@@ -708,7 +713,7 @@ class SURF:
             lon_boundary, dlon, nlon = longitude_grid()
             self.v_boundary_lons = lon_boundary * u.rad
         elif not np.all(np.isnan(v_boundary)):
-            # check that the implicit time step from vlong is not comparable to the HUXt timestep
+            # check that the implicit time step from vlong is not comparable to the SURF timestep
             assert v_boundary.size < 4600  # this equates to about 9 mins
 
             self.v_boundary = v_boundary
@@ -725,7 +730,7 @@ class SURF:
             self.b_boundary = np.ones(len(self.v_boundary_lons))
             self.b_boundary_lons = self.v_boundary_lons
         elif not np.all(np.isnan(b_boundary)):
-            # check that the implicit time step from vlong is not comparable to the HUXt timestep
+            # check that the implicit time step from vlong is not comparable to the SURF timestep
             assert b_boundary.size < 4600  # this equates to about 9 mins
 
             self.b_boundary = b_boundary
@@ -826,7 +831,7 @@ class SURF:
             temp_unit = self.temp_boundary.unit
             self.temp_boundary = np.interp(self.temp_boundary_lons.value, lon_shifted, temp_b_shifted.value, period=self.twopi) * temp_unit
 
-        # Compute the buffertime required to spin up HUXt, based on minimum speed on the inner boundary
+        # Compute the buffertime required to spin up SURF, based on minimum speed on the inner boundary
         # and span of radial grid
         self.buffertime = 1.05 * (self.rrel[-1] / self.v_boundary.min()).to(u.day)
 
@@ -1024,7 +1029,7 @@ class SURF:
     
     def process_longitude(self, i, n_cme, n_hcs_max, streak_times):
         """
-        Process a single longitude slice in the HUXt simulation.
+        Process a single longitude slice in the SURF simulation.
         This helper function is used for parallel execution across longitudes.
         Routes to the appropriate solver based on self.solver setting.
         
@@ -1075,7 +1080,7 @@ class SURF:
             rhoslice = np.zeros(len(self.model_time))
             tempslice = np.zeros(len(self.model_time))
 
-        # actually run the HUXt solver
+        # actually run the solver
         v, cme_r_bounds, cme_v_bounds, hcs_r, streak_r, rho_out, temp_out = solve_radial(
                                                                       self.input_v_ts[:, i].value,
                                                                       bslice,
@@ -1370,9 +1375,9 @@ class SURF:
     
     def solve(self, cme_list, streak_carr=np.array([])*u.rad, save=False, tag=''):
         """
-        Solve HUXt for the provided longitudinal boundary conditions and cme list. Updates the HUXt.v_grid
+        Solve SURF for the provided longitudinal boundary conditions and cme list. Updates the SURF.v_grid
         Args:
-            cme_list: A list of ConeCME instances to use in solving HUXt
+            cme_list: A list of ConeCME instances to use in solving SURF
             streak_carr: An numpy array of Carrington longitudes from which to trace streaklines, units of radians.
             save: Boolean, if True saves model output to HDF5 file
             tag: String, appended to the filename of saved solution.
@@ -1421,16 +1426,16 @@ class SURF:
                     cme_hae = np.interp(cme.t_launch.to(u.s).value,
                                         dt_t0.value, dlon_t0)
                     # adjust the CME HEEQ longitude accordingly
-                    cme.longitude_huxt = zerototwopi(cme.longitude + cme_hae) * u.rad
+                    cme.longitude_surf = zerototwopi(cme.longitude + cme_hae) * u.rad
                 else:
-                    cme.longitude_huxt = cme.longitude
+                    cme.longitude_surf = cme.longitude
 
                 if cme.t_launch >= 0*u.s:
                     # add the CME to the list
                     cme_list_checked.append(cme)
                 else:
                     print(f"Warning: ConeCME had negative t_launch ({cme.t_launch}), which is not allowed.")
-                    print("Warning: This ConeCME object was not passed into the HUXt solver")
+                    print("Warning: This ConeCME object was not passed into the SURF solver")
             else:
                 print("Warning: cme_list contained objects other than ConeCME instances. These were excluded")
 
@@ -1723,7 +1728,7 @@ class SURF:
              out_filepath: Full path to the saved file.
         """
         # Open up hdf5 data file for the HI flow stats
-        filename = "HUXt_CR{:03d}_{}.hdf5".format(np.int32(self.cr_num.value), tag)
+        filename = "SURF_CR{:03d}_{}.hdf5".format(np.int32(self.cr_num.value), tag)
         out_filepath = os.path.join(self._data_dir_, filename)
 
         if os.path.isfile(out_filepath):
@@ -1863,7 +1868,7 @@ class SURF:
         Args:
             body: String specifying which body to look up. Valid bodies are Earth, Venus, Mercury, STA, and STB.
         Returns:
-            obs: An Observer instance for body at times from HUXt.time_init + HUXt.time_out
+            obs: An Observer instance for body at times from SURF.time_init + SURF.time_out
         """
         times = self.time_init + self.time_out
         obs = Observer(body, times)
@@ -1898,15 +1903,15 @@ class SURF3d:
             br_map: Inner Br boundary Carrington map. Must have no units.
             br_map_lat: List of latitude positions for br_map, in radians
             br_map_long: List of Carrington longitudes for br_map, in radians
-            latitude_max: Maximum helio latitude (from the equator) of HUXt plane, in degrees
-            latitude_min: Maximum helio latitude (from the equator) of HUXt plane, in degrees
+            latitude_max: Maximum helio latitude (from the equator) of SURF plane, in degrees
+            latitude_min: Maximum helio latitude (from the equator) of SURF plane, in degrees
             cr_num: Integer Carrington rotation number. Used to determine the planetary and spacecraft positions
             cr_lon_init: Carrington longitude of Earth at model initialisation, in degrees.
-            lon_out: A specific single longitude (relative to Earth) to compute HUXt solution along, in degrees
-            lon_start: The first longitude (in a clockwise sense) of the longitude range to solve HUXt over.
-            lon_stop: The last longitude (in a clockwise sense) of the longitude range to solve HUXt over.
-            r_min: The radial inner boundary distance of HUXt.
-            r_max: The radial outer boundary distance of HUXt.
+            lon_out: A specific single longitude (relative to Earth) to compute SURF solution along, in degrees
+            lon_start: The first longitude (in a clockwise sense) of the longitude range to solve SURF over.
+            lon_stop: The last longitude (in a clockwise sense) of the longitude range to solve SURF over.
+            r_min: The radial inner boundary distance of SURF.
+            r_max: The radial outer boundary distance of SURF.
             simtime: Duration of the simulation window, in days.
             dt_scale: Integer scaling number to set the model output time step relative to the models CFL time.
             cme_expansion: Boolean, whether CMEs have a declining velocity profile at the inner boundary
@@ -1920,7 +1925,7 @@ class SURF3d:
         assert (len(v_map_lat) == len(v_map[:, 1]))
         assert (len(v_map_long) == len(v_map[1, :]))
 
-        # Get the HUXt longitudinal grid
+        # Get the SURF longitudinal grid
         longs, dlon, nlon = longitude_grid(lon_start=0.0 * u.rad, lon_stop=2 * np.pi * u.rad)
 
         # Extract the vr value at the given latitudes
@@ -2004,7 +2009,7 @@ def _compute_parker_mapping(v_from_kms, T_from, n_from, r_from_km, r_to_km, gamm
     """
     Core Parker mapping computation (fully vectorized and JIT-compiled).
     
-    All inputs/outputs in HUXt standard units:
+    All inputs/outputs in SURF standard units:
         v in km/s, T in K, n in cm^-3, r in km
     
     Physical constants in SI used internally.
@@ -2266,7 +2271,7 @@ def radial_grid(r_min=30.0 * u.solRad, r_max=240. * u.solRad):
         print("Warning, r_max should not be more than 400rs. Defaulting to 400rs")
         r_max = 400 * u.solRad
 
-    constants = huxt_constants()
+    constants = surf_constants()
     dr = constants['dr']
     r = np.arange(r_min.value, r_max.value + dr.value, dr.value)
     r = r * dr.unit
@@ -2383,7 +2388,7 @@ def time_grid(simtime, dt_scale):
         time_grid_dict: A dictionary containing arrays of the models intrinsic time steps and the requsted output
                         timesteps.
     """
-    constants = huxt_constants()
+    constants = surf_constants()
     v_max = constants['v_max']
     dr = constants['dr']
     dr = dr.to('km')
@@ -2425,11 +2430,11 @@ def _setup_dirs_():
 
     sim_dir = base_dir / "data" / 'surf'
     sim_dir.mkdir(parents=True, exist_ok=True)
-    dirs['HUXt_data'] = str(sim_dir)
+    dirs['SURF_data'] = str(sim_dir)
 
     fig_dir = base_dir / "figures"
     fig_dir.mkdir(parents=True, exist_ok=True)
-    dirs['HUXt_figures'] = str(fig_dir)
+    dirs['SURF_figures'] = str(fig_dir)
 
     # Just check the directories exist.
     for key, val in dirs.items():
@@ -2475,7 +2480,7 @@ def solve_radial_compressible(v_bc_kms, rho_bc_kgm3, T_bc_K, model_time, time_ou
     Solve 1D radial solar wind expansion using a compressible solver with selectable Riemann solver.
     
     This function wraps the CompressibleSolver class with proper unit conversions and 
-    time handling for integration with HUXt.
+    time handling for integration with SURF.
     
     Parameters
     ----------
@@ -2541,7 +2546,7 @@ def solve_radial_compressible(v_bc_kms, rho_bc_kgm3, T_bc_K, model_time, time_ou
     v_bc_si = v_bc_kms * KM_TO_M  # m/s
     rho_bc_si = rho_bc_kgm3  # already kg/m³
     
-    # Convert HUXt radial grid to m
+    # Convert SURF radial grid to m
     r_grid_m = r_grid * KM_TO_M
     
     # Create output time grid for solver - include spin-up snapshots
@@ -2623,7 +2628,7 @@ def solve_radial_compressible(v_bc_kms, rho_bc_kgm3, T_bc_K, model_time, time_ou
         rho_out_si = rho_interp
         temp_out_K = temp_interp
     
-    # Convert to HUXt units
+    # Convert to SURF units
     v_out_kms = v_out_si / KM_TO_M  # m/s -> km/s
     rho_out_kgm3 = rho_out_si  # already kg/m³
     temp_out = temp_out_K  # K (no conversion)
@@ -2696,7 +2701,7 @@ def solve_radial(vinput, binput, iscmeinput, model_time, rrel, params,
         iscmeinput: Timeseries of in/out of a CME at the inner boundary.
         model_time: Array of model timesteps.
         rrel: Array of model radial coordinates relative to 30rS.
-        params: Array of HUXt parameters.
+        params: Array of SURF parameters.
         n_cme: Number of CMEs in the whole model run (not nec this longitude).
         n_hcs_max: Maximum number of HCS crossings at any longitude
         streak_times: time indices of streak foot points to track
@@ -2712,7 +2717,7 @@ def solve_radial(vinput, binput, iscmeinput, model_time, rrel, params,
         temp_grid: Array of radial temperature profile as function of time (only if compressible=True, else None).
     """
 
-    # unpack the HUXt params
+    # unpack the SURF params
     dtdr = params[0]
     alpha = params[1]
     r_accel = params[2]
@@ -2972,10 +2977,10 @@ def add_cmes_to_input_series(vinput, model_time, lon, r_boundary, cme_params, la
         vinput: Timeseries of inner boundary solar wind speeds.
         model_time: Array of model timesteps
         lon: The longitude of this radial
-        r_boundary: The HUXt inner boundary in rS
+        r_boundary: The SURF inner boundary in rS
         cme_params: Array of ConeCME parameters to include in the solution. One row for each CME, with columns as
                     required by _is_in_cone_cme_boundary_expanding_
-        latitude: Latitude (from the equator) of the HUXt plane
+        latitude: Latitude (from the equator) of the SURF plane
         rhoinput: Timeseries of inner boundary density (optional, for compressible solver)
         tempinput: Timeseries of inner boundary temperature (optional, for compressible solver)
         rho_ambient: Timeseries of ambient (pre-CME) density (optional, for compressible solver)
@@ -3089,7 +3094,7 @@ def _upwind_step_(v_up, v_dn, dtdr, alpha, r_accel, rrel):
     Args:
         v_up: A numpy array of the upwind radial values. Units of km/s.
         v_dn: A numpy array of the downwind radial values. Units of km/s.
-        dtdr: Ratio of HUXts time step and radial grid step. Units of s/km.
+        dtdr: Ratio of SURF time step and radial grid step. Units of s/km.
         alpha: Scale parameter for residual Solar wind acceleration.
         r_accel: Spatial scale parameter of residual solar wind acceleration. Units of km.
         rrel: The model radial grid relative to the radial inner boundary coordinate. Units of km.
@@ -3121,7 +3126,7 @@ def _upwind_step_accel_limit(v_up, v_dn, dtdr, alpha, r_accel, rrel):
     Args:
         v_up: A numpy array of the upwind radial values. Units of km/s.
         v_dn: A numpy array of the downwind radial values. Units of km/s.
-        dtdr: Ratio of HUXts time step and radial grid step. Units of s/km.
+        dtdr: Ratio of SURF time step and radial grid step. Units of s/km.
         alpha: Scale parameter for residual Solar wind acceleration.
         r_accel: Spatial scale parameter of residual solar wind acceleration. Units of km.
         rrel: The model radial grid relative to the radial inner boundary coordinate. Units of km.
@@ -3172,7 +3177,7 @@ def _upwind_step_compressible_(v_up, v_dn, rho_up, rho_dn, temp_up, temp_dn,
         rho_dn: A numpy array of the downwind density values. Units of kg/m^3.
         temp_up: A numpy array of the upwind temperature values. Units of K.
         temp_dn: A numpy array of the downwind temperature values. Units of K.
-        dtdr: Ratio of HUXt time step and radial grid step. Units of s/km.
+        dtdr: Ratio of SURF time step and radial grid step. Units of s/km.
         alpha: Scale parameter for residual Solar wind acceleration (NOT USED in compressible solver).
         r_accel: Acceleration scale (NOT USED in compressible solver).
         rrel: The model radial grid relative to the radial inner boundary coordinate. Units of km.
@@ -3400,11 +3405,11 @@ def load_SURF_run(filepath):
         
         if nlon == 1:
             constructor_kwargs['lon_out'] = lon
-            model = HUXt(**constructor_kwargs)
+            model = SURF(**constructor_kwargs)
         elif nlon > 1:
             constructor_kwargs['lon_start'] = lon.min()
             constructor_kwargs['lon_stop'] = lon.max()
-            model = HUXt(**constructor_kwargs)
+            model = SURF(**constructor_kwargs)
 
         # Reset the longitudes, as when onlyt a wedge is simulated, it gets confused.
         model.lon = lon
