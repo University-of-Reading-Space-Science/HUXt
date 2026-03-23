@@ -10,7 +10,7 @@ import huxt.huxt as h
 
 def make_time_dependent_test_data():
     """
-    Generate a HUXt simulation with time dependent inner boundary and a Cone CME. Save these data (and CME arrival
+    Generate a SURF-HUXt simulation with time dependent inner boundary and a Cone CME. Save these data (and CME arrival
     statistics) into data/reference_data to serve as reference cases in the test suite.
     Returns:
     """

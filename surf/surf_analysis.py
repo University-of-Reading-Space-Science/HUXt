@@ -40,9 +40,9 @@ def get_figure_dir():
 def plot(model, time, save=False, tag='', fighandle=np.nan, axhandle=np.nan, minimalplot=False, plotHCS=True,
          annotateplot=True, trace_earth_connection=False, plot_rmax=None):
     """
-    Make a contour plot on polar axis of the solar wind solution at a specific time.
+    Make a contour plot on polar axis of the solar wind solution at a specific time for HUXt solver.
     Args:
-        model: An instance of the HUXt class with a completed solution.
+        model: An instance of the SURF class with a completed solution.
         time: Time to look up closet model time to (with an astropy.unit of time).
         save: Boolean to determine if the figure is saved.
         tag: String to append to the filename if saving the figure.
@@ -71,7 +71,7 @@ def plot(model, time, save=False, tag='', fighandle=np.nan, axhandle=np.nan, min
     id_t = np.argmin(np.abs(model.time_out - time))
 
     # Get plotting data
-    lon_arr, dlon, nlon = h.longitude_grid()
+    lon_arr, dlon, nlon = surf.longitude_grid()
     lon, rad = np.meshgrid(lon_arr.value, model.r.value)
 
     orig_cmap = mpl.cm.viridis
@@ -256,13 +256,13 @@ def animate(model, tag, duration=10, fps=20, plotHCS=True, trace_earth_connectio
     """
     Animate the model solution, and save as an MP4.
     Args:
-        model: An instance of the HUXt class with a completed solution.
+        model: An instance of the SURF class with a completed solution.
         tag: String to append to the filename of the animation.
         duration: the movie duration, in seconds
         fps: frames per second
         plotHCS: Boolean flag on whether to plot the heliospheric current sheet location.
         trace_earth_connection: Boolean flag on whether to plot the earth connected streak line.
-        outputfilepath: full path, including filename if output is to be saved anywhere other than huxt/figures
+        outputfilepath: full path, including filename if output is to be saved anywhere other than SURF/figures
         plot_rmax: float (no units, but in rS). Limit outer boundary to help with field lines during CMEs
     Returns:
         None
@@ -311,7 +311,7 @@ def animate(model, tag, duration=10, fps=20, plotHCS=True, trace_earth_connectio
         filepath = outputfilepath
     else:
         cr_num = np.int32(model.cr_num.value)
-        filename = "HUXt_CR{:03d}_{}_movie.mp4".format(cr_num, tag)
+        filename = "SURF_CR{:03d}_{}_movie.mp4".format(cr_num, tag)
         figure_dir = get_figure_dir()
         filepath = figure_dir.joinpath(filename)
 
@@ -329,7 +329,7 @@ def plot_compressible(model, time, save=False, tag='', fighandle=np.nan, minimal
     Shows velocity, density, and temperature in separate subplots.
     
     Args:
-        model: An instance of the HUXt class with a completed compressible solution.
+        model: An instance of the SURF class with a completed compressible solution.
         time: Time to look up closest model time to (with an astropy.unit of time).
         save: Boolean to determine if the figure is saved.
         tag: String to append to the filename if saving the figure.
@@ -359,7 +359,7 @@ def plot_compressible(model, time, save=False, tag='', fighandle=np.nan, minimal
     id_t = np.argmin(np.abs(model.time_out - time))
 
     # Get plotting data
-    lon_arr, dlon, nlon = h.longitude_grid()
+    lon_arr, dlon, nlon = surf.longitude_grid()
     lon, rad = np.meshgrid(lon_arr.value, model.r.value)
 
     # Prepare data arrays for velocity, density, and temperature
@@ -676,7 +676,7 @@ def plot_compressible_with_ts(model, time, save=False, tag='', fighandle=np.nan,
     right shows Earth timeseries of V, n, T, and P_dyn.
     
     Args:
-        model: An instance of the HUXt class with a completed compressible solution.
+        model: An instance of the SURF class with a completed compressible solution.
         time: Time to look up closest model time to (with an astropy.unit of time).
         save: Boolean to determine if the figure is saved.
         tag: String to append to the filename if saving the figure.
@@ -713,7 +713,7 @@ def plot_compressible_with_ts(model, time, save=False, tag='', fighandle=np.nan,
     id_t = np.argmin(np.abs(model.time_out - time))
 
     # Get plotting data
-    lon_arr, dlon, nlon = h.longitude_grid()
+    lon_arr, dlon, nlon = surf.longitude_grid()
     lon, rad = np.meshgrid(lon_arr.value, model.r.value)
 
     # Prepare data arrays
@@ -1040,7 +1040,7 @@ def plot_compressible_with_ts(model, time, save=False, tag='', fighandle=np.nan,
 
     if save:
         cr_num = np.int32(model.cr_num.value)
-        filename = "HUXt_compressible_ts_CR{:03d}_{}_frame_{:03d}.png".format(cr_num, tag, id_t)
+        filename = "SURF_hydro_ts_CR{:03d}_{}_frame_{:03d}.png".format(cr_num, tag, id_t)
         figure_dir = get_figure_dir()
         filepath = figure_dir.joinpath(filename)
         fig.savefig(filepath, dpi=150, bbox_inches='tight')
@@ -1055,11 +1055,11 @@ def animate_compressible_with_ts(model, tag='', duration=10, fps=20, outputfilep
     Creates an animation using plot_compressible_with_ts showing the polar plot and Earth timeseries.
     
     Args:
-        model: An instance of the HUXt class with a completed compressible solution.
+        model: An instance of the SURF class with a completed compressible solution.
         tag: String to append to the filename of the animation.
         duration: the movie duration, in seconds
         fps: frames per second
-        outputfilepath: full path, including filename if output is to be saved anywhere other than huxt/figures
+        outputfilepath: full path, including filename if output is to be saved anywhere other than SURF/figures
         minimalplot: Boolean, if True removes colorbar, planets, spacecraft, and labels.
         annotateplot: Boolean, whether to include text and legends
         plot_rmax: float (no units, but in Rs). Limit outer boundary to help with field lines during CMEs
@@ -1107,7 +1107,7 @@ def animate_compressible_with_ts(model, tag='', duration=10, fps=20, outputfilep
         filepath = outputfilepath
     else:
         cr_num = np.int32(model.cr_num.value)
-        filename = "HUXt_compressible_ts_CR{:03d}_{}_movie.mp4".format(cr_num, tag)
+        filename = "SURF_hydro_ts_CR{:03d}_{}_movie.mp4".format(cr_num, tag)
         figure_dir = get_figure_dir()
         filepath = figure_dir.joinpath(filename)
     
@@ -1123,7 +1123,7 @@ def plot_radial(model, time, lon, save=False, tag=''):
     Plot the radial solar wind profile at model time closest to specified time.
     For compressible models, shows velocity, density, and temperature.
     Args:
-        model: An instance of the HUXt class with a completed solution.
+        model: An instance of the SURF class with a completed solution.
         time: Time (in seconds) to find the closest model time step to.
         lon: The model longitude of the selected radial to plot.
         save: Boolean to determine if the figure is saved.
@@ -1223,7 +1223,7 @@ def plot_radial(model, time, lon, save=False, tag=''):
     # Add label
     time_label = " Time: {:3.2f} days".format(time_out)
     lon_label = " Lon: {:3.2f}$^\\circ$".format(lon_out)
-    label = "HUXt" + time_label + lon_label
+    label = "SURF" + time_label + lon_label
     if is_compressible:
         axes[0].set_title(label, fontsize=20)
     else:
@@ -1232,7 +1232,7 @@ def plot_radial(model, time, lon, save=False, tag=''):
     if save:
         cr_num = np.int32(model.cr_num.value)
         lon_tag = "{}deg".format(lon.to(u.deg).value)
-        filename = "HUXt_CR{:03d}_{}_radial_profile_lon_{}_frame_{:03d}.png".format(cr_num, tag, lon_tag, id_t)
+        filename = "SURF_CR{:03d}_{}_radial_profile_lon_{}_frame_{:03d}.png".format(cr_num, tag, lon_tag, id_t)
         figure_dir = get_figure_dir()
         filepath = figure_dir.joinpath(filename)
         fig.savefig(filepath)
@@ -1245,7 +1245,7 @@ def plot_timeseries(model, radius, lon, save=False, tag=''):
     Plot the solar wind model timeseries at model radius and longitude closest to those specified.
     For compressible models, shows velocity, density, and temperature.
     Args:
-        model: An instance of the HUXt class with a completed solution.
+        model: An instance of the SURF class with a completed solution.
         radius: Radius to find the closest model radius to.
         lon: Longitude to find the closest model longitude to.
         save: Boolean to determine if the figure is saved.
@@ -1334,7 +1334,7 @@ def plot_timeseries(model, radius, lon, save=False, tag=''):
         cr_num = np.int32(model.cr_num.value)
         r_tag = np.int32(r_out)
         lon_tag = np.int32(lon_out)
-        template_string = "HUXt1D_CR{:03d}_{}_time_series_radius_{:03d}_lon_{:03d}.png"
+        template_string = "SURF1D_CR{:03d}_{}_time_series_radius_{:03d}_lon_{:03d}.png"
         filename = template_string.format(cr_num, tag, r_tag, lon_tag)
         figure_dir = get_figure_dir()
         filepath = figure_dir.joinpath(filename)
@@ -1350,11 +1350,11 @@ def get_observer_timeseries(model, observer='Earth', suppress_warning=False):
     observer ephemeris. Nearest neighbour interpolation in r, linear interpolation in longitude.
     For compressible models, also includes density and temperature.
     Args:
-        model: A HUXt instance with a solution generated by HUXt.solve().
+        model: A SURF instance with a solution generated by SURF.solve().
         observer: String name of the observer. Can be any permitted by Observer class.
         suppress_warning: Bool for stopping a warning printing.
     Returns:
-         time_series: A pandas dataframe giving time series of solar wind speed, and if it exists in the HUXt
+         time_series: A pandas dataframe giving time series of solar wind speed, and if it exists in the SURF
                             solution, the magnetic field polarity (and for compressible models, density and temperature), at the observer.
     """
     earth_pos = model.get_observer('Earth')
@@ -1372,8 +1372,8 @@ def get_observer_timeseries(model, observer='Earth', suppress_warning=False):
     model_lon_obs = zerototwopi(model_lon_earth + deltalon.value)
 
     if (model.frame == 'sidereal') & (model.nlon == 1) & (not suppress_warning):
-        print("Warning: HUXt configured for a 1-D run in the sidereal frame. This simulation will not work correctly"
-              "with functions like huxt_analysis.get_observer_time_series()")
+        print("Warning: SURF configured for a 1-D run in the sidereal frame. This simulation will not work correctly"
+              "with functions like surf_analysis.get_observer_time_series()")
 
     if model.nlon == 1 and not suppress_warning:
         print('Single longitude simulated. Extracting time series at Observer r')
@@ -1446,20 +1446,20 @@ def get_observer_timeseries(model, observer='Earth', suppress_warning=False):
     return time_series
 
 
-def get_HUXt_at_position_HEEQ(model, target_mjd, target_r, target_lon_heeq):
+def get_SURF_at_position_HEEQ(model, target_mjd, target_r, target_lon_heeq):
     """
-    Extract and return HUXt fields at a generic set of locations. Assumes the 
+    Extract and return SURF fields at a generic set of locations. Assumes the 
     object is in the lat plane of the model. For compressible models, also includes
     density and temperature.
     
     Args:
-        model: The HUXt model class for the solved run.
+        model: The SURF model class for the solved run.
         target_mjd: Time at which values should be extracted, as MJD
         target_r: radial distance at which values should be extracted, in rS
         target_lon_heeq: HEEQ lon at which values should be extracted, in radians
         
     Returns:
-       time_series: A pandas dataframe giving time series of solar wind speed, and if it exists in the HUXt
+       time_series: A pandas dataframe giving time series of solar wind speed, and if it exists in the SURF
                            solution, the magnetic field polarity (and for compressible models, density and temperature), at the observer.
     """
     
@@ -1495,10 +1495,10 @@ def get_HUXt_at_position_HEEQ(model, target_mjd, target_r, target_lon_heeq):
         # check the required time is within the model run
         if (target_mjd[t] >= tim_mjd[0]) & (target_mjd[t] <= tim_mjd[-1]):
             
-            # find the nearest time index in the HUXt run
+            # find the nearest time index in the SURF run
             id_t = np.argmin(np.abs(tim_mjd - target_mjd[t]))
             
-            # compute the HUXT long associated with the given HEEQ lon
+            # compute the SURF long associated with the given HEEQ lon
             model_lon_obs = zerototwopi(model_lon_earth[id_t] + target_lon_heeq[t])
     
             # find the nearest longitude cell
@@ -1559,7 +1559,7 @@ def get_HUXt_at_position_HEEQ(model, target_mjd, target_r, target_lon_heeq):
 
 def plot_earth_timeseries(model, plot_omni=True, save=False, tag='', timefromrunstart='False'):
     """
-    A function to plot the HUXt Earth time series. With option to download and plot OMNI data.
+    A function to plot the SURF Earth time series. With option to download and plot OMNI data.
     For compressible models, also plots density and temperature.
     Args:
         model : input model class
@@ -1573,7 +1573,7 @@ def plot_earth_timeseries(model, plot_omni=True, save=False, tag='', timefromrun
 
     """
 
-    huxt_ts = get_observer_timeseries(model, observer='Earth')
+    surf_ts = get_observer_timeseries(model, observer='Earth')
     
     is_compressible = hasattr(model, 'compressible') and model.compressible
 
@@ -1593,14 +1593,14 @@ def plot_earth_timeseries(model, plot_omni=True, save=False, tag='', timefromrun
         times = model.time_out.to(u.day).value
         plot_omni = False
     else:
-        times = huxt_ts['time']
+        times = surf_ts['time']
     
     # Velocity panel (always first)
     panel_idx = 0
     if is_compressible:
-        axs[panel_idx].plot(times, huxt_ts['vsw'], 'r', label='SURF-hydro')
+        axs[panel_idx].plot(times, surf_ts['vsw'], 'r', label='SURF-hydro')
     else:
-        axs[panel_idx].plot(times, huxt_ts['vsw'], 'r', label='SURF-HUXt')
+        axs[panel_idx].plot(times, surf_ts['vsw'], 'r', label='SURF-HUXt')
     axs[panel_idx].set_ylim(250, 1000)
     axs[panel_idx].set_ylabel('V [km/s]')
     
@@ -1608,23 +1608,23 @@ def plot_earth_timeseries(model, plot_omni=True, save=False, tag='', timefromrun
     if hasattr(model, 'b_grid'):
         panel_idx += 1
         if is_compressible:
-            axs[panel_idx].plot(times, np.sign(huxt_ts['bpol']), 'r.', label='SURF-hydro')
+            axs[panel_idx].plot(times, np.sign(surf_ts['bpol']), 'r.', label='SURF-hydro')
         else:
-            axs[panel_idx].plot(times, np.sign(huxt_ts['bpol']), 'r.', label='SURF-HUXt')
+            axs[panel_idx].plot(times, np.sign(surf_ts['bpol']), 'r.', label='SURF-HUXt')
         axs[panel_idx].set_ylabel(r'B$_{\text{POL}}$')
     
     # Density panel (if compressible)
-    if is_compressible and 'n' in huxt_ts.columns:
+    if is_compressible and 'n' in surf_ts.columns:
         panel_idx += 1
-        axs[panel_idx].semilogy(times, huxt_ts['n'], 'r-', label='SURF-hydro')
+        axs[panel_idx].semilogy(times, surf_ts['n'], 'r-', label='SURF-hydro')
         axs[panel_idx].set_ylabel(r'n$_\text{P}$ [cm$^{-3}$]')
         axs[panel_idx].set_ylim(0.101, 999)
         axs[panel_idx].grid(True, alpha=0.3)
     
     # Temperature panel (if compressible)
-    if is_compressible and 'T' in huxt_ts.columns:
+    if is_compressible and 'T' in surf_ts.columns:
         panel_idx += 1
-        axs[panel_idx].semilogy(times, huxt_ts['T'], 'r-', label='SURF-hydro')
+        axs[panel_idx].semilogy(times, surf_ts['T'], 'r-', label='SURF-hydro')
         axs[panel_idx].set_ylabel(r'T [K]')
         axs[panel_idx].set_ylim(1e4, 9.9e6)
         axs[panel_idx].grid(True, alpha=0.3)
@@ -1645,7 +1645,7 @@ def plot_earth_timeseries(model, plot_omni=True, save=False, tag='', timefromrun
             axs[1].set_ylim(-1.1, 1.1)
         
         # Plot OMNI density if compressible model
-        if is_compressible and 'n' in huxt_ts.columns:
+        if is_compressible and 'n' in surf_ts.columns:
             # Find the density panel index
             density_panel = 1 if hasattr(model, 'b_grid') else 0
             density_panel += 1
@@ -1658,7 +1658,7 @@ def plot_earth_timeseries(model, plot_omni=True, save=False, tag='', timefromrun
                 axs[density_panel].semilogy(plotdata['datetime'], omni_n, 'k-', label='OMNI')
         
         # Plot OMNI temperature if compressible model
-        if is_compressible and 'T' in huxt_ts.columns:
+        if is_compressible and 'T' in surf_ts.columns:
             # Find the temperature panel index
             temp_panel = 1 if hasattr(model, 'b_grid') else 0
             temp_panel += 2
@@ -1686,7 +1686,7 @@ def plot_earth_timeseries(model, plot_omni=True, save=False, tag='', timefromrun
 
     if save:
         cr_num = np.int32(model.cr_num.value)
-        filename = "HUXt_CR{:03d}_{}_earth_timeseries.png".format(cr_num, tag)
+        filename = "SURF_CR{:03d}_{}_earth_timeseries.png".format(cr_num, tag)
         figure_dir = get_figure_dir()
         filepath = figure_dir.joinpath(filename)
         fig.savefig(filepath)
@@ -1699,7 +1699,7 @@ def plot3d_radial_lat_slice(model3d, time, lon=np.nan * u.deg, save=False, tag='
     Make a contour plot on polar axis of a radial-latitudinal plane of the solar wind solution at a fixed time and
     longitude.
     Args:
-        model3d: An instance of the HUXt3d class with a completed solution.
+        model3d: An instance of the SURF3d class with a completed solution.
         time: Time to look up closet model time to (with an astropy.unit of time).
         lon: The longitude along which to render the radial-latitude plane.
         save: Boolean to determine if the figure is saved.
@@ -1715,8 +1715,8 @@ def plot3d_radial_lat_slice(model3d, time, lon=np.nan * u.deg, save=False, tag='
     dv = 10
     ylab = "Solar Wind Speed (km/s)"
 
-    # get the metadata from one of the individual HUXt elements
-    model = model3d.HUXtlat[0]
+    # get the metadata from one of the individual SURF elements
+    model = model3d.SURFlat[0]
 
     if (time < model.time_out.min()) | (time > (model.time_out.max())):
         print("Error, input time outside span of model times. Defaulting to closest time")
@@ -1734,7 +1734,7 @@ def plot3d_radial_lat_slice(model3d, time, lon=np.nan * u.deg, save=False, tag='
     # loop over latitudes and extract the radial profiles
     mercut = np.ones((len(model.r), model3d.nlat))
     for n in range(0, model3d.nlat):
-        model = model3d.HUXtlat[n]
+        model = model3d.SURFlat[n]
         mercut[:, n] = model.v_grid[id_t, :, id_lon]
 
     orig_cmap = mpl.cm.viridis
@@ -1767,7 +1767,7 @@ def plot3d_radial_lat_slice(model3d, time, lon=np.nan * u.deg, save=False, tag='
         cme_r_front = np.ones(model3d.nlat) * np.nan
         cme_r_back = np.ones(model3d.nlat) * np.nan
         for ilat in range(0, model3d.nlat):
-            model = model3d.HUXtlat[ilat]
+            model = model3d.SURFlat[ilat]
 
             cme_r_front[ilat] = model.cme_particles_r[n, id_t, 0, id_lon]
             cme_r_back[ilat] = model.cme_particles_r[n, id_t, 1, id_lon]
@@ -1853,12 +1853,12 @@ def plot3d_radial_lat_slice(model3d, time, lon=np.nan * u.deg, save=False, tag='
     label = label + '\n ' + (model.time_init + time).strftime('%Y-%m-%d %H:%M')
     fig.text(0.70, pos.y0, label, fontsize=16)
 
-    label = "HUXt3D \nLong: {:3.1f} deg".format(lon_out.to(u.deg).value)
+    label = "SURF3D \nLong: {:3.1f} deg".format(lon_out.to(u.deg).value)
     fig.text(0.175, pos.y0, label, fontsize=16)
 
     if save:
         cr_num = np.int32(model.cr_num.value)
-        filename = "HUXt_CR{:03d}_{}_3D_frame_{:03d}.png".format(cr_num, tag, id_t)
+        filename = "SURF_CR{:03d}_{}_3D_frame_{:03d}.png".format(cr_num, tag, id_t)
         figure_dir = get_figure_dir()
         filepath = figure_dir.joinpath(filename)
         fig.savefig(filepath)
@@ -1870,16 +1870,16 @@ def animate_3d(model3d, lon=0.0 * u.deg, tag='', duration=10, fps=20, outputfile
     """
     Animate the model solution, and save as an MP4.
     Args:
-        model3d: An instance of HUXt3d
+        model3d: An instance of SURF3d
         lon: The longitude along which to render the latitudinal slice.
         tag: String to append to filename when saving the animation.
         duration: the movie duration, in seconds
         fps: frames per second
-        outputfilepath: full path, including filename if output is to be saved anywhere other than huxt/figures
+        outputfilepath: full path, including filename if output is to be saved anywhere other than SURF/figures
     Returns:
         None
     """
-    model = model3d.HUXtlat[0]
+    model = model3d.SURFlat[0]
     
     interval = (1/fps)*1000
     nframes = int(duration*1000/interval)
@@ -1913,7 +1913,7 @@ def animate_3d(model3d, lon=0.0 * u.deg, tag='', duration=10, fps=20, outputfile
         filepath = outputfilepath
     else:
         cr_num = np.int32(model.cr_num.value)
-        filename = "HUXt_CR{:03d}_{}_3D_movie.mp4".format(cr_num, tag)
+        filename = "SURF_CR{:03d}_{}_3D_movie.mp4".format(cr_num, tag)
         figure_dir = get_figure_dir()
         filepath = figure_dir.joinpath(filename)
     
@@ -1928,7 +1928,7 @@ def plot_bpol(model, time, save=False, tag='', fighandle=np.nan, axhandle=np.nan
     """
     Make a contour plot on polar axis of the solar wind solution at a specific time.
     Args:
-        model: An instance of the HUXt class with a completed solution.
+        model: An instance of the SURF class with a completed solution.
         time: Time to look up closet model time to (with an astropy.unit of time).
         save: Boolean to determine if the figure is saved.
         tag: String to append to the filename if saving the figure.
@@ -1947,7 +1947,7 @@ def plot_bpol(model, time, save=False, tag='', fighandle=np.nan, axhandle=np.nan
     id_t = np.argmin(np.abs(model.time_out - time))
 
     # Get plotting data
-    lon_arr, dlon, nlon = h.longitude_grid()
+    lon_arr, dlon, nlon = surf.longitude_grid()
     lon, rad = np.meshgrid(lon_arr.value, model.r.value)
     mymap = mpl.cm.PuOr
     v_sub = model.b_grid[id_t, :, :].copy()
@@ -2054,7 +2054,7 @@ def plot_bpol(model, time, save=False, tag='', fighandle=np.nan, axhandle=np.nan
         label = label + '\n ' + (model.time_init + time).strftime('%Y-%m-%d %H:%M')
         fig.text(0.70, pos.y0, label, fontsize=16)
 
-        label = "HUXt2D"
+        label = "SURF2D"
         fig.text(0.175, pos.y0, label, fontsize=16)
 
         # plot any tracked streaklines
@@ -2074,7 +2074,7 @@ def plot_bpol(model, time, save=False, tag='', fighandle=np.nan, axhandle=np.nan
                 mask = np.isfinite(streak_r)
                 plotlon = np.array(streak_lon)[mask]
                 plotr = np.array(streak_r)[mask]
-                # only add the inner boundary if it's in the HUXt longitude grid
+                # only add the inner boundary if it's in the SURF longitude grid
                 foot_lon = zerototwopi(model.streak_lon_r0[id_t, istreak])
                 dlon_foot = abs(model.lon.value - foot_lon)
                 if dlon_foot.min() <= model.dlon.value:
@@ -2092,7 +2092,7 @@ def plot_bpol(model, time, save=False, tag='', fighandle=np.nan, axhandle=np.nan
 
     if save:
         cr_num = np.int32(model.cr_num.value)
-        filename = "HUXt_CR{:03d}_{}_bpol_frame_{:03d}.png".format(cr_num, tag, id_t)
+        filename = "SURF_CR{:03d}_{}_bpol_frame_{:03d}.png".format(cr_num, tag, id_t)
         figure_dir = get_figure_dir()
         filepath = figure_dir.joinpath(filename)
         fig.savefig(filepath)
@@ -2111,10 +2111,10 @@ def trace_field_line_out(v_trl_kms, longrid_rad, rgrid_km, tgrid_s, start_lon, t
         longrid_rad: model.lon.to(u.rad).value - the longitude grid in radians
         rgrid_km: model.r.to(u.km).value - the radial grid in km
         tgrid_s: model.time_out.to(u.s).value - the time grid in seconds
-        start_lon: The longitude, in HUXt coords, from which to start tracing
+        start_lon: The longitude, in SURF coords, from which to start tracing
         time_start_s: The time from the start of the model run, in seconds, from which to start tracing
         time_stop_s: The time from thr start of the model run, in seconds, at which to stop tracing
-        rot_period_s: the  HUXt rotation period, in seconds
+        rot_period_s: the  SURF rotation period, in seconds
 
     Returns:
         r_streak_km: An array of test particle distances for each longitude at given time step
@@ -2236,7 +2236,7 @@ def respinup_model(v_trl_kms, tgrid_s, rgrid_km, longrid_rad, rot_period_s, buff
         tgrid_s: model.time_out.to(u.s).value - the time grid in seconds
         rgrid_km: model.r.to(u.km).value - the radial grid in km
         longrid_rad: model.lon.to(u.rad).value - the longitude grid in radians
-        rot_period_s: the  HUXt rotation period, in seconds
+        rot_period_s: the  SURF rotation period, in seconds
         buffer_time_s: How back to take the model before the start time, in seconds
 
     Returns:
@@ -2326,7 +2326,7 @@ def find_Earth_connected_field_line(model, time):
     Re-spins the model if necessary
     
     Args:
-        model: The HUXt model class for the solved run. Must be output at dt_scale = 1
+        model: The SURF model class for the solved run. Must be output at dt_scale = 1
         time: The model time at which to trace the field line
     Returns:
         plotlon: The longitudes of the Earth-connected field line (in radians)
@@ -2421,7 +2421,7 @@ def find_Earth_connected_field_line(model, time):
     return plotlon, (plotr*u.km).to(u.solRad).value, optimal_lon, optimal_t
 
 
-def run_WSA_HUXt_td_wedge_about_observer(start_dt, stop_dt, vel_path, vel_format_template, obj='Earth',
+def run_WSA_SURF_td_wedge_about_observer(start_dt, stop_dt, vel_path, vel_format_template, obj='Earth',
                                          deacc=True, dlat=2*u.deg):
     """
     Parameters
@@ -2439,12 +2439,12 @@ def run_WSA_HUXt_td_wedge_about_observer(start_dt, stop_dt, vel_path, vel_format
     deacc : BOOL, optional
         Whether to deacccelerate the WSA speeds from 215 to 21.5 rS. The default is True.
     dlat : float, with units of deg, optional
-        latitudinal spacing of HUXt runs. The default is 2*u.deg.
+        latitudinal spacing of SURF runs. The default is 2*u.deg.
 
     Returns
     -------
-    huxt_ts : pandas dataframe
-        Time series of HUXt speeds and magnetic field polarities
+    surf_ts : pandas dataframe
+        Time series of SURF speeds and magnetic field polarities
 
     """
     
@@ -2472,7 +2472,7 @@ def run_WSA_HUXt_td_wedge_about_observer(start_dt, stop_dt, vel_path, vel_format
     Carrington_coord = coord.transform_to(sunpy.coordinates.HeliographicCarrington(observer="self"))
     coords['lon_carr'] = Carrington_coord.lon.value * np.pi/180
 
-    # get the required lat range for the HUXt runs
+    # get the required lat range for the SURF runs
     obj_max_lat = np.nanmax(coords['lat_heeq'])*180/np.pi
     obj_min_lat = np.nanmin(coords['lat_heeq'])*180/np.pi
     
@@ -2488,13 +2488,13 @@ def run_WSA_HUXt_td_wedge_about_observer(start_dt, stop_dt, vel_path, vel_format
     maxlat = np.ceil(obj_max_lat)
     lat_list = np.arange(minlat, maxlat + 0.0001, dlat.to(u.deg).value)
     
-    # run HUXt at each latitude and extract the values at the object's long and r
-    huxt_cuts = []
+    # run SURF at each latitude and extract the values at the object's long and r
+    surf_cuts = []
     for lat in lat_list:
-        print('Runnig HUXt at lat = ' + str(lat) + ' degrees')
+        print('Runnig SURF at lat = ' + str(lat) + ' degrees')
         thislat = (lat*np.pi/180)*u.rad
-        # create the HUXt input from the WSA files
-        vlongs, brlongs, lon, mjds, times = surfIN.huxt_td_input_from_WSA_runs(vel_path, start_dt, stop_dt,
+        # create the SURF input from the WSA files
+        vlongs, brlongs, lon, mjds, times = surfIN.surf_td_input_from_WSA_runs(vel_path, start_dt, stop_dt,
                                                                             latitude=thislat, deacc=deacc,
                                                                             input_res_days=0.1,
                                                                             format_template=vel_format_template)
@@ -2506,24 +2506,24 @@ def run_WSA_HUXt_td_wedge_about_observer(start_dt, stop_dt, vel_path, vel_format
         model.solve([])
         
         # get values at Earth long
-        cut = get_HUXt_at_position_HEEQ(model, coords['mjd'], coords['r_AU']*215, coords['lon_heeq'])
-        huxt_cuts.append(cut)
+        cut = get_SURF_at_position_HEEQ(model, coords['mjd'], coords['r_AU']*215, coords['lon_heeq'])
+        surf_cuts.append(cut)
 
     # now interpolate the extracted series to the object's latitude
     # copy the basic info across
-    huxtvals = huxt_cuts[0]
-    huxt_ts = huxtvals[['time', 'mjd', 'r']].copy()
+    surfvals = surf_cuts[0]
+    surf_ts = surfvals[['time', 'mjd', 'r']].copy()
     
     # loop through each time step and interpolate in lat
-    for t in range(len(huxtvals)):
+    for t in range(len(surfvals)):
         # get this lat
-        lat_t = np.interp(huxtvals.loc[t, 'mjd'], coords['mjd'], coords['lat_heeq'])
-        b_lat_t = [df.loc[t, 'bpol'] if t in df.index else None for df in huxt_cuts]
-        huxt_ts.loc[t, 'bpol'] = np.interp(lat_t, np.deg2rad(lat_list), b_lat_t)
-        v_lat_t = [df.loc[t, 'vsw'] if t in df.index else None for df in huxt_cuts]
-        huxt_ts.loc[t, 'vsw'] = np.interp(lat_t, np.deg2rad(lat_list), v_lat_t)
+        lat_t = np.interp(surfvals.loc[t, 'mjd'], coords['mjd'], coords['lat_heeq'])
+        b_lat_t = [df.loc[t, 'bpol'] if t in df.index else None for df in surf_cuts]
+        surf_ts.loc[t, 'bpol'] = np.interp(lat_t, np.deg2rad(lat_list), b_lat_t)
+        v_lat_t = [df.loc[t, 'vsw'] if t in df.index else None for df in surf_cuts]
+        surf_ts.loc[t, 'vsw'] = np.interp(lat_t, np.deg2rad(lat_list), v_lat_t)
         
-    return huxt_ts
+    return surf_ts
 
 
 def zerototwopi(angles):
@@ -2574,7 +2574,7 @@ def get_planets_to_plot(model):
     """
     Helper function for plotting - produces a list of planet names to be plotted.
     Args:
-        model: A solved HUXt instance
+        model: A solved SURF instance
     Returns:
         planet_list: A list of planets to plot.
     """
@@ -2596,7 +2596,7 @@ def get_spacecraft_to_plot(model):
     """
         Helper function for plotting - produces a list of spacecarft names to be plotted.
         Args:
-            model: A solved HUXt instance
+            model: A solved SURF instance
         Returns:
             spacecraft_list: A list of spacecraft to plot.
         """

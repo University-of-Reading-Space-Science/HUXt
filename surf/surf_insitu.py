@@ -1,9 +1,9 @@
 """
-Functions for handling in-situ solar wind observations for HUXt.
+Functions for handling in-situ solar wind observations for SURF.
 
 This module contains functions for downloading, processing, and using
 in-situ solar wind measurements (primarily from OMNI) to create
-time-dependent boundary conditions for HUXt simulations.
+time-dependent boundary conditions for SURF simulations.
 """
 
 import datetime
@@ -67,7 +67,7 @@ def get_omni(starttime, endtime):
     id_bad = omni['T'] == 9999999.0
     omni.loc[id_bad, 'T'] = np.nan
 
-    # create a BX_GSE field that is expected by some HUXt fucntions
+    # create a BX_GSE field that is expected by some SURF fucntions
     omni['BX_GSE'] = -omni['BR']
 
     # create a datetime column
@@ -88,7 +88,7 @@ def generate_vCarr_from_OMNI(runstart, runend, nlon_grid=None, omni_input=None, 
     Args:
         runstart: Start time as a datetime
         runend: End time as a datetime
-        nlon_grid: Int. If none specified, will be set to the current HUXt value (usually 128)
+        nlon_grid: Int. If none specified, will be set to the current SURF value (usually 128)
         omni_input: Optional input for supplying the OMNI data. If left as None, it will be downloaded at runtime.
         dt: time resolution, in days is 1*u.day.
         ref_r: radial distance to produce v at, 215*u.solRad by default.
@@ -106,11 +106,11 @@ def generate_vCarr_from_OMNI(runstart, runend, nlon_grid=None, omni_input=None, 
     assert corot_type == 'both' or corot_type == 'back' or corot_type == 'forward'
 
     # set the default longitude grid, check specified value
-    all_lons, dlon, nlon = H.longitude_grid()
+    all_lons, dlon, nlon = surf.longitude_grid()
     if nlon_grid is None:
         nlon_grid = nlon
     if not (nlon_grid == nlon):
-        print('Warning: vCarr generated for different longitude resolution than current HUXt default')
+        print('Warning: vCarr generated for different longitude resolution than current SURF default')
 
     # if omni data is not supplied, download it
     if omni_input is None:
@@ -146,7 +146,7 @@ def generate_vCarr_from_OMNI(runstart, runend, nlon_grid=None, omni_input=None, 
     cr = np.ones(len(omni_int))
     cr_lon_init = np.ones(len(omni_int)) * u.rad
     for i in range(0, len(omni_int)):
-        cr[i], cr_lon_init[i] = surfIN.datetime2huxtinputs(omni_int['datetime'][i])
+        cr[i], cr_lon_init[i] = surfIN.datetime2surfinputs(omni_int['datetime'][i])
 
     omni_int['Carr_lon'] = cr_lon_init.value  # remove unit as this confuses pd.DataFrame.copy() needed later
     omni_int['Carr_lon_unwrap'] = np.unwrap(omni_int['Carr_lon'].to_numpy())
@@ -302,7 +302,7 @@ def generate_vCarr_from_OMNI_DTW(runstart, runend, nlon=None, omni_input=None, r
     Args:
         runstart: Datetime object. Start of the interval
         runend: Datetime object. End of the interval
-        nlon: Int. If none specified, will be set to the current HUXt value (usually 128)
+        nlon: Int. If none specified, will be set to the current SURF value (usually 128)
         omni_input: Optional input of OMNI data. If left as None is downloaded at runtime.
         res: String. Time averaging of OMNI prior to DTW. match to longitude (for nlon = 128, use '5h')
         psi_days: Float, in units of days. DTW parameter, determines window to ignore at the start and end of the fit.
@@ -315,11 +315,11 @@ def generate_vCarr_from_OMNI_DTW(runstart, runend, nlon=None, omni_input=None, r
     """
 
     # set the default longitude grid, check specified value
-    all_lons_huxt, dlon_huxt, nlon_huxt = H.longitude_grid()
+    all_lons_surf, dlon_surf, nlon_surf = surf.longitude_grid()
     if nlon is None:
-        nlon = nlon_huxt
-    if not (nlon == nlon_huxt):
-        print('Warning: vCarr generated for different longitude resolution than current HUXt default')
+        nlon = nlon_surf
+    if not (nlon == nlon_surf):
+        print('Warning: vCarr generated for different longitude resolution than current SURF default')
 
     # Download and process OMNI if not provided
 
@@ -344,7 +344,7 @@ def generate_vCarr_from_OMNI_DTW(runstart, runend, nlon=None, omni_input=None, r
     omni[[dtw_on]] = omni[[dtw_on]].interpolate(method='linear', axis=0).ffill().bfill()
 
     # get the carrington longitude
-    temp = surfIN.datetime2huxtinputs(omni['datetime'].to_numpy())
+    temp = surfIN.datetime2surfinputs(omni['datetime'].to_numpy())
     omni['carr_lon'] = temp[1].value
     # unwrap this.
     omni['clon_unwrap'] = np.unwrap(omni['carr_lon'].to_numpy())
@@ -357,7 +357,7 @@ def generate_vCarr_from_OMNI_DTW(runstart, runend, nlon=None, omni_input=None, r
     omni_res.reset_index(drop=True, inplace=True)
 
     # compute carrington longitude of earth for each point
-    temp = surfIN.datetime2huxtinputs(omni_res['datetime'].to_numpy())
+    temp = surfIN.datetime2surfinputs(omni_res['datetime'].to_numpy())
     omni_res['carr_lon'] = temp[1].value
     # unwrap this.
     omni_res['clon_unwrap'] = np.unwrap(omni_res['carr_lon'].to_numpy())
@@ -760,7 +760,7 @@ def ICMElist(filepath=None):
     """
     
     if filepath is None:
-        datapath = H._setup_dirs_()['insitu']
+        datapath = surf._setup_dirs_()['insitu']
         filepath = os.path.join(datapath,
                                 'Richardson_Cane_Porcessed_ICME_list.csv')
     
@@ -897,7 +897,7 @@ def correct_inner_vlon_cnn_onnx(v_inner_array,
         Array of shape (128, N) [speed vs. longitude & samples]
     data_dir : str, optional
         Directory containing saved scalers and ONNX model. If None, uses
-        the default data directory in the HUXt package.
+        the default data directory in the SURF package.
 
     Returns
     -------
@@ -906,7 +906,7 @@ def correct_inner_vlon_cnn_onnx(v_inner_array,
     """
     
     if data_dir is None:
-        data_dir = H._setup_dirs_()['insitu']
+        data_dir = surf._setup_dirs_()['insitu']
 
     # Load scalers
     y_scaler = joblib.load(os.path.join(data_dir, 'y_scaler_torch.save'))
@@ -937,18 +937,18 @@ def correct_inner_vlon_cnn_onnx(v_inner_array,
     return Y_pred.T
 
 
-def omniHUXt_forecast(ftime, simtime=27.27*u.day, 
+def omniSURF_forecast(ftime, simtime=27.27*u.day, 
                         rmin=21.5*u.solRad, rmax=230*u.solRad, 
                         dt_scale=4,
                         omni_input=None, buffertime=5*u.day,
                         run_2d=False, solver='upwind',
                         rho_source='speed', temp_source='speed'):
     """
-    Create a HUXt solar wind forecast initialized from in-situ OMNI observations.
+    Create a SURF solar wind forecast initialized from in-situ OMNI observations.
     
     Uses the previous solar rotation of OMNI data (mapped back to the inner 
     boundary) to create a Carrington map of solar wind speed, applies a CNN
-    correction for stream interaction effects, and initializes a HUXt model
+    correction for stream interaction effects, and initializes a SURF model
     to forecast solar wind conditions at Earth.
 
     Can be used for reconstructions too. Just set buffer time equal to simtime.
@@ -961,11 +961,11 @@ def omniHUXt_forecast(ftime, simtime=27.27*u.day,
     simtime : astropy.units.Quantity, optional
         Total simulation duration, inc buffer. Default is 27.27 days (one Carrington rotation).
     rmin : astropy.units.Quantity, optional
-        Inner boundary radius for the HUXt model. Default is 21.5 solar radii.
+        Inner boundary radius for the SURF model. Default is 21.5 solar radii.
     rmax : astropy.units.Quantity, optional  
-        Outer boundary radius for the HUXt model. Default is 230 solar radii.
+        Outer boundary radius for the SURF model. Default is 230 solar radii.
     dt_scale : int, optional
-        Time step scaling factor for HUXt. Higher values = faster but less
+        Time step scaling factor for SURF. Higher values = faster but less
         accurate. Default is 4.
     omni_input : pandas.DataFrame, optional
         Pre-loaded OMNI data with ICMEs already removed. If None, the function
@@ -984,8 +984,8 @@ def omniHUXt_forecast(ftime, simtime=27.27*u.day,
     
     Returns
     -------
-    model : huxt.HUXt
-        Initialized (but not yet solved) HUXt model object. Call model.solve([])
+    model : surf.SURF
+        Initialized (but not yet solved) SURF model object. Call model.solve([])
         to run the simulation.
     
     Notes
@@ -994,7 +994,7 @@ def omniHUXt_forecast(ftime, simtime=27.27*u.day,
     interaction effects that occur during the backmapping process from 1 AU
     to the inner boundary at ~21.5 solar radii.
     
-    Earth's orbital position is obtained from the built-in HUXt ephemeris data.
+    Earth's orbital position is obtained from the built-in SURF ephemeris data.
     
     For compressible solvers:
     - 'speed' source uses empirical relations from solar wind observations
@@ -1005,10 +1005,10 @@ def omniHUXt_forecast(ftime, simtime=27.27*u.day,
     --------
     >>> import datetime
     >>> ftime = datetime.datetime(2022, 5, 1)
-    >>> model = omniHUXt_forecast(ftime, simtime=27*u.day)
+    >>> model = omniSURF_forecast(ftime, simtime=27*u.day)
     >>> model.solve([])
     >>> # For compressible solver
-    >>> model = omniHUXt_forecast(ftime, solver='euler', 
+    >>> model = omniSURF_forecast(ftime, solver='euler', 
     ...                           rho_source='speed', temp_source='speed')
     >>> # Extract Earth time series
     >>> import surf.surf_analysis as SA
@@ -1055,7 +1055,7 @@ def omniHUXt_forecast(ftime, simtime=27.27*u.day,
     
     # now map back to the inner boundary
     # Get Earth's radial distance from ephemeris data
-    dirs = H._setup_dirs_()
+    dirs = surf._setup_dirs_()
     ephem = h5py.File(dirs['ephemeris'], 'r')
     # convert ephemeris to mjd and interpolate to required time
     all_time = Time(ephem['EARTH']['HEEQ']['time'], format='jd').value - 2400000.5
@@ -1093,7 +1093,7 @@ def omniHUXt_forecast(ftime, simtime=27.27*u.day,
         vcarr_rmin_back_cnn[vcarr_rmin_back_cnn <250] = 250
     
     # set up the model run to start 5 days before the forecast time, to allow for CMEs
-    cr, cr_lon_init = surfIN.datetime2huxtinputs(ftime - datetime.timedelta(days=buffertime.value))
+    cr, cr_lon_init = surfIN.datetime2surfinputs(ftime - datetime.timedelta(days=buffertime.value))
     
     # Get Earth latitude - using get_earth_lat if available, otherwise default to 0
     Elat = surfIN.get_earth_lat(ftime)
@@ -1116,7 +1116,7 @@ def omniHUXt_forecast(ftime, simtime=27.27*u.day,
     return model
 
 
-def omniHUXt_reconstruction(start_time, end_time, 
+def omniSURF_reconstruction(start_time, end_time, 
                             rmin=21.5*u.solRad, rmax=230*u.solRad, 
                             dt_scale=4, dt=1*u.day,
                             omni_input=None,
@@ -1125,11 +1125,11 @@ def omniHUXt_reconstruction(start_time, end_time,
                             rho_source='speed',
                             temp_source='speed'):
     """
-    Create a HUXt solar wind reconstruction using OMNI observations over a time interval.
+    Create a SURF solar wind reconstruction using OMNI observations over a time interval.
     
     Uses OMNI data mapped to Carrington coordinates via corotation (with 'both' forward
     and backward mapping), backmaps to the inner boundary, applies CNN correction for
-    stream interaction effects, and creates a time-dependent HUXt simulation.
+    stream interaction effects, and creates a time-dependent SURF simulation.
     
     Parameters
     ----------
@@ -1138,11 +1138,11 @@ def omniHUXt_reconstruction(start_time, end_time,
     end_time : datetime.datetime
         End time of the reconstruction interval.
     rmin : astropy.units.Quantity, optional
-        Inner boundary radius for the HUXt model. Default is 21.5 solar radii.
+        Inner boundary radius for the SURF model. Default is 21.5 solar radii.
     rmax : astropy.units.Quantity, optional  
-        Outer boundary radius for the HUXt model. Default is 230 solar radii.
+        Outer boundary radius for the SURF model. Default is 230 solar radii.
     dt_scale : int, optional
-        Time step scaling factor for HUXt. Higher values = faster but less
+        Time step scaling factor for SURF. Higher values = faster but less
         accurate. Default is 4.
     dt : astropy.units.Quantity, optional
         Time resolution for the Carrington map, in days. Default is 1 day.
@@ -1158,17 +1158,17 @@ def omniHUXt_reconstruction(start_time, end_time,
         density and temperature must also be provided.
     rho_source : str, optional
         Source for density when solver != 'upwind'. Options:
-        - 'speed': Derive from speed using HUXt input functions (default)
+        - 'speed': Derive from speed using SURF input functions (default)
         - 'omni': Use OMNI data with 1/r^2 scaling from reference radius to rmin
     temp_source : str, optional
         Source for temperature when solver != 'upwind'. Options:
-        - 'speed': Derive from speed using HUXt input functions (default)
+        - 'speed': Derive from speed using SURF input functions (default)
         - 'omni': Use OMNI data with Parker-like radial scaling
     
     Returns
     -------
-    model : huxt.HUXt
-        Initialized (but not yet solved) HUXt model object with time-dependent
+    model : surf.SURF
+        Initialized (but not yet solved) SURF model object with time-dependent
         boundary conditions. Call model.solve([]) to run the simulation.
     
     Notes
@@ -1179,7 +1179,7 @@ def omniHUXt_reconstruction(start_time, end_time,
     3. Calls generate_vCarr_from_OMNI with corot_type='both'
     4. Backmaps velocity from reference radius (215 Rsun) to rmin
     5. Applies CNN correction to account for stream interactions during backmapping
-    6. Creates a HUXt model with time-dependent boundary conditions
+    6. Creates a SURF model with time-dependent boundary conditions
     
     The CNN correction (correct_inner_vlon_cnn_onnx) accounts for stream 
     interaction effects that occur during the backmapping process from the
@@ -1195,10 +1195,10 @@ def omniHUXt_reconstruction(start_time, end_time,
     >>> import datetime
     >>> start = datetime.datetime(2022, 5, 1)
     >>> end = datetime.datetime(2022, 5, 28)
-    >>> model = omniHUXt_reconstruction(start, end)
+    >>> model = omniSURF_reconstruction(start, end)
     >>> model.solve([])
     >>> # For compressible solver
-    >>> model = omniHUXt_reconstruction(start, end, solver='euler', 
+    >>> model = omniSURF_reconstruction(start, end, solver='euler', 
     ...                                 rho_source='omni', temp_source='omni')
     >>> # Extract Earth time series
     >>> import surf.surf_analysis as SA
@@ -1239,7 +1239,7 @@ def omniHUXt_reconstruction(start_time, end_time,
     ref_r = 215 * u.solRad
     
     # Backmap from 215 Rsun to rmin for each time step
-    # Use different acceleration profile for compressible solvers (same as omniHUXt_forecast)
+    # Use different acceleration profile for compressible solvers (same as omniSURF_forecast)
     nlon, nt = vcarr_215.shape
     vcarr_rmin = np.zeros_like(vcarr_215.value)
     bcarr_rmin = np.zeros_like(bcarr_215)
@@ -1265,7 +1265,7 @@ def omniHUXt_reconstruction(start_time, end_time,
     # Apply CNN correction to backmapped data
     vcarr_rmin_cnn = correct_inner_vlon_cnn_onnx(vcarr_rmin)
     
-    # For non-upwind solvers, apply post-processing (same as omniHUXt_forecast)
+    # For non-upwind solvers, apply post-processing (same as omniSURF_forecast)
     if solver != 'upwind':
         for t in range(vcarr_rmin_cnn.shape[1]):
             col = vcarr_rmin_cnn[:, t]
@@ -1286,7 +1286,7 @@ def omniHUXt_reconstruction(start_time, end_time,
         # Density
         if rho_source == 'speed':
             # Use empirical velocity-density relation via Parker nozzle lookup table
-            # (same approach HUXt uses internally). Pass np.nan to let HUXt auto-derive.
+            # (same approach SURF uses internally). Pass np.nan to let SURF auto-derive.
             rhogrid_carr = np.nan
         elif rho_source == 'omni':
             # Map OMNI density from ref_r (~1 AU) to rmin using Parker nozzle solution
@@ -1314,7 +1314,7 @@ def omniHUXt_reconstruction(start_time, end_time,
         # Temperature
         if temp_source == 'speed':
             # Use empirical velocity-temperature relation via Parker nozzle lookup table
-            # (same approach HUXt uses internally). Pass np.nan to let HUXt auto-derive.
+            # (same approach SURF uses internally). Pass np.nan to let SURF auto-derive.
             tempgrid_carr = np.nan
         elif temp_source == 'omni':
             # Map OMNI temperature from ref_r (~1 AU) to rmin using Parker nozzle solution

@@ -140,8 +140,11 @@ def get_MAS_boundary_conditions(cr=np.nan, observatory='', runtype='', runnumber
     # Check if HDF4 files exist and convert them
     if brfilepath.exists() and vrfilepath.exists() and not overwrite:
         print('Converting existing HDF4 files to HDF5 for CR' + str(int(cr)))
-        convert_hdf4_to_hdf5(brfilepath, brfilepath_h5)
-        convert_hdf4_to_hdf5(vrfilepath, vrfilepath_h5)
+        ok_br = convert_hdf4_to_hdf5(brfilepath, brfilepath_h5)
+        ok_vr = convert_hdf4_to_hdf5(vrfilepath, vrfilepath_h5)
+        if not (ok_br and ok_vr):
+            print('HDF4 to HDF5 conversion failed. Install netCDF4 with HDF4 support: conda install -c conda-forge netcdf4')
+            return -1
         return 0
     
     # Need to download files
@@ -196,10 +199,15 @@ def get_MAS_boundary_conditions(cr=np.nan, observatory='', runtype='', runnumber
 
         # Convert HDF4 files to HDF5
         print('Converting HDF4 files to HDF5...')
-        if convert_hdf4_to_hdf5(brfilepath, brfilepath_h5):
+        ok_br = convert_hdf4_to_hdf5(brfilepath, brfilepath_h5)
+        ok_vr = convert_hdf4_to_hdf5(vrfilepath, vrfilepath_h5)
+        if ok_br:
             print(f'  Converted {brfilename} to {brfilename_h5}')
-        if convert_hdf4_to_hdf5(vrfilepath, vrfilepath_h5):
+        if ok_vr:
             print(f'  Converted {vrfilename} to {vrfilename_h5}')
+        if not (ok_br and ok_vr):
+            print('HDF4 to HDF5 conversion failed. Install netCDF4 with HDF4 support: conda install -c conda-forge netcdf4')
+            return -1
 
         return 1
     else:
@@ -476,10 +484,10 @@ def map_v_inwards_parker(v_orig, r_orig, lon_orig, r_new, gamma=1.5):
     r_new_km = r_new.to(u.km).value
 
     # Get density and temperature at r_orig from 1 AU look-up table
-    n_orig, T_orig = h.get_density_temperature_from_velocity(v_kms, r_orig_rs, gamma=gamma)
+    n_orig, T_orig = surf.get_density_temperature_from_velocity(v_kms, r_orig_rs, gamma=gamma)
 
     # Map v, n, T from r_orig to r_new using the Parker nozzle solution
-    v_new, n_new, T_new = h.map_properties_parker(
+    v_new, n_new, T_new = surf.map_properties_parker(
         v_orig, r_orig, r_new,
         n_orig * u.cm**-3, T_orig * u.K, gamma=gamma
     )
@@ -499,7 +507,7 @@ def map_v_inwards_parker(v_orig, r_orig, lon_orig, r_new, gamma=1.5):
     # Shape will be (nsteps, nvelocities)
     v_profile_list = []
     for r_i_km in r_grid_km:
-        v_i_arr, _, _ = h._compute_parker_mapping(
+        v_i_arr, _, _ = surf._compute_parker_mapping(
             v_kms_arr, T_orig_arr, n_orig_arr, r_orig_km, r_i_km, gamma
         )
         v_profile_list.append(v_i_arr)
@@ -980,7 +988,7 @@ def getMetOfficeWSAandCone(startdate, enddate, datadir=None):
     return success, wsafilepath, conefilepath, model_time
 
 
-def datetime2huxtinputs(dt):
+def datetime2surfinputs(dt):
     """
     A function to convert a datetime into the relevant Carrington rotation number and longitude
     for initialising a HUXt run.
@@ -1093,7 +1101,7 @@ def cone_dict_to_cme_list(model, cme_params):
 
         thick = 0 * u.solRad
 
-        cme = h.ConeCME(t_launch=dt_cme, longitude=lon, latitude=lat, width=wid, v=speed, thickness=thick,
+        cme = surf.ConeCME(t_launch=dt_cme, longitude=lon, latitude=lat, width=wid, v=speed, thickness=thick,
                         initial_height=iheight, label=f"CME_{cme_id:02d}")
         cme_list.append(cme)
 
@@ -1138,7 +1146,7 @@ def ConeFile_to_ConeCME_list_time(filepath, time):
     filepath = Path(filepath)
     assert filepath.is_file()
 
-    cr, cr_lon_init = datetime2huxtinputs(time)
+    cr, cr_lon_init = datetime2surfinputs(time)
     dummymodel = surf.SURF(v_boundary=np.ones(128) * 400 * (u.km / u.s), simtime=1 * u.day, cr_num=cr,
                         cr_lon_init=cr_lon_init, lon_out=0.0 * u.deg, r_min=21.5 * u.solRad)
 
@@ -1169,14 +1177,14 @@ def consolidate_cme_lists(cmelist_list, t_thresh=0.1 * u.day, lon_thresh=10 * u.
         for cme in cmelist:
             # get properties of the CME
             this_time = cme.t_launch
-            this_long = cme.longitude_huxt
+            this_long = cme.longitude_surf
             this_lat = cme.latitude
             same_cme = False
 
             # compare with properties of CMEs currently in the list
             for idx, existingcme in enumerate(cmelist_master):
                 existing_time = existingcme.t_launch
-                existing_long = existingcme.longitude_huxt
+                existing_long = existingcme.longitude_surf
                 existing_lat = existingcme.latitude
 
                 # require a similar time, lat and long to be the same CME
@@ -1225,7 +1233,7 @@ def set_time_dependent_boundary(vgrid_Carr, time_grid, starttime, simtime, r_min
     returns:
         model: A HUXt instance initialised with the fully time dependent boundary conditions.
     """
-    all_lons, dlon, nlon = h.longitude_grid()
+    all_lons, dlon, nlon = surf.longitude_grid()
     assert (len(vgrid_Carr[:, 0]) == nlon)
 
     # see if br boundary conditions are supplied
@@ -1244,7 +1252,7 @@ def set_time_dependent_boundary(vgrid_Carr, time_grid, starttime, simtime, r_min
         do_temp = True
 
     # work out the start time in terms of cr number and cr_lon_init
-    cr, cr_lon_init = datetime2huxtinputs(starttime)
+    cr, cr_lon_init = datetime2surfinputs(starttime)
 
     # set up the dummy model class
     if np.isfinite(lon_out):
@@ -1276,7 +1284,7 @@ def set_time_dependent_boundary(vgrid_Carr, time_grid, starttime, simtime, r_min
     latitude = model.latitude
     time_init = model.time_init
 
-    constants = h.huxt_constants()
+    constants = surf.surf_constants()
     rotation_period = None
     if frame == 'synodic':
         rotation_period = constants['synodic_period']
@@ -1366,7 +1374,7 @@ def set_time_dependent_boundary(vgrid_Carr, time_grid, starttime, simtime, r_min
         input_ambient_ts_temp[mask] = 0 * u.K
 
     # Build kwargs for HUXt model instantiation
-    huxt_kwargs = {
+    surf_kwargs = {
         'v_boundary': np.ones(128) * 400 * u.km / u.s,
         'simtime': simtime,
         'cr_num': cr,
@@ -1384,22 +1392,22 @@ def set_time_dependent_boundary(vgrid_Carr, time_grid, starttime, simtime, r_min
     
     # Add optional boundary condition time series
     if do_b:
-        huxt_kwargs['input_b_ts'] = input_ambient_ts_b
+        surf_kwargs['input_b_ts'] = input_ambient_ts_b
     if do_rho:
-        huxt_kwargs['input_rho_ts'] = input_ambient_ts_rho
+        surf_kwargs['input_rho_ts'] = input_ambient_ts_rho
     if do_temp:
-        huxt_kwargs['input_temp_ts'] = input_ambient_ts_temp
+        surf_kwargs['input_temp_ts'] = input_ambient_ts_temp
     
     # Set frame and longitude parameters
     if np.isfinite(lon_out):  # single longitude
-        huxt_kwargs['frame'] = 'synodic'
-        huxt_kwargs['lon_out'] = lon_out
+        surf_kwargs['frame'] = 'synodic'
+        surf_kwargs['lon_out'] = lon_out
     else:  # multiple longitudes
-        huxt_kwargs['frame'] = frame
-        huxt_kwargs['lon_start'] = lon_start
-        huxt_kwargs['lon_stop'] = lon_stop
+        surf_kwargs['frame'] = frame
+        surf_kwargs['lon_start'] = lon_start
+        surf_kwargs['lon_stop'] = lon_stop
     
-    model = surf.SURF(**huxt_kwargs)
+    model = surf.SURF(**surf_kwargs)
 
     return model
 
@@ -1512,7 +1520,7 @@ def get_earth_lat(dt):
 
     """
 
-    cr, cr_lon_init = datetime2huxtinputs(dt)
+    cr, cr_lon_init = datetime2surfinputs(dt)
     # Use the SURF ephemeris data to get Earth lat over the CR
     # ========================================================
     dummymodel = surf.SURF(v_boundary=np.ones(128)*400*(u.km/u.s), simtime=0.1*u.day, cr_num=cr, cr_lon_init=cr_lon_init,
@@ -1525,10 +1533,10 @@ def get_earth_lat(dt):
     return E_lat
 
 
-def huxt_td_input_from_WSA_runs(datadir, start_dt, stop_dt, latitude, deacc=True, input_res_days=0.1, nlon=128,
+def surf_td_input_from_WSA_runs(datadir, start_dt, stop_dt, latitude, deacc=True, input_res_days=0.1, nlon=128,
                                 format_template='models%2Fenlil%2FYYYY%2FMM%2FDD%2FHH%2Fwsa.gong.fits'):
     """
-    Produces intput data for a time-dependent HUXt run from a collections of pre-downloaded WSA solutions.
+    Produces intput data for a time-dependent SURF run from a collections of pre-downloaded WSA solutions.
 
     Args:
         datadir: string, path of WSA data files
