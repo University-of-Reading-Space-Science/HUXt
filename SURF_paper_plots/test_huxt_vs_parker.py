@@ -207,55 +207,55 @@ def main():
         print(f"{method_name:<20} {err_v:<12.2f} {err_n:<12.2f} {err_T:<12.2f}")
     
     # Plotting
+    plt.rcParams['font.size'] = 16
     fig, axes = plt.subplots(2, 2, figsize=(14, 10))
-    plt.rcParams['font.size'] = 12
     
-    colors = ['#1f77b4', '#ff7f0e']
+    colors = ["#0396ff", "#fd0707"]
     
     # Velocity
     ax = axes[0, 0]
-    ax.plot(r_Rs, v_parker/1e5, 'k-', linewidth=2.5, label='Parker nozzle')
+    ax.plot(r_Rs/215, v_parker/1e5, 'k-', linewidth=2.5, label='Parker nozzle')
     for i, (method_key, method_name) in enumerate(methods):
         res = results[method_key]
         v = res['v'].to(u.km/u.s).value
-        ax.plot(r_Rs, v, '--', color=colors[i], alpha=0.8, linewidth=2, label=method_name)
-    ax.set_xlabel('Distance (Rs)', fontsize=14)
-    ax.set_ylabel('Velocity (km/s)', fontsize=14)
-    ax.legend(fontsize=12)
+        ax.plot(r_Rs/215, v, '--', color=colors[i], alpha=0.8, linewidth=3, label=method_name)
+    ax.set_ylabel(r'Radial velocity, $V$ [km s$^{-1}$]', fontsize=18)
+    ax.tick_params(labelbottom=False)
+    ax.legend(fontsize=16)
     ax.grid(True, alpha=0.3)
-    ax.text(0.02, 0.98, '(a)', transform=ax.transAxes, fontsize=14, fontweight='bold',
+    ax.text(0.02, 0.98, '(a)', transform=ax.transAxes, fontsize=18, fontweight='bold',
             verticalalignment='top')
     
     # Density
     ax = axes[0, 1]
-    ax.semilogy(r_Rs, n_parker, 'k-', linewidth=2.5, label='Parker nozzle')
+    ax.semilogy(r_Rs/215, n_parker, 'k-', linewidth=2.5, label='Parker nozzle')
     for i, (method_key, method_name) in enumerate(methods):
         res = results[method_key]
         n = (res['rho'] / (mp * 1000)).to(u.cm**-3).value
-        ax.semilogy(r_Rs, n, '--', color=colors[i], alpha=0.8, linewidth=2, label=method_name)
-    ax.set_xlabel('Distance (Rs)', fontsize=14)
-    ax.set_ylabel('Number density (cm⁻³)', fontsize=14)
+        ax.semilogy(r_Rs/215, n, '--', color=colors[i], alpha=0.8, linewidth=3, label=method_name)
+    ax.set_ylabel(r'Number density, $n$ [cm$^{-3}$]', fontsize=18)
     ax.set_ylim(n_parker.min() * 0.8, n_parker.max() * 1.8)
-    ax.legend(fontsize=12)
+    ax.tick_params(labelbottom=False)
+    ax.legend(fontsize=16)
     ax.grid(True, alpha=0.3)
     ax.yaxis.tick_right()
     ax.yaxis.set_label_position("right")
-    ax.text(0.02, 0.98, '(b)', transform=ax.transAxes, fontsize=14, fontweight='bold',
+    ax.text(0.02, 0.98, '(b)', transform=ax.transAxes, fontsize=18, fontweight='bold',
             verticalalignment='top')
     
     # Temperature
     ax = axes[1, 0]
-    ax.semilogy(r_Rs, T_parker, 'k-', linewidth=2.5, label='Parker nozzle')
+    ax.semilogy(r_Rs/215, T_parker, 'k-', linewidth=2.5, label='Parker nozzle')
     for i, (method_key, method_name) in enumerate(methods):
         res = results[method_key]
         T = res['T'].value
-        ax.semilogy(r_Rs, T, '--', color=colors[i], alpha=0.8, linewidth=2, label=method_name)
-    ax.set_xlabel('Distance (Rs)', fontsize=14)
-    ax.set_ylabel('Temperature (K)', fontsize=14)
+        ax.semilogy(r_Rs/215, T, '--', color=colors[i], alpha=0.8, linewidth=3, label=method_name)
+    ax.set_xlabel('Distance [AU]', fontsize=18)
+    ax.set_ylabel(r'Temperature, $T$ [K]', fontsize=18)
     ax.set_ylim(T_parker.min() * 0.8, T_parker.max() * 1.8)
     ax.grid(True, alpha=0.3)
-    ax.legend(fontsize=12)
-    ax.text(0.02, 0.98, '(c)', transform=ax.transAxes, fontsize=14, fontweight='bold',
+    ax.legend(fontsize=16)
+    ax.text(0.02, 0.98, '(c)', transform=ax.transAxes, fontsize=18, fontweight='bold',
             verticalalignment='top')
     
     # Mass flux conservation
@@ -267,15 +267,15 @@ def main():
         r_cgs = res['r'].to(u.cm).value
         mass_flux = rho_cgs * v_cgs * r_cgs**2
         mass_flux_norm = mass_flux / mass_flux[0]
-        ax.plot(r_Rs, mass_flux_norm, '-', color=colors[i], alpha=0.8, linewidth=2, label=method_name)
+        ax.plot(r_Rs/215, mass_flux_norm, '-', color=colors[i], alpha=0.8, linewidth=3, label=method_name)
     ax.axhline(1.0, color='k', linestyle='--', linewidth=2, alpha=0.5, label='Perfect conservation')
-    ax.set_xlabel('Distance (Rs)', fontsize=14)
-    ax.set_ylabel('Normalized mass flux', fontsize=14)
-    ax.legend(fontsize=12)
+    ax.set_xlabel('Distance [AU]', fontsize=18)
+    ax.set_ylabel('Normalized mass flux', fontsize=18)
+    ax.legend(fontsize=16)
     ax.grid(True, alpha=0.3)
     ax.yaxis.tick_right()
     ax.yaxis.set_label_position("right")
-    ax.text(0.02, 0.98, '(d)', transform=ax.transAxes, fontsize=14, fontweight='bold',
+    ax.text(0.02, 0.98, '(d)', transform=ax.transAxes, fontsize=18, fontweight='bold',
             verticalalignment='top')
     
     plt.tight_layout()

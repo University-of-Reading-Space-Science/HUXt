@@ -1357,7 +1357,7 @@ def omniHUXt_reconstruction(start_time, end_time,
             dt_scale=dt_scale,
             latitude=Elat,
             frame='synodic',
-            solver=solver
+            solver=solver, track_cmes=False
         )
     else:
         model = Hin.set_time_dependent_boundary(
@@ -1374,7 +1374,7 @@ def omniHUXt_reconstruction(start_time, end_time,
             latitude=Elat,
             frame='synodic',
             lon_out=0*u.rad,
-            solver=solver
+            solver=solver, track_cmes=False
         )
     
     return model
