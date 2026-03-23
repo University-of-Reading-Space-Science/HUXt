@@ -31,8 +31,8 @@ try:
 except ImportError:
     ort = None
 
-import huxt.huxt as H
-import huxt.huxt_inputs as Hin
+import surf.surf as S
+import surf.surf_inputs as Sin
 
 
 def get_omni(starttime, endtime):
@@ -146,7 +146,7 @@ def generate_vCarr_from_OMNI(runstart, runend, nlon_grid=None, omni_input=None, 
     cr = np.ones(len(omni_int))
     cr_lon_init = np.ones(len(omni_int)) * u.rad
     for i in range(0, len(omni_int)):
-        cr[i], cr_lon_init[i] = Hin.datetime2huxtinputs(omni_int['datetime'][i])
+        cr[i], cr_lon_init[i] = Sin.datetime2huxtinputs(omni_int['datetime'][i])
 
     omni_int['Carr_lon'] = cr_lon_init.value  # remove unit as this confuses pd.DataFrame.copy() needed later
     omni_int['Carr_lon_unwrap'] = np.unwrap(omni_int['Carr_lon'].to_numpy())
@@ -154,7 +154,7 @@ def generate_vCarr_from_OMNI(runstart, runend, nlon_grid=None, omni_input=None, 
     omni_int['mjd'] = [t.mjd for t in omni_int['Time'].array]
 
     # get the Earth radial distance info.
-    dirs = H._setup_dirs_()
+    dirs = S._setup_dirs_()
     ephem = h5py.File(dirs['ephemeris'], 'r')
     # convert ephemeric to mjd and interpolate to required times
     all_time = Time(ephem['EARTH']['HEEQ']['time'], format='jd').value - 2400000.5
@@ -214,8 +214,8 @@ def generate_vCarr_from_OMNI(runstart, runend, nlon_grid=None, omni_input=None, 
         Elong = omni_int['Carr_lon'][t_id] * u.rad
 
         # get the Carrington longitude difference from current Earth pos
-        dlong_back = Hin.zerototwopi(lon_grid.value - Elong.value) * u.rad
-        dlong_forward = Hin.zerototwopi(Elong.value - lon_grid.value) * u.rad
+        dlong_back = Sin.zerototwopi(lon_grid.value - Elong.value) * u.rad
+        dlong_forward = Sin.zerototwopi(Elong.value - lon_grid.value) * u.rad
 
         dt_back = (dlong_back / omega_synodic).to(u.day)
         dt_forward = (dlong_forward / omega_synodic).to(u.day)
@@ -344,7 +344,7 @@ def generate_vCarr_from_OMNI_DTW(runstart, runend, nlon=None, omni_input=None, r
     omni[[dtw_on]] = omni[[dtw_on]].interpolate(method='linear', axis=0).ffill().bfill()
 
     # get the carrington longitude
-    temp = Hin.datetime2huxtinputs(omni['datetime'].to_numpy())
+    temp = Sin.datetime2huxtinputs(omni['datetime'].to_numpy())
     omni['carr_lon'] = temp[1].value
     # unwrap this.
     omni['clon_unwrap'] = np.unwrap(omni['carr_lon'].to_numpy())
@@ -357,7 +357,7 @@ def generate_vCarr_from_OMNI_DTW(runstart, runend, nlon=None, omni_input=None, r
     omni_res.reset_index(drop=True, inplace=True)
 
     # compute carrington longitude of earth for each point
-    temp = Hin.datetime2huxtinputs(omni_res['datetime'].to_numpy())
+    temp = Sin.datetime2huxtinputs(omni_res['datetime'].to_numpy())
     omni_res['carr_lon'] = temp[1].value
     # unwrap this.
     omni_res['clon_unwrap'] = np.unwrap(omni_res['carr_lon'].to_numpy())
@@ -1011,8 +1011,8 @@ def omniHUXt_forecast(ftime, simtime=27.27*u.day,
     >>> model = omniHUXt_forecast(ftime, solver='euler', 
     ...                           rho_source='speed', temp_source='speed')
     >>> # Extract Earth time series
-    >>> import huxt.huxt_analysis as HA
-    >>> ts = HA.get_observer_timeseries(model, observer='Earth')
+    >>> import surf.surf_analysis as SA
+    >>> ts = SA.get_observer_timeseries(model, observer='Earth')
     """
     
     # if no omni data provided, download it and remove ICMEs
@@ -1064,17 +1064,17 @@ def omniHUXt_forecast(ftime, simtime=27.27*u.day,
     
     # backmap to the inner boundary using either the upwind or euler solver mapping functions
     if solver == 'upwind':
-        vcarr_rmin_back, bcarr_rmin_back = Hin.map_v_boundary_inwards(omni_lon['V'].to_numpy()*u.km/u.s, 
+        vcarr_rmin_back, bcarr_rmin_back = Sin.map_v_boundary_inwards(omni_lon['V'].to_numpy()*u.km/u.s, 
                                     Earth_R_km.to(u.solRad), rmin,
                                     b_orig=-omni_lon['BX_GSE'].to_numpy())
     else:
-        vcarr_rmin_back, bcarr_rmin_back = Hin.map_v_boundary_inwards(omni_lon['V'].to_numpy()*u.km/u.s,
+        vcarr_rmin_back, bcarr_rmin_back = Sin.map_v_boundary_inwards(omni_lon['V'].to_numpy()*u.km/u.s,
                                     Earth_R_km.to(u.solRad), rmin,
                                     b_orig=-omni_lon['BX_GSE'].to_numpy(), acc_profile='huxt', gamma=1.5)
     
     
-    # interp to typical HUXt resolution
-    dphi = 2*np.pi/H.huxt_constants()['nlong']
+    # interp to typical SURF resolution
+    dphi = 2*np.pi/S.surf_constants()['nlong']
     longs = np.arange(dphi/2, 2*np.pi, dphi)
     vlon = np.interp(longs, omni_lon['lon_carr'], vcarr_rmin_back)
     blon = np.interp(longs, omni_lon['lon_carr'], bcarr_rmin_back) if bcarr_rmin_back is not None else None
@@ -1093,21 +1093,21 @@ def omniHUXt_forecast(ftime, simtime=27.27*u.day,
         vcarr_rmin_back_cnn[vcarr_rmin_back_cnn <250] = 250
     
     # set up the model run to start 5 days before the forecast time, to allow for CMEs
-    cr, cr_lon_init = Hin.datetime2huxtinputs(ftime - datetime.timedelta(days=buffertime.value))
+    cr, cr_lon_init = Sin.datetime2huxtinputs(ftime - datetime.timedelta(days=buffertime.value))
     
     # Get Earth latitude - using get_earth_lat if available, otherwise default to 0
-    Elat = Hin.get_earth_lat(ftime)
+    Elat = Sin.get_earth_lat(ftime)
 
     
     if run_2d:
-        model = H.HUXt(v_boundary=vcarr_rmin_back_cnn.flatten() * u.km/u.s, 
+        model = S.SURF(v_boundary=vcarr_rmin_back_cnn.flatten() * u.km/u.s, 
                       b_boundary=blon, 
                       cr_num=cr, cr_lon_init=cr_lon_init,
                       simtime=simtime, r_min=rmin, r_max=rmax, 
                       dt_scale=dt_scale, latitude=Elat, frame='synodic', 
                       track_cmes=False, solver=solver)
     else:
-        model = H.HUXt(v_boundary=vcarr_rmin_back_cnn.flatten() * u.km/u.s, 
+        model = S.SURF(v_boundary=vcarr_rmin_back_cnn.flatten() * u.km/u.s, 
                       b_boundary=blon, 
                       cr_num=cr, cr_lon_init=cr_lon_init,
                       simtime=simtime, r_min=rmin, r_max=rmax, 
@@ -1201,8 +1201,8 @@ def omniHUXt_reconstruction(start_time, end_time,
     >>> model = omniHUXt_reconstruction(start, end, solver='euler', 
     ...                                 rho_source='omni', temp_source='omni')
     >>> # Extract Earth time series
-    >>> import huxt.huxt_analysis as HA
-    >>> ts = HA.get_observer_timeseries(model, observer='Earth')
+    >>> import surf.surf_analysis as SA
+    >>> ts = SA.get_observer_timeseries(model, observer='Earth')
     """
     
     # If no OMNI data provided, download it and remove ICMEs
@@ -1246,7 +1246,7 @@ def omniHUXt_reconstruction(start_time, end_time,
     
     if solver == 'upwind':
         for t in range(nt):
-            vcarr_rmin[:, t], bcarr_rmin[:, t] = Hin.map_v_boundary_inwards(
+            vcarr_rmin[:, t], bcarr_rmin[:, t] = Sin.map_v_boundary_inwards(
                 vcarr_215[:, t], 
                 ref_r, 
                 rmin,
@@ -1254,7 +1254,7 @@ def omniHUXt_reconstruction(start_time, end_time,
             )
     else:
         for t in range(nt):
-            vcarr_rmin[:, t], bcarr_rmin[:, t] = Hin.map_v_boundary_inwards(
+            vcarr_rmin[:, t], bcarr_rmin[:, t] = Sin.map_v_boundary_inwards(
                 vcarr_215[:, t], 
                 ref_r, 
                 rmin,
@@ -1297,11 +1297,11 @@ def omniHUXt_reconstruction(start_time, end_time,
                 # Convert mass density to number density (cm^-3) for Parker mapping
                 n_col = (rho_col.value / m_p / 1e6) * u.cm**-3
                 # Get temperature at ref_r from empirical relation
-                _, T_col = H.get_density_temperature_from_velocity(
+                _, T_col = S.get_density_temperature_from_velocity(
                     v_col.to(u.km/u.s).value, ref_r.to(u.solRad).value, gamma=1.5
                 )
                 # Map all properties from ref_r to rmin using Parker nozzle
-                _, n_new, _ = H.map_properties_parker(
+                _, n_new, _ = S.map_properties_parker(
                     v_col, ref_r, rmin,
                     n_col, T_col * u.K, gamma=1.5
                 )
@@ -1323,11 +1323,11 @@ def omniHUXt_reconstruction(start_time, end_time,
                 v_col = vcarr_215[:, t]
                 T_col = tcarr_215[:, t]  # K
                 # Get density at ref_r from empirical relation
-                n_col, _ = H.get_density_temperature_from_velocity(
+                n_col, _ = S.get_density_temperature_from_velocity(
                     v_col.to(u.km/u.s).value, ref_r.to(u.solRad).value, gamma=1.5
                 )
                 # Map all properties from ref_r to rmin using Parker nozzle
-                _, _, T_new = H.map_properties_parker(
+                _, _, T_new = S.map_properties_parker(
                     v_col, ref_r, rmin,
                     n_col * u.cm**-3, T_col, gamma=1.5
                 )
@@ -1340,11 +1340,11 @@ def omniHUXt_reconstruction(start_time, end_time,
     simtime = (Time(end_time).mjd - Time(start_time).mjd) * u.day
     
     # Get Earth latitude
-    Elat = Hin.get_earth_lat(start_time)
+    Elat = Sin.get_earth_lat(start_time)
     
-    # Create HUXt model with time-dependent boundary
+    # Create SURF model with time-dependent boundary
     if run_2d:
-        model = Hin.set_time_dependent_boundary(
+        model = Sin.set_time_dependent_boundary(
             vgrid_Carr=vcarr_rmin_cnn * u.km/u.s,
             time_grid=time_grid,
             starttime=start_time,
@@ -1360,7 +1360,7 @@ def omniHUXt_reconstruction(start_time, end_time,
             solver=solver, track_cmes=False
         )
     else:
-        model = Hin.set_time_dependent_boundary(
+        model = Sin.set_time_dependent_boundary(
             vgrid_Carr=vcarr_rmin_cnn * u.km/u.s,
             time_grid=time_grid,
             starttime=start_time,

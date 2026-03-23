@@ -14,9 +14,9 @@ import sunpy
 from sunpy.coordinates import get_horizons_coord
 from appdirs import user_data_dir
 
-from . import huxt as h
-from . import huxt_inputs as hin
-from . import huxt_insitu as hinsitu
+from . import surf as s
+from . import surf_inputs as sin
+from . import surf_insitu as sinsitu
 
 mpl.rc("axes", labelsize=16)
 mpl.rc("ytick", labelsize=16)
@@ -26,7 +26,7 @@ mpl.rc("legend", fontsize=16)
 
 def get_figure_dir():
     """Get path to output directory for figures and animations"""
-    figure_dir = Path(user_data_dir("huxt", "")) / "figures"
+    figure_dir = Path(user_data_dir("surf", "")) / "figures"
     figure_dir.mkdir(parents=True, exist_ok=True)
     return figure_dir
 
@@ -1628,7 +1628,7 @@ def plot_earth_timeseries(model, plot_omni=True, save=False, tag='', timefromrun
 
     if plot_omni:
         # grab the omni data
-        data = hinsitu.get_omni(starttime, endtime)
+        data = sinsitu.get_omni(starttime, endtime)
         # plot the period of interest
         mask = (data['datetime'] >= starttime) & (data['datetime'] <= endtime)
         plotdata = data[mask]
@@ -2488,13 +2488,13 @@ def run_WSA_HUXt_td_wedge_about_observer(start_dt, stop_dt, vel_path, vel_format
         print('Runnig HUXt at lat = ' + str(lat) + ' degrees')
         thislat = (lat*np.pi/180)*u.rad
         # create the HUXt input from the WSA files
-        vlongs, brlongs, lon, mjds, times = hin.huxt_td_input_from_WSA_runs(vel_path, start_dt, stop_dt,
+        vlongs, brlongs, lon, mjds, times = sin.huxt_td_input_from_WSA_runs(vel_path, start_dt, stop_dt,
                                                                             latitude=thislat, deacc=deacc,
                                                                             input_res_days=0.1,
                                                                             format_template=vel_format_template)
 
         # set up the model, with (optional) time-dependent bpol boundary conditions
-        model = hin.set_time_dependent_boundary(vlongs, mjds, start_dt, simtime, lon_start=obj_min_lon*u.rad,
+        model = sin.set_time_dependent_boundary(vlongs, mjds, start_dt, simtime, lon_start=obj_min_lon*u.rad,
                                                 lon_stop=obj_max_lon*u.rad, r_min=r_min, r_max=obj_max_r*u.solRad,
                                                 bgrid_Carr=brlongs, dt_scale=4, latitude=thislat, frame='sidereal')
         model.solve([])

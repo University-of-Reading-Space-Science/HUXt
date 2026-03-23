@@ -1,5 +1,5 @@
 """
-Compressible hydrodynamics solver for HUXt.
+Compressible hydrodynamics solver for SURF.
 
 This module provides numerical methods for solving the 1D spherical 
 compressible Euler equations using a finite-volume formulation with
@@ -27,7 +27,7 @@ Time Integration:
 - 'rk2': Runge-Kutta 2nd order (Heun's method)
 
 Example Usage:
-    from huxt.huxt_solvers import create_solver
+    from surf.surf_solvers import create_solver
     
     # Create solver with PLM reconstruction (default)
     solver = create_solver(r_grid, gamma=1.5, method='hllc-plm')
