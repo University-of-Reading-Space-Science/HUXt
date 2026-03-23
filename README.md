@@ -4,18 +4,20 @@
 
 ## Introduction
 
-This repository provides an implementation of the HUXt model (Heliospheric Upwind Extrapolation with time dependence) in Python, as described by [Owens et al. (2020)](https://doi.org/10.1007/s11207-020-01605-3). This is a simple 1D incompressible hydrodynamic model, which essentially solves Burgers equation using the upwind numerical scheme. For more details on the models background, refer to [Owens et al. (2020)](https://doi.org/10.1007/s11207-020-01605-3).
+This repository provides an implementation of the SURF (Space-weather Utilities for Research and Forecasting) modelling framework.
+
+This includes the HUXt model (Heliospheric Upwind Extrapolation with time dependence) in Python, as described by [Owens et al. (2020)](https://doi.org/10.1007/s11207-020-01605-3). This is a simple 1D incompressible hydrodynamic model, which essentially solves Burgers equation using the upwind numerical scheme. For more details on the models background, refer to [Owens et al. (2020)](https://doi.org/10.1007/s11207-020-01605-3).
 
 ## Installation
- `HUXt` is written in Python 3.12.11 and has a range of dependencies, which are listed in the `environment.yml` file.
+ `SURF` is written in Python 3.12.11 and has a range of dependencies, which are listed in the `environment.yml` file.
 
 This simplest way to work with HUXt is to use `conda`, and we recommend using an up-to-date version of [miniforge](https://conda-forge.org/download/). 
  
 As of v5.0.0, HUXt can be installed via conda-forge. We recommend installing HUXt into a virtual environment and this can be done as:
 
 ```
->>> conda create --name huxt huxt
->>> conda activate huxt
+>>> conda create --name surf surf
+>>> conda activate surf
 ```
 
 ## Development Installation

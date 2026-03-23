@@ -7,12 +7,12 @@ import numpy as np
 import requests
 import sunpy.coordinates as coords
 
-from huxt import huxt as h
+from surf import surf as surf
 
 
 def get_naif_body_codes_dict():
     """ Return a dictionary with the names and naif codes of bodies that can be looked up in Horizons for use in
-    generating an offline ephemeris for HUXt."""
+    generating an offline ephemeris for SURF."""
 
     bodies = {'PSP': -96,
               'SOLO': -144,
@@ -46,17 +46,17 @@ def zerototwopi(angles):
 
 def main():
     """
-    This function uses SunPy's JPL Horizons integration to generate an ephemeris file for use with HUXt. This enables
-    using HUXt offline. The ephemeris includes the planets out to Saturn, and has a 6-hour cadence. It also includes
+    This function uses SunPy's JPL Horizons integration to generate an ephemeris file for use with SURF. This enables
+    using SURF offline. The ephemeris includes the planets out to Saturn, and has a 6-hour cadence. It also includes
     the ephemeris for ACE, STEREO-A, STEREO-B, Parker Solar Probe, and Solar Orbiter, at 3-hour cadence. JPL Horizons
     only provides ephemeris data for ACE and STEREO-A for a short window ahead (roughly 70 days and 100 days,
-    respectively). So the ephemeris file will need periodically updating if HUXt is going to be used for case studies
+    respectively). So the ephemeris file will need periodically updating if SURF is going to be used for case studies
     of new events or for forecasting.
     Returns:
 
     """
 
-    dirs = h._setup_dirs_()
+    dirs = surf._setup_dirs_()
     ephemeris_path = dirs['ephemeris']
     print(f"Updating ephemeris file: {ephemeris_path}")
     ephem = h5py.File(ephemeris_path, 'w')
