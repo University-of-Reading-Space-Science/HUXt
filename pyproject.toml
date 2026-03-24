@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "surf"
-version = "5.0.0"
-description = "Heliospheric Upwind eXtrapolation with Time-dependence. A computationally efficient solar wind model."
+version = "1.0.0"
+description = "Space-weather Utilities for Research adn Forecasting (SURF)"
 readme = "README.md"
 authors = [
   {name = "Luke Barnard", email = "l.a.barnard@reading.ac.uk" },
@@ -22,9 +22,12 @@ dependencies = [
   "joblib>=1.3.0",
   "jupyterlab>=4.4.7",
   "matplotlib>=3.10.6",
+  "netcdf4>=1.6.2",
   "numba>=0.61.2",
   "numpy>=2.2.6",
+  "onnxruntime>=1.15.0",
   "pandas>=2.3.2",
+  "pytest>=8.4.2",
   "requests>=2.32.5",
   "scipy>=1.16.1",
   "sunpy>=7.0.1",
@@ -42,6 +45,6 @@ surf-make-ephemeris = "surf.scripts.make_ephemeris:main"
 surf-open-examples = "surf.scripts.open_examples_notebook:main"
 
 [project.urls]
-Homepage = "https://github.com/University-of-Reading-Space-Science/HUXt"
-Repository = "https://github.com/University-of-Reading-Space-Science/HUXt.git"
-Issues = "https://github.com/University-of-Reading-Space-Science/HUXt/issues"
+Homepage = ""
+Repository = ""
+Issues = ""

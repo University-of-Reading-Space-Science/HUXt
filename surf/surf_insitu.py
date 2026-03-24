@@ -26,10 +26,7 @@ from urllib.request import urlopen
 import json
 
 import joblib
-try:
-    import onnxruntime as ort
-except ImportError:
-    ort = None
+import onnxruntime as ort
 
 import surf as surf
 import surf_inputs as surfIN
@@ -782,7 +779,12 @@ def ICMElist(filepath=None):
     # delete the first row
     icmes.drop(icmes.index[0], inplace=True)
     icmes.index = range(len(icmes))
-    
+
+    # Ensure date and numeric columns are object dtype so datetime/float values can be assigned
+    # (newer pandas with Arrow-backed strings rejects non-string assignments)
+    for colnum in list(range(0, 3)) + list(range(10, 17)):
+        icmes[colnum] = icmes[colnum].astype(object)
+
     for rownum in range(0, len(icmes)):
         for colnum in range(0, 3):
             # convert the three date stamps
@@ -898,6 +900,48 @@ def removeICMEs(omni,
     return omni_noicmes
 
 
+def _load_scaler_no_sklearn(filepath):
+    """
+    Load a joblib-saved sklearn StandardScaler without requiring sklearn.
+
+    Temporarily injects a minimal numpy-only stub into sys.modules so that
+    pickle can reconstruct the scaler object.  The stub only needs the
+    ``mean_`` and ``scale_`` attributes that sklearn stores in the file.
+    """
+    import sys
+    import types
+
+    class _NumpyScaler:
+        """Minimal drop-in for sklearn.preprocessing.StandardScaler."""
+        def transform(self, X):
+            return (np.asarray(X) - self.mean_) / self.scale_
+
+        def inverse_transform(self, X):
+            return np.asarray(X) * self.scale_ + self.mean_
+
+    # Build a lightweight fake sklearn module tree so pickle can find the class
+    _sklearn_mods = [
+        'sklearn', 'sklearn.preprocessing', 'sklearn.preprocessing._data',
+        'sklearn.utils', 'sklearn.utils.validation',
+    ]
+    injected = []
+    for mod_name in _sklearn_mods:
+        if mod_name not in sys.modules:
+            sys.modules[mod_name] = types.ModuleType(mod_name)
+            injected.append(mod_name)
+
+    sys.modules['sklearn.preprocessing'].StandardScaler = _NumpyScaler
+    sys.modules['sklearn.preprocessing._data'].StandardScaler = _NumpyScaler
+
+    try:
+        scaler = joblib.load(filepath)
+    finally:
+        for mod_name in injected:
+            del sys.modules[mod_name]
+
+    return scaler
+
+
 def correct_inner_vlon_cnn_onnx(v_inner_array,
                                 data_dir=None):
     """
@@ -922,9 +966,9 @@ def correct_inner_vlon_cnn_onnx(v_inner_array,
     if data_dir is None:
         data_dir = surf._setup_dirs_()['insitu']
 
-    # Load scalers
-    y_scaler = joblib.load(os.path.join(data_dir, 'y_scaler_torch.save'))
-    x_scaler = joblib.load(os.path.join(data_dir, 'x_scaler_torch.save'))
+    # Load scalers without requiring sklearn to be installed
+    y_scaler = _load_scaler_no_sklearn(os.path.join(data_dir, 'y_scaler_torch.save'))
+    x_scaler = _load_scaler_no_sklearn(os.path.join(data_dir, 'x_scaler_torch.save'))
 
     # Transpose input to shape (N, 128) so each row is a sample
     vcarr_scaled = x_scaler.transform(v_inner_array.T)  # (N, 128)

@@ -9,11 +9,11 @@ def main():
     """Copy the master version of the examples notebook and then open in browser"""
 
     root_dir = Path(__file__).parent.parent
-    nbk_master_path = root_dir.joinpath('notebooks', 'HUXt_examples.ipynb')
+    nbk_master_path = root_dir.joinpath('notebooks', 'SURF_examples.ipynb')
 
-    nbk_out_dir = Path(user_data_dir(appname='huxt', appauthor=False), "notebooks")
+    nbk_out_dir = Path(user_data_dir(appname='surf', appauthor=False), "notebooks")
     nbk_out_dir.mkdir(parents=True, exist_ok=True)
-    nbk_out_path = nbk_out_dir.joinpath('HUXt_examples.ipynb')
+    nbk_out_path = nbk_out_dir.joinpath('SURF_examples.ipynb')
 
     print(f"Copying {nbk_master_path} to {nbk_out_path}")
     shutil.copy(nbk_master_path, nbk_out_path)
