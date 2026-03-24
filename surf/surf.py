@@ -19,6 +19,20 @@ from sunpy.coordinates import sun
 from surf_solvers import create_solver as create_compressible_solver
 
 
+VALID_SOLVERS = ("huxt", "hydro", "hydro-pcm")
+
+
+def _compressible_method_from_solver(solver_name):
+    """Map public solver names to internal compressible method strings."""
+    method_map = {
+        'hydro': 'hllc-plm-rk2',
+        'hydro-pcm': 'hllc-pcm',
+    }
+    if solver_name not in method_map:
+        raise ValueError(f"Solver '{solver_name}' is not a compressible solver.")
+    return method_map[solver_name]
+
+
 
 
 class Observer:
@@ -561,7 +575,7 @@ class SURF:
                  input_v_ts=np.nan * (u.km / u.s), input_b_ts=np.nan, 
                  input_rho_ts=np.nan * (u.kg / u.m**3), input_temp_ts=np.nan * u.K, 
                  input_iscme_ts=np.nan, input_t_ts=np.nan * u.s,
-                 track_cmes=True, accel_limit=True, solver='upwind', parallel=False):
+                 track_cmes=True, accel_limit=True, solver='huxt', parallel=False):
         """
         Initialise the SURF model instance.
 
@@ -595,11 +609,9 @@ class SURF:
             track_cmes: Boolean flag to determine if CMEs are tracked at run time (small speed reduction).
             accel_limit: Boolean flag to determine if acceleration is switched for speeds above 650 km/s
             solver: String specifying the numerical solver to use. Options:
-                   'upwind' (default): First-order upwind scheme (Godunov-type, incompressible)
-                   'hllc': HLLC Riemann solver with PLM reconstruction (compressible) [recommended]
-                   'hll': HLL Riemann solver with PLM reconstruction (compressible, faster)
-                   'roe': Roe Riemann solver with PLM reconstruction (compressible, most accurate)
-                   'rusanov': Rusanov/Lax-Friedrichs solver with PLM reconstruction (compressible, most robust)
+                     'huxt' (default): First-order HUXt advection scheme (incompressible)
+                     'hydro': Second-order compressible HLLC+PLM solver
+                     'hydro-pcm': Compressible HLLC+PCM solver
             parallel: Boolean flag to enable parallel computation across longitude slices (default True).
                      Uses joblib threading backend for parallelization. Set to False for debugging
                      or if running on a single-core system.
@@ -622,40 +634,17 @@ class SURF:
         self.__version__ = get_version()
         
         # Validate and store solver choice
-        # Map legacy 'cgf' to 'hllc'
-        if solver == 'cgf':
-            solver = 'hllc'
-            print("[Note] 'cgf' solver renamed to 'hllc' - using HLLC Riemann solver")
-        
-        valid_solvers = ['upwind', 'hllc', 'hll', 'roe', 'rusanov']
-        
-        # Check if solver matches exactly OR starts with one of the valid compressible solvers (e.g. hllc-pcm)
-        is_valid = False
-        base_solver = solver
-        
-        if solver in valid_solvers:
-            is_valid = True
-        else:
-            # Check for suffixes (e.g. hllc-plm) by splitting on hyphen
-            parts = solver.split('-')
-            if parts[0] in valid_solvers:
-                is_valid = True
-                base_solver = parts[0]
-                
-        if not is_valid:
-            raise ValueError(f"Invalid solver '{solver}'. Must be one of (or variant of): {valid_solvers}")
-        
-        # Check compressible solver availability
-        compressible_solvers = ['hllc', 'hll', 'roe', 'rusanov']
-        if base_solver in compressible_solvers:
-            riemann_names = {'hllc': 'HLLC', 'hll': 'HLL', 'roe': 'Roe', 'rusanov': 'Rusanov'}
-            print(f"[OK] {riemann_names[base_solver]} Riemann solver (SURF-native) available")
+        if solver not in VALID_SOLVERS:
+            raise ValueError(f"Invalid solver '{solver}'. Valid options are: {list(VALID_SOLVERS)}")
+        if solver == 'hydro':
+            print("[OK] Compressible solver (hydro: HLLC+PLM) available")
+        elif solver == 'hydro-pcm':
+            print("[OK] Compressible solver (hydro-pcm: HLLC+PCM) available")
         
         self.solver = solver
         
         # Auto-determine compressible mode based on solver choice
-        # upwind is incompressible, all others are compressible
-        compressible = base_solver in compressible_solvers
+        compressible = solver in ('hydro', 'hydro-pcm')
         
         # Store parallel computation flag
         self.parallel = parallel
@@ -1042,19 +1031,18 @@ class SURF:
         Returns:
             Tuple of (i, v, cme_r_bounds, cme_v_bounds, hcs_r, streak_r, rho_out, temp_out)
         """
-        # Compressible Riemann solvers: hllc, hll, roe, rusanov
-        # Check if using compressible solver (including derived variants like hllc-plm-rk2)
+        # Route based on configured solver family.
         
         if self.compressible:
             # Use solve_radial_compressible with selected Riemann solver
             return self._process_longitude_compressible(i, n_cme, n_hcs_max, streak_times)
         else:
-            # Upwind solver uses solve_radial
+            # HUXt solver uses solve_radial
             return self._process_longitude_builtin(i, n_cme, n_hcs_max, streak_times)
     
     def _process_longitude_builtin(self, i, n_cme, n_hcs_max, streak_times):
         """
-        Process a longitude using the built-in solve_radial (upwind solver).
+        Process a longitude using the built-in solve_radial (huxt solver).
         
         Args:
             i: Longitude index to process
@@ -1097,9 +1085,9 @@ class SURF:
     
     def _process_longitude_compressible(self, i, n_cme, n_hcs_max, streak_times):
         """
-        Process a longitude using the compressible solver with selected Riemann solver.
+        Process a longitude using the compressible solver.
         
-        Uses self.solver to determine which Riemann solver to use (hllc, hll, roe, rusanov).
+        Uses self.solver to select the internal method string.
         
         Args:
             i: Longitude index to process
@@ -1213,7 +1201,7 @@ class SURF:
             gamma=self.gamma,
             nt_out=self.nt_out,
             nr=self.nr,
-            riemann=self.solver,  # Pass the Riemann solver choice
+            riemann=_compressible_method_from_solver(self.solver),
             verbose=False,  # Suppress detailed solver output in parallel mode
             num_particles=num_particles,
             particle_injection_rate=particle_injection_rate,
@@ -1619,11 +1607,12 @@ class SURF:
         if self.compressible:
             import time
             solve_start = time.time()
+            compressible_method = _compressible_method_from_solver(self.solver)
             
             print("\n" + "="*70)
             print(f"USING COMPRESSIBLE SOLVER: {self.solver.upper()}")
             print("="*70)
-            print(f"Riemann solver: {self.solver}")
+            print(f"Method: {compressible_method}")
             print(f"Frame: {self.frame}")
             print(f"Parallel: {self.parallel}")
             if self.parallel:
@@ -1632,7 +1621,7 @@ class SURF:
             print("="*70 + "\n")
         
         # ======================================================================
-        # Solve the time series at each longitude (UPWIND and COMPRESSIBLE SOLVERS)
+        # Solve the time series at each longitude (HUXT and COMPRESSIBLE SOLVERS)
         # ======================================================================
         # ======================================================================
         # Solve the time series at each longitude (ALL SOLVERS)
@@ -2473,7 +2462,7 @@ def zerototwopi(angles):
 
 
 def solve_radial_compressible(v_bc_kms, rho_bc_kgm3, T_bc_K, model_time, time_out, 
-                               r_grid, gamma, nt_out, nr, riemann='hllc', verbose=False,
+                               r_grid, gamma, nt_out, nr, riemann='hllc-plm-rk2', verbose=False,
                                num_particles=0, particle_injection_rate=None, particle_release_rate=None,
                                solver_instance=None):
     """
@@ -2503,7 +2492,8 @@ def solve_radial_compressible(v_bc_kms, rho_bc_kgm3, T_bc_K, model_time, time_ou
     nr : int
         Number of radial grid points
     riemann : str, optional
-        Riemann solver to use: 'hllc', 'hll', 'roe', 'rusanov'. Default 'hllc'.
+        Compressible method string, e.g. 'hllc-plm-rk2' or 'hllc-pcm'.
+        Default is 'hllc-plm-rk2'.
     verbose : bool, optional
         If True, print detailed diagnostics. Default False.
     num_particles : int or dict, optional
@@ -2532,8 +2522,7 @@ def solve_radial_compressible(v_bc_kms, rho_bc_kgm3, T_bc_K, model_time, time_ou
     
     Notes
     -----
-    - Supports multiple Riemann solvers: HLLC, HLL, Roe, Rusanov (Lax-Friedrichs)
-    - Uses PCM (piecewise constant) reconstruction for stability
+    - Uses SURF compressible methods based on HLLC with PLM or PCM reconstruction
     - Initializes with Parker nozzle solution for smooth startup
     """
     KM_TO_M = 1e3  # m/km
@@ -2565,18 +2554,9 @@ def solve_radial_compressible(v_bc_kms, rho_bc_kgm3, T_bc_K, model_time, time_ou
     def T_bc_func(t):
         return float(np.interp(t, model_time_seconds, T_bc_K))
     
-    # Initialize solver with selected Riemann solver
-    # Method string format: '{riemann}-{reconstruction}-{integrator}' e.g. 'hllc-plm-rk2'
+    # Initialize solver with selected method string.
     if solver_instance is None:
-        # Check if full method string is provided
-        if '-' in riemann:
-            method = riemann
-        # Default HLLC to high-accuracy PLM+RK2 (now stable)
-        elif riemann == 'hllc':
-            method = 'hllc-plm-rk2'
-        # Default others to robust PCM
-        else:
-            method = f"{riemann}-pcm"
+        method = riemann
             
         solver = create_compressible_solver(
             r_grid=r_grid_m,
@@ -2727,8 +2707,8 @@ def solve_radial(vinput, binput, iscmeinput, model_time, rrel, params,
     r_boundary = params[7]
     accel_limit = bool(params[9])  # switch used to determine if speed limit is applied to acceleration.
     gamma = params[10]  # Adiabatic index for compressible solver
-    solver = 'upwind'  # This function is only called for upwind solver
-    compressible = False  # Upwind solver is incompressible by default
+    solver = 'huxt'  # This function is only called for huxt solver
+    compressible = False  # huxt solver is incompressible by default
     
     # Compute the radial grid for the test particles
     rgrid = (rrel - rrel[0]) * 695700.0 + r_boundary  # Can't use astropy.units because numba
@@ -2863,10 +2843,10 @@ def solve_radial(vinput, binput, iscmeinput, model_time, rrel, params,
         # Do a single model time step
         # Solver dispatch: select numerical method based on solver parameter
         
-        if solver == 'upwind':
-            # First-order upwind scheme (Godunov-type)
+        if solver == 'huxt':
+            # HUXt advection scheme (implemented with first-order upwind differencing)
             if compressible:
-                # Use compressible upwind step that evolves velocity, density, and temperature together
+                # Evolve velocity, density, and temperature together for compressible runs
                 # NOTE: accel_limit is ignored for compressible solver (no residual acceleration)
                 rho_up = rho[1:].copy()
                 rho_dn = rho[:-1].copy()
@@ -2881,7 +2861,7 @@ def solve_radial(vinput, binput, iscmeinput, model_time, rrel, params,
                 rho[1:] = rho_up_next
                 temp[1:] = temp_up_next
             else:
-                # Use incompressible upwind step (velocity only)
+                # Incompressible HUXt update (velocity only)
                 if accel_limit:
                     u_up_next = _upwind_step_accel_limit(u_up, u_dn, dtdr, alpha, r_accel, rrel)
                 else:
@@ -2891,7 +2871,7 @@ def solve_radial(vinput, binput, iscmeinput, model_time, rrel, params,
                 v[1:] = u_up_next
         
         else:
-            raise ValueError(f"Unknown solver: {solver}. Supported solvers: 'upwind', 'hllc', 'hll', 'roe', 'rusanov'")
+            raise ValueError(f"Unknown solver: {solver}. Supported solver: 'huxt'")
 
         # Move the CME test particles forward
         if t > 0 and do_cme:
@@ -3355,7 +3335,15 @@ def load_SURF_run(filepath):
         compressible = bool(data['compressible'][()]) if 'compressible' in data else False
         
         # Load solver if it exists (for backward compatibility with older saved files)
-        solver = data['solver'][()].decode("utf-8") if 'solver' in data else 'upwind'
+        loaded_solver = data['solver'][()].decode("utf-8") if 'solver' in data else 'huxt'
+        legacy_solver_map = {
+            'upwind': 'huxt',
+            'hllc': 'hydro',
+            'hllc-plm-rk2': 'hydro',
+            'hllc-pcm': 'hydro-pcm',
+            'cgf': 'hydro',
+        }
+        solver = legacy_solver_map.get(loaded_solver, loaded_solver)
 
         if track_b:
             b_boundary = data['_b_boundary_init_'][()]

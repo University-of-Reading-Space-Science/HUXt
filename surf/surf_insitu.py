@@ -35,6 +35,20 @@ import surf as surf
 import surf_inputs as surfIN
 
 
+VALID_SOLVERS = ("huxt", "hydro", "hydro-pcm")
+
+
+def _validate_solver_name(solver):
+    """Validate supported solver names for in-situ workflows."""
+    if solver not in VALID_SOLVERS:
+        valid = ", ".join([f"'{name}'" for name in VALID_SOLVERS])
+        raise ValueError(f"Invalid solver '{solver}'. Valid options are: {valid}.")
+
+
+def _is_compressible_solver(solver):
+    return solver in ("hydro", "hydro-pcm")
+
+
 def get_omni(starttime, endtime):
     """
     A function to grab and process the OMNI COHO1HR data using FIDO
@@ -941,7 +955,7 @@ def omniSURF_forecast(ftime, simtime=27.27*u.day,
                         rmin=21.5*u.solRad, rmax=230*u.solRad, 
                         dt_scale=4,
                         omni_input=None, buffertime=5*u.day,
-                        run_2d=False, solver='upwind',
+                        run_2d=False, solver='huxt',
                         rho_source='speed', temp_source='speed'):
     """
     Create a SURF solar wind forecast initialized from in-situ OMNI observations.
@@ -978,8 +992,10 @@ def omniSURF_forecast(ftime, simtime=27.27*u.day,
         If False (default), runs a 1D radial simulation at Earth's longitude
         (lon_out=0). If True, runs a full 2D simulation across all longitudes.
     solver : str, optional
-        Solver type: 'upwind' (default) or 'euler'. For compressible solvers,
-        density and temperature must also be provided.
+        Solver type. Valid options are:
+        - 'huxt' (default): first-order HUXt advection solver
+        - 'hydro': second-order compressible HLLC+PLM solver
+        - 'hydro-pcm': compressible HLLC+PCM solver
 
     
     Returns
@@ -1008,12 +1024,13 @@ def omniSURF_forecast(ftime, simtime=27.27*u.day,
     >>> model = omniSURF_forecast(ftime, simtime=27*u.day)
     >>> model.solve([])
     >>> # For compressible solver
-    >>> model = omniSURF_forecast(ftime, solver='euler', 
+    >>> model = omniSURF_forecast(ftime, solver='hydro', 
     ...                           rho_source='speed', temp_source='speed')
     >>> # Extract Earth time series
     >>> import surf.surf_analysis as SA
     >>> ts = SA.get_observer_timeseries(model, observer='Earth')
     """
+    _validate_solver_name(solver)
     
     # if no omni data provided, download it and remove ICMEs
     if omni_input is None:
@@ -1062,8 +1079,8 @@ def omniSURF_forecast(ftime, simtime=27.27*u.day,
     Earth_R_km = np.interp(Time(ftime).mjd, all_time, ephem['EARTH']['HEEQ']['radius'][:]) * u.km
     ephem.close()
     
-    # backmap to the inner boundary using either the upwind or euler solver mapping functions
-    if solver == 'upwind':
+    # Backmap to the inner boundary with solver-dependent acceleration profile.
+    if solver == 'huxt':
         vcarr_rmin_back, bcarr_rmin_back = surfIN.map_v_boundary_inwards(omni_lon['V'].to_numpy()*u.km/u.s, 
                                     Earth_R_km.to(u.solRad), rmin,
                                     b_orig=-omni_lon['BX_GSE'].to_numpy())
@@ -1084,7 +1101,7 @@ def omniSURF_forecast(ftime, simtime=27.27*u.day,
 
     # #teh HUXXt equation has stronger acceleration than Parker nozzle. so increase speeds slightly 
     # #to compensate
-    if solver != 'upwind':
+    if _is_compressible_solver(solver):
         vcarr_rmin_back_cnn = vcarr_rmin_back_cnn * 1.0
         #smooth the series, periodic at the edges
         vcarr_rmin_back_cnn = np.convolve(vcarr_rmin_back_cnn.flatten(), np.ones(5)/5, mode='same')
@@ -1121,7 +1138,7 @@ def omniSURF_reconstruction(start_time, end_time,
                             dt_scale=4, dt=1*u.day,
                             omni_input=None,
                             run_2d=False,
-                            solver='upwind',
+                            solver='huxt',
                             rho_source='speed',
                             temp_source='speed'):
     """
@@ -1154,14 +1171,16 @@ def omniSURF_reconstruction(start_time, end_time,
         If False (default), runs a 1D radial simulation at Earth's longitude.
         If True, runs a full 2D simulation across all longitudes.
     solver : str, optional
-        Solver type: 'upwind' (default) or 'euler'. For compressible solvers,
-        density and temperature must also be provided.
+        Solver type. Valid options are:
+        - 'huxt' (default): first-order HUXt advection solver
+        - 'hydro': second-order compressible HLLC+PLM solver
+        - 'hydro-pcm': compressible HLLC+PCM solver
     rho_source : str, optional
-        Source for density when solver != 'upwind'. Options:
+        Source for density when solver is 'hydro' or 'hydro-pcm'. Options:
         - 'speed': Derive from speed using SURF input functions (default)
         - 'omni': Use OMNI data with 1/r^2 scaling from reference radius to rmin
     temp_source : str, optional
-        Source for temperature when solver != 'upwind'. Options:
+        Source for temperature when solver is 'hydro' or 'hydro-pcm'. Options:
         - 'speed': Derive from speed using SURF input functions (default)
         - 'omni': Use OMNI data with Parker-like radial scaling
     
@@ -1198,12 +1217,13 @@ def omniSURF_reconstruction(start_time, end_time,
     >>> model = omniSURF_reconstruction(start, end)
     >>> model.solve([])
     >>> # For compressible solver
-    >>> model = omniSURF_reconstruction(start, end, solver='euler', 
+    >>> model = omniSURF_reconstruction(start, end, solver='hydro', 
     ...                                 rho_source='omni', temp_source='omni')
     >>> # Extract Earth time series
     >>> import surf.surf_analysis as SA
     >>> ts = SA.get_observer_timeseries(model, observer='Earth')
     """
+    _validate_solver_name(solver)
     
     # If no OMNI data provided, download it and remove ICMEs
     if omni_input is None:
@@ -1214,7 +1234,7 @@ def omniSURF_reconstruction(start_time, end_time,
         omni_input = removeICMEs(omni, icme_list='CaneRichardson')
     
     # Determine if we need density and temperature from OMNI
-    need_compressible = solver != 'upwind'
+    need_compressible = _is_compressible_solver(solver)
     compressible = need_compressible and (rho_source == 'omni' or temp_source == 'omni')
     
     # Generate Carrington map using corotation (both forward and backward)
@@ -1244,7 +1264,7 @@ def omniSURF_reconstruction(start_time, end_time,
     vcarr_rmin = np.zeros_like(vcarr_215.value)
     bcarr_rmin = np.zeros_like(bcarr_215)
     
-    if solver == 'upwind':
+    if solver == 'huxt':
         for t in range(nt):
             vcarr_rmin[:, t], bcarr_rmin[:, t] = surfIN.map_v_boundary_inwards(
                 vcarr_215[:, t], 
@@ -1265,8 +1285,8 @@ def omniSURF_reconstruction(start_time, end_time,
     # Apply CNN correction to backmapped data
     vcarr_rmin_cnn = correct_inner_vlon_cnn_onnx(vcarr_rmin)
     
-    # For non-upwind solvers, apply post-processing (same as omniSURF_forecast)
-    if solver != 'upwind':
+    # For compressible solvers, apply post-processing (same as omniSURF_forecast)
+    if _is_compressible_solver(solver):
         for t in range(vcarr_rmin_cnn.shape[1]):
             col = vcarr_rmin_cnn[:, t]
             # smooth the series, periodic at the edges

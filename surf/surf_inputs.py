@@ -60,6 +60,16 @@ def convert_hdf4_to_hdf5(hdf4_path, hdf5_path):
 import surf as surf
 
 
+VALID_SOLVERS = ("huxt", "hydro", "hydro-pcm")
+
+
+def _validate_solver_name(solver):
+    """Validate supported solver names used by SURF helper functions."""
+    if solver not in VALID_SOLVERS:
+        valid = ", ".join([f"'{name}'" for name in VALID_SOLVERS])
+        raise ValueError(f"Invalid solver '{solver}'. Valid options are: {valid}.")
+
+
 def get_data_dir():
     """Get path to output directory for figures and animations"""
     data_dir = Path(user_data_dir("surf", "")) / "data" / 'boundary_conditions'
@@ -1207,7 +1217,7 @@ def set_time_dependent_boundary(vgrid_Carr, time_grid, starttime, simtime, r_min
                                 dt_scale=50, latitude=0 * u.deg, frame='sidereal', lon_start=0 * u.rad,
                                 lon_stop=2 * np.pi * u.rad, lon_out=np.nan, bgrid_Carr=np.nan, 
                                 rhogrid_Carr=np.nan, tempgrid_Carr=np.nan, track_cmes=True,
-                                accel_limit=True, solver='upwind'):
+                                accel_limit=True, solver='huxt'):
     """
     A function to compute an explicitly time dependent inner boundary condition for HUXt, rather than due to
     synodic/sidereal rotation of static coronal structure.
@@ -1230,11 +1240,13 @@ def set_time_dependent_boundary(vgrid_Carr, time_grid, starttime, simtime, r_min
         tempgrid_Carr: input temperature (K) as a function of Carrington longitude and time
         track_cmes: Bool, whether to track CMEs through the simulation.
         accel_limit: Bool, whether to turn off the acceleration for fluid elements with speeds >650 km/s
+        solver: String, numerical solver. Valid options are 'huxt', 'hydro', and 'hydro-pcm'.
     returns:
         model: A HUXt instance initialised with the fully time dependent boundary conditions.
     """
     all_lons, dlon, nlon = surf.longitude_grid()
     assert (len(vgrid_Carr[:, 0]) == nlon)
+    _validate_solver_name(solver)
 
     # see if br boundary conditions are supplied
     do_b = False

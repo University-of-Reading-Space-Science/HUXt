@@ -30,6 +30,16 @@ mpl.rc("xtick", labelsize=16)
 mpl.rc("legend", fontsize=16)
 
 
+def _compressible_solver_tag(model):
+    """Return a filename-safe solver tag for compressible plots."""
+    return getattr(model, 'solver', 'hydro').replace('-', '_')
+
+
+def _compressible_solver_label(model):
+    """Return the solver label for plot annotations."""
+    return getattr(model, 'solver', 'hydro')
+
+
 def get_figure_dir():
     """Get path to output directory for figures and animations"""
     figure_dir = Path(user_data_dir("surf", "")) / "figures"
@@ -344,7 +354,7 @@ def plot_compressible(model, time, save=False, tag='', fighandle=np.nan, minimal
     """
     
     if not hasattr(model, 'rho_grid') or not hasattr(model, 'temp_grid'):
-        raise ValueError("Model must be run with a compressible solver (solver='hllc' or 'hydro') to use plot_compressible")
+        raise ValueError("Model must be run with a compressible solver (solver='hydro' or 'hydro-pcm') to use plot_compressible")
 
     if (time < model.time_out.min()) | (time > (model.time_out.max())):
         print("Error, input time outside span of model times. Defaulting to closest time")
@@ -651,7 +661,7 @@ def plot_compressible(model, time, save=False, tag='', fighandle=np.nan, minimal
                 horizontalalignment='right', verticalalignment='bottom')
         
         # Add model info at top left, aligned with left edge of left panel
-        model_label = "SURF-hydro | Lat: {:3.0f}°".format(model.latitude.to(u.deg).value)
+        model_label = "SURF-{} | Lat: {:3.0f}°".format(_compressible_solver_label(model), model.latitude.to(u.deg).value)
         fig.text(pos_left.x0, pos_left.y1 + 0.01, model_label, fontsize=16, fontweight='bold',
                 horizontalalignment='left', verticalalignment='bottom')
 
@@ -661,7 +671,7 @@ def plot_compressible(model, time, save=False, tag='', fighandle=np.nan, minimal
 
     if save:
         cr_num = np.int32(model.cr_num.value)
-        filename = "SURF-hydro_CR{:03d}_{}_frame_{:03d}.png".format(cr_num, tag, id_t)
+        filename = "SURF-{}_CR{:03d}_{}_frame_{:03d}.png".format(_compressible_solver_tag(model), cr_num, tag, id_t)
         figure_dir = get_figure_dir()
         filepath = figure_dir.joinpath(filename)
         fig.savefig(filepath, dpi=150, bbox_inches='tight')
@@ -695,7 +705,7 @@ def plot_compressible_with_ts(model, time, save=False, tag='', fighandle=np.nan,
     """
     
     if not hasattr(model, 'rho_grid') or not hasattr(model, 'temp_grid'):
-        raise ValueError("Model must be run with a compressible solver (solver='hllc' or 'hydro') to use plot_compressible_with_ts")
+        raise ValueError("Model must be run with a compressible solver (solver='hydro' or 'hydro-pcm') to use plot_compressible_with_ts")
 
     if (time < model.time_out.min()) | (time > (model.time_out.max())):
         print("Error, input time outside span of model times. Defaulting to closest time")
@@ -924,7 +934,7 @@ def plot_compressible_with_ts(model, time, save=False, tag='', fighandle=np.nan,
             
     if annotateplot:
         # Add model and time labels to main figure
-        model_label = "SURF-hydro | Lat: {:3.0f}°".format(model.latitude.to(u.deg).value)
+        model_label = "SURF-{} | Lat: {:3.0f}°".format(_compressible_solver_label(model), model.latitude.to(u.deg).value)
         fig.text(0.02, 0.98, model_label, fontsize=16, fontweight='bold',
                 ha='left', va='top', transform=fig.transFigure)
         
@@ -1040,7 +1050,7 @@ def plot_compressible_with_ts(model, time, save=False, tag='', fighandle=np.nan,
 
     if save:
         cr_num = np.int32(model.cr_num.value)
-        filename = "SURF_hydro_ts_CR{:03d}_{}_frame_{:03d}.png".format(cr_num, tag, id_t)
+        filename = "SURF_{}_ts_CR{:03d}_{}_frame_{:03d}.png".format(_compressible_solver_tag(model), cr_num, tag, id_t)
         figure_dir = get_figure_dir()
         filepath = figure_dir.joinpath(filename)
         fig.savefig(filepath, dpi=150, bbox_inches='tight')
@@ -1071,7 +1081,7 @@ def animate_compressible_with_ts(model, tag='', duration=10, fps=20, outputfilep
     """
     
     if not hasattr(model, 'rho_grid') or not hasattr(model, 'temp_grid'):
-        raise ValueError("Model must be run with a compressible solver (solver='hllc' or 'hydro') to use animate_compressible_with_ts")
+        raise ValueError("Model must be run with a compressible solver (solver='hydro' or 'hydro-pcm') to use animate_compressible_with_ts")
     
     interval = (1/fps)*1000
     nframes = int(duration*1000/interval)
@@ -1107,7 +1117,7 @@ def animate_compressible_with_ts(model, tag='', duration=10, fps=20, outputfilep
         filepath = outputfilepath
     else:
         cr_num = np.int32(model.cr_num.value)
-        filename = "SURF_hydro_ts_CR{:03d}_{}_movie.mp4".format(cr_num, tag)
+        filename = "SURF_{}_ts_CR{:03d}_{}_movie.mp4".format(_compressible_solver_tag(model), cr_num, tag)
         figure_dir = get_figure_dir()
         filepath = figure_dir.joinpath(filename)
     
@@ -1322,7 +1332,7 @@ def plot_timeseries(model, radius, lon, save=False, tag=''):
     #radius_label = " Radius: {:3.2f}".format(r_out) + "$R_{sun}$ "
     #lon_label = " Longitude: {:3.2f}".format(lon_out) + "$^\\circ$"
     if is_compressible:
-        label = "SURF-hydro" #+ radius_label #+ lon_label
+        label = "SURF-{}".format(_compressible_solver_label(model)) #+ radius_label #+ lon_label
     else:   
         label = "SURF-HUXt" #+ radius_label #+ lon_label
     if is_compressible:
@@ -1598,7 +1608,7 @@ def plot_earth_timeseries(model, plot_omni=True, save=False, tag='', timefromrun
     # Velocity panel (always first)
     panel_idx = 0
     if is_compressible:
-        axs[panel_idx].plot(times, surf_ts['vsw'], 'r', label='SURF-hydro')
+        axs[panel_idx].plot(times, surf_ts['vsw'], 'r', label='SURF-{}'.format(_compressible_solver_label(model)))
     else:
         axs[panel_idx].plot(times, surf_ts['vsw'], 'r', label='SURF-HUXt')
     axs[panel_idx].set_ylim(250, 1000)
@@ -1608,7 +1618,7 @@ def plot_earth_timeseries(model, plot_omni=True, save=False, tag='', timefromrun
     if hasattr(model, 'b_grid'):
         panel_idx += 1
         if is_compressible:
-            axs[panel_idx].plot(times, np.sign(surf_ts['bpol']), 'r.', label='SURF-hydro')
+            axs[panel_idx].plot(times, np.sign(surf_ts['bpol']), 'r.', label='SURF-{}'.format(_compressible_solver_label(model)))
         else:
             axs[panel_idx].plot(times, np.sign(surf_ts['bpol']), 'r.', label='SURF-HUXt')
         axs[panel_idx].set_ylabel(r'B$_{\text{POL}}$')
@@ -1616,7 +1626,7 @@ def plot_earth_timeseries(model, plot_omni=True, save=False, tag='', timefromrun
     # Density panel (if compressible)
     if is_compressible and 'n' in surf_ts.columns:
         panel_idx += 1
-        axs[panel_idx].semilogy(times, surf_ts['n'], 'r-', label='SURF-hydro')
+        axs[panel_idx].semilogy(times, surf_ts['n'], 'r-', label='SURF-{}'.format(_compressible_solver_label(model)))
         axs[panel_idx].set_ylabel(r'n$_\text{P}$ [cm$^{-3}$]')
         axs[panel_idx].set_ylim(0.101, 999)
         axs[panel_idx].grid(True, alpha=0.3)
@@ -1624,7 +1634,7 @@ def plot_earth_timeseries(model, plot_omni=True, save=False, tag='', timefromrun
     # Temperature panel (if compressible)
     if is_compressible and 'T' in surf_ts.columns:
         panel_idx += 1
-        axs[panel_idx].semilogy(times, surf_ts['T'], 'r-', label='SURF-hydro')
+        axs[panel_idx].semilogy(times, surf_ts['T'], 'r-', label='SURF-{}'.format(_compressible_solver_label(model)))
         axs[panel_idx].set_ylabel(r'T [K]')
         axs[panel_idx].set_ylim(1e4, 9.9e6)
         axs[panel_idx].grid(True, alpha=0.3)
