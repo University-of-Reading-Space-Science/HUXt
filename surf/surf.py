@@ -2,8 +2,6 @@
 import os
 import sys
 
-sys.path.insert(0, os.path.abspath('..'))
-
 import copy
 import errno
 from appdirs import user_data_dir
@@ -20,18 +18,6 @@ from surf_solvers import create_solver as create_compressible_solver
 
 
 VALID_SOLVERS = ("huxt", "hydro", "hydro-pcm")
-
-
-def _compressible_method_from_solver(solver_name):
-    """Map public solver names to internal compressible method strings."""
-    method_map = {
-        'hydro': 'hllc-plm-rk2',
-        'hydro-pcm': 'hllc-pcm',
-    }
-    if solver_name not in method_map:
-        raise ValueError(f"Solver '{solver_name}' is not a compressible solver.")
-    return method_map[solver_name]
-
 
 
 
@@ -631,6 +617,11 @@ class SURF:
         self.alpha = constants['alpha']  # Scale parameter for residual SW acceleration (incompressible)
         self.r_accel = constants['r_accel']  # Spatial scale parameter for residual SW acceleration (incompressible)
         self.gamma = constants['gamma']  # Adiabatic index for compressible solver
+        # Use a per-instance cache namespace so changes in constants are picked up
+        # when a new SURF instance is created, while still reusing lookups within
+        # the same instance.
+        self._density_temp_cache_id = f"surf-{id(self)}"
+        clear_density_temperature_cache(cache_id=self._density_temp_cache_id)
         self.__version__ = get_version()
         
         # Validate and store solver choice
@@ -738,7 +729,10 @@ class SURF:
                 # OMNI data mapped via Parker nozzle solution
                 v_kms = self.v_boundary.to(u.km/u.s).value
                 r_inner = r_min.to(u.solRad).value
-                n_sw, _ = get_density_temperature_from_velocity(v_kms, r_inner, gamma=self.gamma)
+                n_sw, _ = get_density_temperature_from_velocity(
+                    v_kms, r_inner, gamma=self.gamma,
+                    cache_id=self._density_temp_cache_id
+                )
                 
                 # Convert density from cm^-3 to kg/m^3
                 # n [cm^-3] * m_p [kg] * 1e6 [cm^3/m^3] = rho [kg/m^3]
@@ -759,7 +753,8 @@ class SURF:
                 v_kms = self.v_boundary.to(u.km/u.s).value
                 r_inner = self.r[0].to(u.solRad).value
                 _, temp_from_velocity = get_density_temperature_from_velocity(
-                    v_kms, r_inner, gamma=self.gamma)
+                    v_kms, r_inner, gamma=self.gamma,
+                    cache_id=self._density_temp_cache_id)
                 self.temp_boundary = temp_from_velocity * u.K
                 self.temp_boundary_lons = self.v_boundary_lons
             elif not np.all(np.isnan(temp_boundary)):
@@ -933,7 +928,8 @@ class SURF:
                 v_kms = self.input_v_ts.to(u.km/u.s).value
                 r_inner = self.r[0].to(u.solRad).value
                 _, temp_from_velocity = get_density_temperature_from_velocity(
-                    v_kms, r_inner, gamma=self.gamma
+                    v_kms, r_inner, gamma=self.gamma,
+                    cache_id=self._density_temp_cache_id
                 )
                 self.input_temp_ts = temp_from_velocity * u.K
                 self.input_temp_ts_flag = True
@@ -1357,7 +1353,8 @@ class SURF:
                 v_kms = self.v_boundary.to(u.km/u.s).value
                 r_inner = self.r[0].to(u.solRad).value
                 _, temp_from_velocity = get_density_temperature_from_velocity(
-                    v_kms, r_inner, gamma=new_gamma
+                    v_kms, r_inner, gamma=new_gamma,
+                    cache_id=self._density_temp_cache_id
                 )
                 self.temp_boundary = temp_from_velocity * u.K
     
@@ -1952,6 +1949,40 @@ class SURF3d:
         return
 
 
+def _compressible_method_from_solver(solver_name):
+    """Map public solver names to internal compressible method strings."""
+    method_map = {
+        'hydro': 'hllc-plm-rk2',
+        'hydro-pcm': 'hllc-pcm',
+    }
+    if solver_name not in method_map:
+        raise ValueError(f"Solver '{solver_name}' is not a compressible solver.")
+    return method_map[solver_name]
+
+
+def clear_density_temperature_cache(cache_id=None):
+    """
+    Clear cached lookup data used by get_density_temperature_from_velocity.
+
+    Args:
+        cache_id: Optional cache namespace to clear. If None, clears all namespaces.
+    """
+    if not hasattr(get_density_temperature_from_velocity, '_cache'):
+        return
+
+    # Lazily initialise _bounds_cache in case it was never set
+    if not hasattr(get_density_temperature_from_velocity, '_bounds_cache'):
+        get_density_temperature_from_velocity._bounds_cache = {}
+
+    if cache_id is None:
+        get_density_temperature_from_velocity._cache = {}
+        get_density_temperature_from_velocity._bounds_cache = {}
+    else:
+        get_density_temperature_from_velocity._cache.pop(cache_id, None)
+        get_density_temperature_from_velocity._bounds_cache.pop(cache_id, None)
+
+
+
 def surf_constants():
     """
     Function to generate a dictionary of useful constants.
@@ -1961,7 +1992,7 @@ def surf_constants():
     nlong = 128  # Number of longitude bins for a full longitude grid [128]
     dr = 1.5 * u.solRad  # Radial grid step. With v_max, this sets the model time step [1.5 Rs]
     nlat = 45  # Number of latitude bins for a full latitude grid [45]
-    v_max = 3000 * u.km / u.s  # Maximum expected solar wind speed. Sets timestep [3000 km/s]
+    v_max = 1000 * u.km / u.s  # Maximum expected solar wind speed. Sets timestep [3000 km/s]
 
     # CONSTANTS - DON'T CHANGE
     twopi = 2.0 * np.pi
@@ -1969,7 +2000,7 @@ def surf_constants():
     kms = u.km / u.s
     alpha = 0.15 * u.dimensionless_unscaled  # Scale parameter for residual SW acceleration (for incompressible)
     r_accel = 50 * u.solRad  # Spatial scale parameter for residual SW acceleration
-    gamma = 1.5 # Adiabatic index for compressible solver (1.5 for solar wind?)
+    gamma = 5 # Adiabatic index for compressible solver (1.5 for solar wind?)
     synodic_period = 27.2753 * daysec  # Solar Synodic rotation period from Earth.
     sidereal_period = 25.38 * daysec  # Solar sidereal rotation period
     
@@ -1977,13 +2008,17 @@ def surf_constants():
     v_sw_1au = 400 * u.km / u.s  # Typical solar wind speed at 1 AU
     n_sw_1au = 5 * u.cm**-3  # Typical solar wind density at 1 AU (~5 protons/cm³)
     T_sw_1au = 1e5 * u.K  # Typical solar wind temperature at 1 AU (~100,000 K)
+    empirical_n_adjust_amp = 0.2  # Max fractional density remap amplitude applied at 0.1 AU
+    empirical_T_adjust_amp = 0.1  # Max fractional temperature remap amplitude applied at 0.1 AU
 
     constants = {'twopi': twopi, 'daysec': daysec, 'kms': kms, 'alpha': alpha,
                  'gamma': gamma,
                  'r_accel': r_accel, 'synodic_period': synodic_period,
                  'sidereal_period': sidereal_period, 'v_max': v_max,
                  'dr': dr, 'nlong': nlong, 'nlat': nlat,
-                 'v_sw_1au': v_sw_1au, 'n_sw_1au': n_sw_1au, 'T_sw_1au': T_sw_1au}
+                 'v_sw_1au': v_sw_1au, 'n_sw_1au': n_sw_1au, 'T_sw_1au': T_sw_1au,
+                 'empirical_n_adjust_amp': empirical_n_adjust_amp,
+                 'empirical_T_adjust_amp': empirical_T_adjust_amp}
 
     return constants
 
@@ -2188,7 +2223,7 @@ def get_omni_lookup_table_at_distance(r_target, lookup_table_path=None):
     
     return v_target, n_target, T_target
 
-def get_density_temperature_from_velocity(v_value, r_target, gamma=1.5):
+def get_density_temperature_from_velocity(v_value, r_target, gamma=1.5, cache_id='global'):
     """
     Get density and temperature for a given velocity at a specified radial distance.
     
@@ -2202,6 +2237,8 @@ def get_density_temperature_from_velocity(v_value, r_target, gamma=1.5):
         v_value: Solar wind velocity in km/s (scalar or array)
         r_target: Target heliocentric distance in solar radii (scalar)
         gamma: Adiabatic index (default 1.5 for solar wind)
+        cache_id: Cache namespace key. Use a unique value per SURF instance to
+                  recompute on new instances while still reusing within each one.
     
     Returns:
         n: Number density in cm^-3 (scalar or array matching v_value)
@@ -2211,19 +2248,29 @@ def get_density_temperature_from_velocity(v_value, r_target, gamma=1.5):
         >>> n, T = get_density_temperature_from_velocity(400, 30.0)
         >>> n, T = get_density_temperature_from_velocity([350, 400, 450], 30.0)
     """
-    # Cache for lookup tables: {r_target: (v_lookup, n_lookup, T_lookup)}
+    # Cache structure:
+    #   _cache: {cache_id: {lookup_key: (v_lookup, n_lookup, T_lookup)}}
     if not hasattr(get_density_temperature_from_velocity, '_cache'):
         get_density_temperature_from_velocity._cache = {}
-    
-    cache = get_density_temperature_from_velocity._cache
-    
-    # Check if we have cached data for this r_target
-    if r_target not in cache:
-        # Generate lookup table at target distance and cache it
-        v_lookup, n_lookup, T_lookup = get_omni_lookup_table_at_distance(r_target * u.solRad)
-        cache[r_target] = (v_lookup, n_lookup, T_lookup)
+
+    all_cache = get_density_temperature_from_velocity._cache
+    cache = all_cache.setdefault(cache_id, {})
+
+    # Accept either astropy Quantity (distance) or scalar in solar radii.
+    if isinstance(r_target, u.Quantity):
+        r_target_q = r_target.to(u.solRad)
     else:
-        v_lookup, n_lookup, T_lookup = cache[r_target]
+        r_target_q = r_target * u.solRad
+    
+    lookup_key = (round(float(r_target_q.value), 12), round(float(gamma), 12))
+
+    # Check if we have cached data for this r_target in this cache namespace
+    if lookup_key not in cache:
+        # Generate lookup table at target distance and cache it
+        v_lookup, n_lookup, T_lookup = get_omni_lookup_table_at_distance(r_target_q)
+        cache[lookup_key] = (v_lookup, n_lookup, T_lookup)
+    else:
+        v_lookup, n_lookup, T_lookup = cache[lookup_key]
     
     # Interpolate to get density and temperature at given velocity
     # Use extrapolation for values outside the lookup table range
@@ -2256,7 +2303,7 @@ def radial_grid(r_min=30.0 * u.solRad, r_max=240. * u.solRad):
         print("Warning, r_min should not be less than 5.0rs. Defaulting to 5.0rs")
         r_min = 5.0 * u.solRad
 
-    if r_max > 3000 * u.solRad:
+    if r_max > 6000 * u.solRad:
         print("Warning, r_max should not be more than 400rs. Defaulting to 400rs")
         r_max = 400 * u.solRad
 

@@ -1567,6 +1567,63 @@ def get_SURF_at_position_HEEQ(model, target_mjd, target_r, target_lon_heeq):
     return time_series
 
 
+def get_horizons_body_for_SURF(t_start, t_stop, step='12H', naif_code=799, body_name='Uranus'):
+    """
+    Query JPL Horizons for a solar system body and return its position in the
+    units and format required by get_SURF_at_position_HEEQ:
+
+        target_mjd      -- time in Modified Julian Date (MJD)
+        target_r        -- heliocentric distance in solar radii (rS)
+        target_lon_heeq -- HEEQ longitude in radians (0 to 2*pi)
+
+    See also: SURF_paper_plots/uranus_heeq_coords.py for standalone usage and
+    examples of common NAIF body codes.
+
+    Args:
+        t_start   (astropy.time.Time): Start time of the query.
+        t_stop    (astropy.time.Time): Stop time of the query.
+        step      (str): Time step string accepted by JPL Horizons, e.g. '12H', '1d'.
+                         Default '12H'.
+        naif_code (int): JPL Horizons NAIF body code. Default 799 (Uranus).
+                         Other examples: 199 Mercury, 299 Venus, 399 Earth, 499 Mars,
+                         599 Jupiter, 699 Saturn, 899 Neptune, -96 PSP, -144 SolO.
+        body_name (str): Human-readable body name used in print statements.
+                         Default 'Uranus'.
+
+    NAIF codes can be found here: https://naif.jpl.nasa.gov/pub/naif/toolkit_docs/C/req/naif_ids.html
+
+    Returns:
+        dict with keys:
+            'mjd'      - Modified Julian Dates (numpy array)
+            'r_rs'     - Heliocentric distance in solar radii (numpy array)
+            'lon_rad'  - HEEQ longitude in radians, 0 to 2*pi (numpy array)
+            'lat_rad'  - HEEQ latitude in radians (numpy array)
+    """
+    import sunpy.coordinates as sunpy_coords
+
+    _R_SUN_KM = 695700.0  # 1 solar radius in km
+
+    time_lookup = {'start': t_start, 'stop': t_stop, 'step': step}
+    print(f"Querying JPL Horizons for {body_name} (NAIF {naif_code}) "
+          f"from {t_start.iso} to {t_stop.iso} with step={step} ...")
+
+    body_coords = get_horizons_coord(naif_code, time_lookup)
+    heeq = body_coords.transform_to(sunpy_coords.HeliographicStonyhurst())
+
+    jd = body_coords.obstime.jd
+    mjd = jd - 2400000.5                                         # JD -> MJD
+    r_rs = heeq.radius.to(u.km).value / _R_SUN_KM               # km  -> solar radii
+    lon_rad = zerototwopi(heeq.lon.radian)                       # rad, 0-2pi
+    lat_rad = heeq.lat.radian                                    # rad
+
+    return {
+        'mjd': mjd,
+        'r_rs': r_rs,
+        'lon_rad': lon_rad,
+        'lat_rad': lat_rad,
+    }
+
+
 def plot_earth_timeseries(model, plot_omni=True, save=False, tag='', timefromrunstart='False'):
     """
     A function to plot the SURF Earth time series. With option to download and plot OMNI data.

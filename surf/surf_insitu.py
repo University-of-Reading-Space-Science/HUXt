@@ -1143,10 +1143,9 @@ def omniSURF_forecast(ftime, simtime=27.27*u.day,
     # apply the CNN to the backmapped data
     vcarr_rmin_back_cnn = correct_inner_vlon_cnn_onnx(vlon.reshape(-1, 1))
 
-    # #teh HUXXt equation has stronger acceleration than Parker nozzle. so increase speeds slightly 
-    # #to compensate
+    #apply some smoothing to the CNN output
     if _is_compressible_solver(solver):
-        vcarr_rmin_back_cnn = vcarr_rmin_back_cnn * 1.0
+        #vcarr_rmin_back_cnn = vcarr_rmin_back_cnn * 1.0
         #smooth the series, periodic at the edges
         vcarr_rmin_back_cnn = np.convolve(vcarr_rmin_back_cnn.flatten(), np.ones(5)/5, mode='same')
         
