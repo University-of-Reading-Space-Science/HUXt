@@ -32,14 +32,6 @@ import surf as surf
 import surf_inputs as surfIN
 
 
-VALID_SOLVERS = ("huxt", "hydro", "hydro-pcm")
-
-
-def _validate_solver_name(solver):
-    """Validate supported solver names for in-situ workflows."""
-    if solver not in VALID_SOLVERS:
-        valid = ", ".join([f"'{name}'" for name in VALID_SOLVERS])
-        raise ValueError(f"Invalid solver '{solver}'. Valid options are: {valid}.")
 
 
 def _is_compressible_solver(solver):
@@ -1074,7 +1066,7 @@ def omniSURF_forecast(ftime, simtime=27.27*u.day,
     >>> import surf.surf_analysis as SA
     >>> ts = SA.get_observer_timeseries(model, observer='Earth')
     """
-    _validate_solver_name(solver)
+    surf.validate_solver_name(solver)
     
     # if no omni data provided, download it and remove ICMEs
     if omni_input is None:
@@ -1266,7 +1258,7 @@ def omniSURF_reconstruction(start_time, end_time,
     >>> import surf.surf_analysis as SA
     >>> ts = SA.get_observer_timeseries(model, observer='Earth')
     """
-    _validate_solver_name(solver)
+    surf.validate_solver_name(solver)
     
     # If no OMNI data provided, download it and remove ICMEs
     if omni_input is None:

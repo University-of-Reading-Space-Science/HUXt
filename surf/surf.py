@@ -17,7 +17,18 @@ from sunpy.coordinates import sun
 from surf_solvers import create_solver as create_compressible_solver
 
 
-VALID_SOLVERS = ("huxt", "hydro", "hydro-pcm")
+VALID_SOLVERS = ("huxt", "huxt-pui", "hydro", "hydro-pcm")
+
+
+def validate_solver_name(solver):
+    """
+    Validate that solver is one of the recognised SURF solver names.
+    Raises ValueError with a clear message if not.
+    This is the single source of truth used by surf.py, surf_inputs.py and surf_insitu.py.
+    """
+    if solver not in VALID_SOLVERS:
+        valid = ", ".join([f"'{s}'" for s in VALID_SOLVERS])
+        raise ValueError(f"Invalid solver '{solver}'. Valid options are: {valid}.")
 
 
 
@@ -596,6 +607,11 @@ class SURF:
             accel_limit: Boolean flag to determine if acceleration is switched for speeds above 650 km/s
             solver: String specifying the numerical solver to use. Options:
                      'huxt' (default): First-order HUXt advection scheme (incompressible)
+                     'huxt-pui': HUXt advection scheme with pick-up ion deceleration for
+                                 the outer heliosphere. Applies an empirical deceleration
+                                 dV/dr = -0.1 * V / (40 AU) for r > 10 AU, modelling the
+                                 mass-loading effect of interstellar pick-up ions. Recommended
+                                 for domains extending beyond ~10 AU (e.g. New Horizons, Voyager).
                      'hydro': Second-order compressible HLLC+PLM solver
                      'hydro-pcm': Compressible HLLC+PCM solver
             parallel: Boolean flag to enable parallel computation across longitude slices (default True).
@@ -625,8 +641,7 @@ class SURF:
         self.__version__ = get_version()
         
         # Validate and store solver choice
-        if solver not in VALID_SOLVERS:
-            raise ValueError(f"Invalid solver '{solver}'. Valid options are: {list(VALID_SOLVERS)}")
+        validate_solver_name(solver)
         if solver == 'hydro':
             print("[OK] Compressible solver (hydro: HLLC+PLM) available")
         elif solver == 'hydro-pcm':
@@ -868,7 +883,7 @@ class SURF:
                                       self.dt_scale.value, self.nt_out, self.nr, self.nlon,
                                       self.r[0].to('km').value,
                                      self.rotation_period.to(u.s).value, int(self.accel_limit),
-                                     self.gamma])
+                                     self.gamma, int(solver == 'huxt-pui')])
 
         # Process inputs for time dependent boundary conditions, e.g., from in-situ data
         self.input_b_ts = np.nan
@@ -1064,6 +1079,11 @@ class SURF:
             rhoslice = np.zeros(len(self.model_time))
             tempslice = np.zeros(len(self.model_time))
 
+        # Get v_init for this longitude (if restarting from a previous state)
+        v_init_lon = None
+        if hasattr(self, '_v_init') and self._v_init is not None:
+            v_init_lon = self._v_init[i]
+
         # actually run the solver
         v, cme_r_bounds, cme_v_bounds, hcs_r, streak_r, rho_out, temp_out = solve_radial(
                                                                       self.input_v_ts[:, i].value,
@@ -1075,7 +1095,8 @@ class SURF:
                                                                       n_cme, n_hcs_max,
                                                                       streak_times[i, :, :, :],
                                                                       rhoinput=rhoslice,
-                                                                      tempinput=tempslice)
+                                                                      tempinput=tempslice,
+                                                                      v_init=v_init_lon)
         
         return (i, v, cme_r_bounds, cme_v_bounds, hcs_r, streak_r, rho_out, temp_out)
     
@@ -1187,6 +1208,17 @@ class SURF:
         model_time_sec = self.model_time.value
         time_out_sec = self.time_out.value
         
+        # Check for restart state (v, rho, temp initial profiles)
+        v_init_lon = None
+        rho_init_lon = None
+        T_init_lon = None
+        if hasattr(self, '_v_init') and self._v_init is not None:
+            v_init_lon = self._v_init.get(i)
+        if hasattr(self, '_rho_init') and self._rho_init is not None:
+            rho_init_lon = self._rho_init.get(i)
+        if hasattr(self, '_temp_init') and self._temp_init is not None:
+            T_init_lon = self._temp_init.get(i)
+        
         v_out_kms, rho_out_kgm3, temp_out_K, particle_data = solve_radial_compressible(
             v_bc_kms=v_bc_kms,
             rho_bc_kgm3=rho_bc_kgm3,
@@ -1201,7 +1233,10 @@ class SURF:
             verbose=False,  # Suppress detailed solver output in parallel mode
             num_particles=num_particles,
             particle_injection_rate=particle_injection_rate,
-            particle_release_rate=particle_release_rate
+            particle_release_rate=particle_release_rate,
+            v_init_kms=v_init_lon,
+            rho_init_kgm3=rho_init_lon,
+            T_init_K=T_init_lon
         )
         
         # Extract particle positions at output times
@@ -1358,6 +1393,79 @@ class SURF:
                 )
                 self.temp_boundary = temp_from_velocity * u.K
     
+    def get_final_state(self):
+        """
+        Extract the final radial state from a completed SURF run so that a
+        subsequent run can be restarted without spin-up.
+
+        Returns:
+            state: A dictionary containing:
+                'v' : np.ndarray, shape (nr, nlon) — velocity in km/s (no units).
+                'rho' : np.ndarray or None — density in kg/m³ (no units), only for
+                        compressible runs.
+                'temp' : np.ndarray or None — temperature in K (no units), only for
+                         compressible runs.
+        """
+        # Use the last output time step
+        v = self.v_grid[-1, :, :].value.copy()
+
+        rho = None
+        temp = None
+        if self.compressible:
+            rho = self.rho_grid[-1, :, :].value.copy()
+            temp = self.temp_grid[-1, :, :].value.copy()
+
+        return {'v': v, 'rho': rho, 'temp': temp}
+
+    def set_initial_state(self, state):
+        """
+        Set the initial radial state for a restart run, eliminating the need
+        for spin-up.
+
+        The *state* dictionary is the object returned by ``get_final_state()``
+        from a previous SURF run with the same radial and longitude grids.
+
+        After calling this method, the next ``solve()`` call will use the
+        supplied profiles as the initial condition and will have no spin-up
+        buffer period.
+
+        Args:
+            state: Dictionary with keys 'v' (required), 'rho' and 'temp'
+                   (optional, needed for compressible runs).  Each value is a
+                   plain numpy array of shape (nr, nlon).
+        """
+        v = state['v']
+        expected_shape = (self.nr, self.nlon)
+        if v.shape != expected_shape:
+            raise ValueError(
+                f"state['v'] shape {v.shape} does not match model grid {expected_shape}")
+
+        # Store one v_init array per longitude for passing into solve_radial
+        self._v_init = {}
+        for i in range(self.nlon):
+            self._v_init[i] = v[:, i].copy()
+
+        # Store rho/temp init for compressible solver restart
+        self._rho_init = None
+        self._temp_init = None
+        if self.compressible and state.get('rho') is not None and state.get('temp') is not None:
+            rho = state['rho']
+            temp = state['temp']
+            if rho.shape != expected_shape:
+                raise ValueError(
+                    f"state['rho'] shape {rho.shape} does not match model grid {expected_shape}")
+            if temp.shape != expected_shape:
+                raise ValueError(
+                    f"state['temp'] shape {temp.shape} does not match model grid {expected_shape}")
+            self._rho_init = {}
+            self._temp_init = {}
+            for i in range(self.nlon):
+                self._rho_init[i] = rho[:, i].copy()
+                self._temp_init[i] = temp[:, i].copy()
+
+        # Zero the buffer time so ts_from_vlong skips spin-up
+        self.buffertime = 0.0 * u.day
+
     def solve(self, cme_list, streak_carr=np.array([])*u.rad, save=False, tag=''):
         """
         Solve SURF for the provided longitudinal boundary conditions and cme list. Updates the SURF.v_grid
@@ -1376,7 +1484,7 @@ class SURF:
                                       self.dt_scale.value, self.nt_out, self.nr, self.nlon,
                                       self.r[0].to('km').value,
                                       self.rotation_period.to(u.s).value, int(self.accel_limit),
-                                      self.gamma])
+                                      self.gamma, int(self.solver == 'huxt-pui')])
 
         # ======================================================================
         # Generate ambient solar wind time series
@@ -1703,6 +1811,11 @@ class SURF:
             if tag == '':
                 print("Warning, blank tag means file likely to be overwritten")
             self.save(tag=tag)
+
+        # Clear restart state so it is not accidentally reused on a second solve()
+        self._v_init = None
+        self._rho_init = None
+        self._temp_init = None
         return
 
     def save(self, tag=''):
@@ -1861,6 +1974,7 @@ class SURF:
         return obs
 
 
+
 class SURF3d:
     """
     A class containing a list of SURF classes, to enable mutliple latitudes to
@@ -1949,6 +2063,317 @@ class SURF3d:
         return
 
 
+def surf_constants():
+    """
+    Function to generate a dictionary of useful constants.
+    Returns:
+        constants: A dictionary of constants that configure SURF
+    """
+    nlong = 128  # Number of longitude bins for a full longitude grid [128]
+    dr = 10 * u.solRad  # Radial grid step. With v_max, this sets the model time step [1.5 Rs]
+    nlat = 45  # Number of latitude bins for a full latitude grid [45]
+    v_max = 1000 * u.km / u.s  # Maximum expected solar wind speed. Sets timestep [3000 km/s]
+
+    # CONSTANTS - DON'T CHANGE
+    twopi = 2.0 * np.pi
+    daysec = 24 * 60 * 60 * u.s
+    kms = u.km / u.s
+    alpha = 0.15 * u.dimensionless_unscaled  # Scale parameter for residual SW acceleration (for incompressible)
+    r_accel = 50 * u.solRad  # Spatial scale parameter for residual SW acceleration
+    gamma = 1.5 # Adiabatic index for compressible solver (1.5 for solar wind?)
+    synodic_period = 27.2753 * daysec  # Solar Synodic rotation period from Earth.
+    sidereal_period = 25.38 * daysec  # Solar sidereal rotation period
+    
+    # Typical 1 AU solar wind conditions. Used for CME perturbations and reference values
+    v_sw_1au = 400 * u.km / u.s  # Typical solar wind speed at 1 AU
+    n_sw_1au = 5 * u.cm**-3  # Typical solar wind density at 1 AU (~5 protons/cm³)
+    T_sw_1au = 1e5 * u.K  # Typical solar wind temperature at 1 AU (~100,000 K)
+    empirical_n_adjust_amp = 0.2  # Max fractional density remap amplitude applied at 0.1 AU
+    empirical_T_adjust_amp = 0.1  # Max fractional temperature remap amplitude applied at 0.1 AU
+
+    constants = {'twopi': twopi, 'daysec': daysec, 'kms': kms, 'alpha': alpha,
+                 'gamma': gamma,
+                 'r_accel': r_accel, 'synodic_period': synodic_period,
+                 'sidereal_period': sidereal_period, 'v_max': v_max,
+                 'dr': dr, 'nlong': nlong, 'nlat': nlat,
+                 'v_sw_1au': v_sw_1au, 'n_sw_1au': n_sw_1au, 'T_sw_1au': T_sw_1au,
+                 'empirical_n_adjust_amp': empirical_n_adjust_amp,
+                 'empirical_T_adjust_amp': empirical_T_adjust_amp}
+
+    return constants
+
+
+
+def solve_chunked(model, cme_list, chunk_simtime, streak_carr=np.array([]) * u.rad,
+                  save=False, tag='', verbose=True):
+    """
+    Run a SURF simulation in time chunks to limit peak memory usage.
+
+    The first chunk includes the normal spin-up period.  Subsequent chunks
+    restart from the final radial state of the previous chunk, with no
+    additional spin-up.  Output grids from all chunks are concatenated so
+    that the returned model contains the full time series, identical to what
+    a single long ``model.solve()`` call would produce (up to floating-point
+    ordering effects).
+
+    Parameters
+    ----------
+    model : SURF
+        A fully initialised SURF instance (boundary conditions, time-dependent
+        inputs, etc. already set).  The instance is modified in-place: after
+        this function returns ``model.v_grid``, ``model.time_out``, etc.
+        contain the concatenated results from all chunks.
+    cme_list : list
+        List of ConeCME instances (passed through to each ``solve()`` call).
+    chunk_simtime : astropy.units.Quantity
+        Maximum simulated time per chunk (e.g. ``5*u.day``).  The last chunk
+        may be shorter.
+    streak_carr : astropy.units.Quantity, optional
+        Carrington longitudes for streaklines.
+    save : bool, optional
+        If True, save the final concatenated model to HDF5.
+    tag : str, optional
+        Tag appended to saved filename.
+    verbose : bool, optional
+        If True, print progress messages.
+
+    Returns
+    -------
+    model : SURF
+        The same model instance, with concatenated output grids.
+    """
+    chunk_simtime = chunk_simtime.to(u.s)
+    total_simtime = model.simtime.to(u.s)
+
+    # Work out how many chunks are needed.
+    # If the last chunk would be too short to produce any output time steps
+    # (due to dt_scale truncation), merge it into the previous chunk.
+    n_chunks = int(np.ceil((total_simtime / chunk_simtime).decompose().value))
+    if n_chunks > 1:
+        last_chunk_len = total_simtime - (n_chunks - 1) * chunk_simtime
+        tg_last = time_grid(last_chunk_len, model.dt_scale)
+        if tg_last['nt_out'] == 0:
+            n_chunks -= 1
+    if verbose:
+        print(f"solve_chunked: splitting {total_simtime.to(u.day):.1f} into "
+              f"{n_chunks} chunk(s) of up to {chunk_simtime.to(u.day):.1f}")
+
+    # ------------------------------------------------------------------
+    # Ensure we have the full input time series (including spin-up)
+    # before we start chunking.  For stationary-boundary runs this means
+    # calling ts_from_vlong once for the full duration.
+    # ------------------------------------------------------------------
+    full_buffertime = model.buffertime
+    if not model.input_v_ts_flag:
+        model.ts_from_vlong()
+        model.input_v_ts_flag = True
+        # Generate iscme_ts if not already set
+        if np.all(np.isnan(model.input_iscme_ts)):
+            model.input_iscme_ts = np.zeros(
+                (model.model_time.size, model.nlon), dtype='int')
+
+    # Snapshot the full-run input time series (these will be sliced per chunk)
+    full_simtime = model.simtime
+    full_nt_out = model.nt_out
+    full_time_out = model.time_out.copy()
+    full_dt_out = model.dt_out
+
+    full_input_v_ts = model.input_v_ts.copy()
+    full_model_time = model.model_time.copy()
+    full_input_b_ts = model.input_b_ts.copy() if model.track_b else None
+    full_input_iscme_ts = (model.input_iscme_ts.copy()
+                           if not np.all(np.isnan(model.input_iscme_ts))
+                           else None)
+    if model.compressible:
+        full_input_rho_ts = model.input_rho_ts.copy()
+        full_input_temp_ts = model.input_temp_ts.copy()
+
+    # Accumulators for concatenating chunk outputs
+    v_chunks = []
+    rho_chunks = []
+    temp_chunks = []
+    b_chunks = []
+    time_out_chunks = []
+
+    state = None  # will hold the restart state after each chunk
+    t_elapsed = 0.0 * u.s
+    ideal_elapsed = 0.0 * u.s   # tracks ideal chunk boundaries for splitting
+
+    for ic in range(n_chunks):
+        ideal_remaining = total_simtime - ideal_elapsed
+        this_chunk = min(chunk_simtime, ideal_remaining)
+        ideal_end = ideal_elapsed + this_chunk
+
+        if model.compressible:
+            # Compressible solver: start from last actual output time so that
+            # there is no evolution gap between state capture and restart.
+            chunk_start = t_elapsed
+            model.simtime = (ideal_end - chunk_start).to(u.s)
+        else:
+            # HUXt-family solvers: iter_count-based output — ideal boundaries
+            # are fine and avoid any time_out alignment issues.
+            chunk_start = ideal_elapsed
+            model.simtime = this_chunk
+
+        if verbose:
+            print(f"  chunk {ic + 1}/{n_chunks}: "
+                  f"t = {chunk_start.to(u.day):.2f} .. "
+                  f"{ideal_end.to(u.day):.2f}")
+
+        # --- Configure the model for this chunk ---
+
+        if model.compressible:
+            # Compressible solver: slice the full run's output time grid so
+            # that snapshot times match a single long solve() call exactly.
+            dt_half = 0.5 * model.dt
+            if state is None:
+                mask = (full_time_out < ideal_end + dt_half)
+            else:
+                mask = ((full_time_out > chunk_start + dt_half) &
+                        (full_time_out < ideal_end + dt_half))
+            chunk_time_out_abs = full_time_out[mask]
+            chunk_time_out_rel = chunk_time_out_abs - chunk_start
+            model.nt_out = len(chunk_time_out_rel)
+            model.dt_out = full_dt_out
+            model.time_out = chunk_time_out_rel
+        else:
+            # HUXt-family: recompute from time_grid (matches solve_radial's
+            # internal iter_count-based output timing)
+            tg = time_grid(model.simtime, model.dt_scale)
+            model.nt_out = tg['nt_out']
+            model.dt_out = tg['dt_out']
+            model.time_out = tg['time_out']
+
+        # Reallocate output grids for this chunk
+        model.v_grid = np.zeros((model.nt_out, model.nr, model.nlon),
+                                order='F') * model.kms
+        if model.compressible:
+            model.rho_grid = np.zeros((model.nt_out, model.nr, model.nlon),
+                                      order='F') * (u.kg / u.m**3)
+            model.temp_grid = np.zeros((model.nt_out, model.nr, model.nlon),
+                                       order='F') * u.K
+
+        if state is not None:
+            # Restart from previous chunk — skip spin-up
+            model.set_initial_state(state)
+
+        # Determine buffer for this chunk
+        if state is None:
+            model.buffertime = full_buffertime
+        # else: set_initial_state already zeroed buffertime
+
+        buffersteps = np.fix(model.buffertime.to(u.s) / model.dt)
+        buffertime_exact = buffersteps * model.dt
+        chunk_model_time = np.arange(
+            -buffertime_exact.value,
+            (model.simtime.to(u.s) + model.dt).value,
+            model.dt.value
+        ) * model.dt.unit
+        model.model_time = chunk_model_time
+
+        # Slice the full input time series for this chunk
+        nt_chunk = len(chunk_model_time)
+        nlon = model.nlon
+
+        # Absolute times in the full model_time frame (seconds from run start)
+        abs_times = (chunk_model_time + chunk_start).value
+        full_mt = full_model_time.value
+
+        # Interpolate full input series onto chunk times
+        chunk_input_v = np.zeros((nt_chunk, nlon)) * model.kms
+        for j in range(nlon):
+            chunk_input_v[:, j] = np.interp(
+                abs_times, full_mt, full_input_v_ts[:, j].value
+            ) * model.kms
+        model.input_v_ts = chunk_input_v
+        model.input_v_ts_flag = True
+
+        if model.track_b and full_input_b_ts is not None:
+            chunk_input_b = np.zeros((nt_chunk, nlon))
+            for j in range(nlon):
+                chunk_input_b[:, j] = np.interp(
+                    abs_times, full_mt, full_input_b_ts[:, j]
+                )
+            model.input_b_ts = chunk_input_b
+
+        if full_input_iscme_ts is not None:
+            chunk_input_iscme = np.zeros((nt_chunk, nlon), dtype='int')
+            for j in range(nlon):
+                chunk_input_iscme[:, j] = np.round(np.interp(
+                    abs_times, full_mt,
+                    full_input_iscme_ts[:, j].astype(np.float64)
+                )).astype('int')
+            model.input_iscme_ts = chunk_input_iscme
+            model.input_iscme_ts_flag = True
+
+        if model.compressible:
+            chunk_input_rho = np.zeros((nt_chunk, nlon)) * (u.kg / u.m**3)
+            chunk_input_temp = np.zeros((nt_chunk, nlon)) * u.K
+            for j in range(nlon):
+                chunk_input_rho[:, j] = np.interp(
+                    abs_times, full_mt, full_input_rho_ts[:, j].value
+                ) * (u.kg / u.m**3)
+                chunk_input_temp[:, j] = np.interp(
+                    abs_times, full_mt, full_input_temp_ts[:, j].value
+                ) * u.K
+            model.input_rho_ts = chunk_input_rho
+            model.input_temp_ts = chunk_input_temp
+
+        # --- Solve this chunk ---
+        model.solve(cme_list, streak_carr=streak_carr)
+
+        # Collect output — offset time_out by elapsed time
+        v_chunks.append(model.v_grid.value.copy())
+        time_out_chunks.append((model.time_out + chunk_start).copy())
+        if model.compressible:
+            rho_chunks.append(model.rho_grid.value.copy())
+            temp_chunks.append(model.temp_grid.value.copy())
+        if model.track_b and hasattr(model, 'b_grid'):
+            b_chunks.append(model.b_grid.copy())
+
+        # Get the final state for restarting the next chunk
+        state = model.get_final_state()
+        # Track actual elapsed time for chunk boundary placement.
+        if model.compressible and model.nt_out > 0:
+            # Compressible: next chunk must start from where the state was
+            # actually captured (last output time) to avoid evolution gaps.
+            t_elapsed = chunk_start + model.time_out[-1].to(u.s)
+        else:
+            # HUXt: iter_count-based output timing — ideal boundaries are fine.
+            t_elapsed = ideal_end
+        ideal_elapsed = ideal_end
+
+    # --- Concatenate all chunks ---
+    model.simtime = full_simtime
+    model.v_grid = np.concatenate(v_chunks, axis=0) * model.kms
+    model.time_out = np.concatenate([t.value for t in time_out_chunks]) * model.dt.unit
+    model.nt_out = model.v_grid.shape[0]
+    if model.compressible:
+        model.rho_grid = np.concatenate(rho_chunks, axis=0) * (u.kg / u.m**3)
+        model.temp_grid = np.concatenate(temp_chunks, axis=0) * u.K
+    if b_chunks:
+        model.b_grid = np.concatenate(b_chunks, axis=0)
+
+    # Restore the full input time series
+    model.input_v_ts = full_input_v_ts
+    model.model_time = full_model_time
+    if model.track_b and full_input_b_ts is not None:
+        model.input_b_ts = full_input_b_ts
+    if full_input_iscme_ts is not None:
+        model.input_iscme_ts = full_input_iscme_ts
+    if model.compressible:
+        model.input_rho_ts = full_input_rho_ts
+        model.input_temp_ts = full_input_temp_ts
+
+    if verbose:
+        print(f"solve_chunked: complete — {model.nt_out} output time steps")
+
+    if save:
+        model.save(tag=tag)
+
+    return model
+
+
 def _compressible_method_from_solver(solver_name):
     """Map public solver names to internal compressible method strings."""
     method_map = {
@@ -1982,45 +2407,6 @@ def clear_density_temperature_cache(cache_id=None):
         get_density_temperature_from_velocity._bounds_cache.pop(cache_id, None)
 
 
-
-def surf_constants():
-    """
-    Function to generate a dictionary of useful constants.
-    Returns:
-        constants: A dictionary of constants that configure SURF
-    """
-    nlong = 128  # Number of longitude bins for a full longitude grid [128]
-    dr = 1.5 * u.solRad  # Radial grid step. With v_max, this sets the model time step [1.5 Rs]
-    nlat = 45  # Number of latitude bins for a full latitude grid [45]
-    v_max = 1000 * u.km / u.s  # Maximum expected solar wind speed. Sets timestep [3000 km/s]
-
-    # CONSTANTS - DON'T CHANGE
-    twopi = 2.0 * np.pi
-    daysec = 24 * 60 * 60 * u.s
-    kms = u.km / u.s
-    alpha = 0.15 * u.dimensionless_unscaled  # Scale parameter for residual SW acceleration (for incompressible)
-    r_accel = 50 * u.solRad  # Spatial scale parameter for residual SW acceleration
-    gamma = 5 # Adiabatic index for compressible solver (1.5 for solar wind?)
-    synodic_period = 27.2753 * daysec  # Solar Synodic rotation period from Earth.
-    sidereal_period = 25.38 * daysec  # Solar sidereal rotation period
-    
-    # Typical 1 AU solar wind conditions. Used for CME perturbations and reference values
-    v_sw_1au = 400 * u.km / u.s  # Typical solar wind speed at 1 AU
-    n_sw_1au = 5 * u.cm**-3  # Typical solar wind density at 1 AU (~5 protons/cm³)
-    T_sw_1au = 1e5 * u.K  # Typical solar wind temperature at 1 AU (~100,000 K)
-    empirical_n_adjust_amp = 0.2  # Max fractional density remap amplitude applied at 0.1 AU
-    empirical_T_adjust_amp = 0.1  # Max fractional temperature remap amplitude applied at 0.1 AU
-
-    constants = {'twopi': twopi, 'daysec': daysec, 'kms': kms, 'alpha': alpha,
-                 'gamma': gamma,
-                 'r_accel': r_accel, 'synodic_period': synodic_period,
-                 'sidereal_period': sidereal_period, 'v_max': v_max,
-                 'dr': dr, 'nlong': nlong, 'nlat': nlat,
-                 'v_sw_1au': v_sw_1au, 'n_sw_1au': n_sw_1au, 'T_sw_1au': T_sw_1au,
-                 'empirical_n_adjust_amp': empirical_n_adjust_amp,
-                 'empirical_T_adjust_amp': empirical_T_adjust_amp}
-
-    return constants
 
 
 # ==============================================================================
@@ -2303,7 +2689,7 @@ def radial_grid(r_min=30.0 * u.solRad, r_max=240. * u.solRad):
         print("Warning, r_min should not be less than 5.0rs. Defaulting to 5.0rs")
         r_min = 5.0 * u.solRad
 
-    if r_max > 6000 * u.solRad:
+    if r_max > 10000 * u.solRad:
         print("Warning, r_max should not be more than 400rs. Defaulting to 400rs")
         r_max = 400 * u.solRad
 
@@ -2511,7 +2897,8 @@ def zerototwopi(angles):
 def solve_radial_compressible(v_bc_kms, rho_bc_kgm3, T_bc_K, model_time, time_out, 
                                r_grid, gamma, nt_out, nr, riemann='hllc-plm-rk2', verbose=False,
                                num_particles=0, particle_injection_rate=None, particle_release_rate=None,
-                               solver_instance=None):
+                               solver_instance=None,
+                               v_init_kms=None, rho_init_kgm3=None, T_init_K=None):
     """
     Solve 1D radial solar wind expansion using a compressible solver with selectable Riemann solver.
     
@@ -2554,6 +2941,15 @@ def solve_radial_compressible(v_bc_kms, rho_bc_kgm3, T_bc_K, model_time, time_ou
         If None, default to injection times.
     solver_instance : CompressibleSolver, optional
         Pre-initialized solver instance to reuse. If None, a new one is created.
+    v_init_kms : ndarray or None, optional
+        Initial velocity profile (km/s), shape (nr,).  When provided together
+        with *rho_init_kgm3* and *T_init_K*, the solver skips the default
+        power-law initialisation and uses these profiles instead.  Used for
+        restart/chunked runs.
+    rho_init_kgm3 : ndarray or None, optional
+        Initial density profile (kg/m³), shape (nr,).
+    T_init_K : ndarray or None, optional
+        Initial temperature profile (K), shape (nr,).
     
     Returns
     -------
@@ -2581,6 +2977,11 @@ def solve_radial_compressible(v_bc_kms, rho_bc_kgm3, T_bc_K, model_time, time_ou
     # Convert to SI (m, m/s, kg/m³)
     v_bc_si = v_bc_kms * KM_TO_M  # m/s
     rho_bc_si = rho_bc_kgm3  # already kg/m³
+    
+    # Convert initial state to SI if provided
+    v_init_si = v_init_kms * KM_TO_M if v_init_kms is not None else None
+    rho_init_si = rho_init_kgm3  # already kg/m³ if provided
+    T_init_si = T_init_K  # already K if provided
     
     # Convert SURF radial grid to m
     r_grid_m = r_grid * KM_TO_M
@@ -2623,7 +3024,10 @@ def solve_radial_compressible(v_bc_kms, rho_bc_kgm3, T_bc_K, model_time, time_ou
         T_bc_func=T_bc_func,
         num_particles=num_particles,
         particle_injection_rate=particle_injection_rate,
-        particle_release_rate=particle_release_rate
+        particle_release_rate=particle_release_rate,
+        v_init=v_init_si,
+        rho_init=rho_init_si,
+        T_init=T_init_si
     )
     
     # Extract output times (skip spin-up)
@@ -2717,11 +3121,12 @@ def solve_radial_compressible(v_bc_kms, rho_bc_kgm3, T_bc_K, model_time, time_ou
 
 @jit(nopython=True, nogil=True)
 def solve_radial(vinput, binput, iscmeinput, model_time, rrel, params,
-                 n_cme, n_hcs_max, streak_times, rhoinput=None, tempinput=None):
+                 n_cme, n_hcs_max, streak_times, rhoinput=None, tempinput=None,
+                 v_init=None):
     """
     Solve the radial profile as a function of time (including spinup), and
     return radial profile at specified output timesteps.
-    Tracks CME frotns as test particles
+    Tracks CME fronts as test particles.
     Args:
         vinput: Timeseries of inner boundary solar wind speeds.
         binput: Timeseries of inner boundary radial magnetic field.
@@ -2734,8 +3139,10 @@ def solve_radial(vinput, binput, iscmeinput, model_time, rrel, params,
         streak_times: time indices of streak foot points to track
         rhoinput: Timeseries of inner boundary density (optional, for compressible solver). Plain array without units.
         tempinput: Timeseries of inner boundary temperature (optional, for compressible solver). Plain array without units.
-        compressible: Boolean flag indicating if compressible solver is being used
-        solver: String specifying which numerical solver to use
+        v_init: Optional initial radial velocity profile (km/s), shape (nr,).
+                When provided, the solver uses this instead of the default 400 km/s
+                initialisation, allowing restart from a previous run's final state
+                without requiring spin-up.
     Returns:
         v_grid: Array of radial solar wind speed profile as function of time.
         cme_particles_r: Array of CME tracer particle positions as function of time.
@@ -2754,7 +3161,8 @@ def solve_radial(vinput, binput, iscmeinput, model_time, rrel, params,
     r_boundary = params[7]
     accel_limit = bool(params[9])  # switch used to determine if speed limit is applied to acceleration.
     gamma = params[10]  # Adiabatic index for compressible solver
-    solver = 'huxt'  # This function is only called for huxt solver
+    pui = bool(params[11]) if len(params) > 11 else False  # pick-up ion deceleration
+    solver = 'huxt-pui' if pui else 'huxt'  # This function is only called for huxt-family solvers
     compressible = False  # huxt solver is incompressible by default
     
     # Compute the radial grid for the test particles
@@ -2804,7 +3212,10 @@ def solve_radial(vinput, binput, iscmeinput, model_time, rrel, params,
         # Get the initial condition, which will update in the loop,
         # and snapshots saved to output at right steps.
         if t == 0:
-            v = np.ones(nr) * 400
+            if v_init is not None:
+                v = v_init.copy()
+            else:
+                v = np.ones(nr) * 400
             r_cmeparticles = np.ones((n_cme, 2)) * np.nan
             v_cmeparticles = np.ones((n_cme, 2)) * np.nan
             r_hcsparticles = np.ones((n_hcs_max, 2)) * np.nan
@@ -2890,35 +3301,25 @@ def solve_radial(vinput, binput, iscmeinput, model_time, rrel, params,
         # Do a single model time step
         # Solver dispatch: select numerical method based on solver parameter
         
-        if solver == 'huxt':
+        if solver == 'huxt' or solver == 'huxt-pui':
             # HUXt advection scheme (implemented with first-order upwind differencing)
-            if compressible:
-                # Evolve velocity, density, and temperature together for compressible runs
-                # NOTE: accel_limit is ignored for compressible solver (no residual acceleration)
-                rho_up = rho[1:].copy()
-                rho_dn = rho[:-1].copy()
-                temp_up = temp[1:].copy()
-                temp_dn = temp[:-1].copy()
-                
-                u_up_next, rho_up_next, temp_up_next = _upwind_step_compressible_(
-                    u_up, u_dn, rho_up, rho_dn, temp_up, temp_dn, dtdr, alpha, r_accel, rrel, r_boundary, gamma)
-                
-                # Save the updated time steps (direct assignment, no copy needed)
-                v[1:] = u_up_next
-                rho[1:] = rho_up_next
-                temp[1:] = temp_up_next
-            else:
-                # Incompressible HUXt update (velocity only)
+           
+            # Incompressible HUXt update (velocity only)
+            if pui:
                 if accel_limit:
-                    u_up_next = _upwind_step_accel_limit(u_up, u_dn, dtdr, alpha, r_accel, rrel)
+                    u_up_next = _upwind_step_pui_accel_limit_(u_up, u_dn, dtdr, alpha, r_accel, rrel, r_boundary)
                 else:
-                    u_up_next = _upwind_step_(u_up, u_dn, dtdr, alpha, r_accel, rrel)
-                
-                # Save the updated time step (direct assignment, no copy needed)
-                v[1:] = u_up_next
+                    u_up_next = _upwind_step_pui_(u_up, u_dn, dtdr, alpha, r_accel, rrel, r_boundary)
+            elif accel_limit:
+                u_up_next = _upwind_step_accel_limit(u_up, u_dn, dtdr, alpha, r_accel, rrel)
+            else:
+                u_up_next = _upwind_step_(u_up, u_dn, dtdr, alpha, r_accel, rrel)
+            
+            # Save the updated time step (direct assignment, no copy needed)
+            v[1:] = u_up_next
         
         else:
-            raise ValueError(f"Unknown solver: {solver}. Supported solver: 'huxt'")
+            raise ValueError(f"Unknown solver: {solver}. Supported solvers: 'huxt', 'huxt-pui'")
 
         # Move the CME test particles forward
         if t > 0 and do_cme:
@@ -3189,92 +3590,95 @@ def _upwind_step_accel_limit(v_up, v_dn, dtdr, alpha, r_accel, rrel):
 
     return v_up_next
 
-@jit(nopython=True)
-def _upwind_step_compressible_(v_up, v_dn, rho_up, rho_dn, temp_up, temp_dn, 
-                                dtdr, alpha, r_accel, rrel, r_boundary, gamma):
-    """
-    Compute the next step in the upwind scheme for the compressible solver.
-    This includes velocity, density, and temperature evolution with compression/heating physics.
-    Residual acceleration is NOT included - pressure gradient drives the flow.
-    
-    Args:
-        v_up: A numpy array of the upwind velocity values. Units of km/s.
-        v_dn: A numpy array of the downwind velocity values. Units of km/s.
-        rho_up: A numpy array of the upwind density values. Units of kg/m^3.
-        rho_dn: A numpy array of the downwind density values. Units of kg/m^3.
-        temp_up: A numpy array of the upwind temperature values. Units of K.
-        temp_dn: A numpy array of the downwind temperature values. Units of K.
-        dtdr: Ratio of SURF time step and radial grid step. Units of s/km.
-        alpha: Scale parameter for residual Solar wind acceleration (NOT USED in compressible solver).
-        r_accel: Acceleration scale (NOT USED in compressible solver).
-        rrel: The model radial grid relative to the radial inner boundary coordinate. Units of km.
-        r_boundary: The inner boundary radius in km.
-        gamma: Adiabatic index for compressible solver (typically 1.5 for solar wind).
-        
-    Returns:
-        v_up_next: The upwind velocity values at the next time step. Units of km/s.
-        rho_up_next: The upwind density values at the next time step. Units of kg/m^3.
-        temp_up_next: The upwind temperature values at the next time step. Units of K.
-    """
 
-    # ====================================================================
-    # Velocity evolution with pressure gradient force
-    # Momentum equation: ∂v/∂t + v·∂v/∂r = -(1/ρ)·∂P/∂r
-    # ====================================================================
-    
-    # Constants
-    k_B = 1.38064852e-23  # J/K
-    m_p = 1.67262192e-27  # kg
-    
-    # Radial coordinates
-    r_up_km = rrel[:-1] * 695700.0 + r_boundary
-    
-    # Gradients (forward difference for upwind scheme)
-    dv = v_dn - v_up
-    drho = rho_dn - rho_up
-    dtemp = temp_dn - temp_up
-    
-    # Pressure gradient term (1/rho * dP/dr)
-    # P = rho * k_B * T / m_p
-    # (1/rho) * dP = (k_B/m_p) * (dT + (T/rho) * drho)
-    # Units: (J/K / kg) * (K + K) = J/kg = (m/s)^2
-    term_P_SI = (k_B / m_p) * (dtemp + (temp_up / rho_up) * drho) # (m/s)^2
-    
-    # Convert to km/s^2 equivalent for update
-    # 1 m^2/s^2 = 1e-6 km^2/s^2
-    term_P_kms2 = 1e-6 * term_P_SI
-    
-    # Update velocity
-    # v_new = v - dt * v * dv/dr - dt * 1/rho * dP/dr
-    #       = v - v * (dt/dr) * dv - (dt/dr) * (1/rho * dP)
-    v_up_next = v_up - v_up * dtdr * dv - dtdr * term_P_kms2
-    
-    # ====================================================================
-    # Density evolution
-    # Continuity equation: ∂ρ/∂t + v·∂ρ/∂r + ρ·∂v/∂r + 2ρv/r = 0
-    # ====================================================================
-    
-    # Calculate dt from dtdr
-    dr_km = (rrel[1] - rrel[0]) * 695700.0
-    dt = dtdr * dr_km
-    
-    spherical_term = 2.0 * rho_up * v_up / r_up_km
-    rho_up_next = rho_up - dtdr * (v_up * drho + rho_up * dv) - dt * spherical_term
-    
-    # ====================================================================
-    # Temperature evolution
-    # Energy equation: ∂T/∂t + v·∂T/∂r + (γ-1)T(∂v/∂r + 2v/r) = 0
-    # ====================================================================
-    
-    div_v_dt = dtdr * dv + dt * 2.0 * v_up / r_up_km
-    temp_up_next = temp_up - dtdr * v_up * dtemp - (gamma - 1.0) * temp_up * div_v_dt
-    
-    # Apply physical bounds to prevent instability
-    v_up_next = np.maximum(100.0, np.minimum(v_up_next, 3000.0))
-    temp_up_next = np.maximum(1e3, np.minimum(temp_up_next, 1e8))
-    rho_up_next = np.maximum(1e-30, rho_up_next)
-    
-    return v_up_next, rho_up_next, temp_up_next
+@jit(nopython=True)
+def _upwind_step_pui_(v_up, v_dn, dtdr, alpha, r_accel, rrel, r_boundary):
+    """
+    Compute the next upwind step with both residual solar wind acceleration and
+    pick-up ion (PUI) deceleration.
+
+    The PUI deceleration is based on the empirical scaling:
+        dV/dr = -0.05 * V / (40 AU)   for r > 10 AU
+
+    which gives a fractional slowdown of ~5% per 40 AU beyond 10 AU.
+    This matches the observed deceleration of the solar wind in the outer
+    heliosphere due to mass-loading by pick-up ions.
+
+    Args:
+        v_up:       Upwind velocity array (km/s).
+        v_dn:       Downwind velocity array (km/s).
+        dtdr:       Model dt/dr (s/km).
+        alpha:      Residual acceleration scale parameter.
+        r_accel:    Residual acceleration spatial scale (km).
+        rrel:       Radial grid relative to inner boundary (solar radii).
+        r_boundary: Inner boundary radius (km).
+
+    Returns:
+        v_up_next: Updated upwind velocity array (km/s).
+    """
+    _AU_KM = 1.496e8          # 1 AU in km
+    _R_PUI_ON = 10.0 * _AU_KM  # PUI kicks in beyond 10 AU (km)
+    _R_PUI_SCALE = 40.0 * _AU_KM  # scale radius = 40 AU (km)
+
+    accel_arg   = -rrel[:-1] / r_accel
+    accel_arg_p = -rrel[1:]  / r_accel
+
+    v_up_next = v_up - dtdr * v_up * (v_up - v_dn)
+
+    v_source = v_dn / (1.0 + alpha * (1.0 - np.exp(accel_arg)))
+    v_diff   = alpha * v_source * (np.exp(accel_arg) - np.exp(accel_arg_p))
+    v_up_next = v_up_next + v_dn * dtdr * v_diff
+
+    # Pick-up ion deceleration: dV/dr = -0.05 * V / (40 AU) for r > 10 AU
+    r_mid = rrel[:-1] * 695700.0 + r_boundary   # heliocentric distance at each cell centre (km)
+    dr_km = (rrel[1:] - rrel[:-1]) * 695700.0   # physical dr per cell (km)
+    pui_mask = r_mid > _R_PUI_ON
+    pui_dv = np.where(pui_mask,
+                      -v_up_next * (0.05 / _R_PUI_SCALE) * dr_km,
+                      0.0)
+    v_up_next = v_up_next + pui_dv
+
+    return v_up_next
+
+
+@jit(nopython=True)
+def _upwind_step_pui_accel_limit_(v_up, v_dn, dtdr, alpha, r_accel, rrel, r_boundary):
+    """
+    Pick-up ion deceleration variant of the upwind step with accel_limit active
+    (no acceleration applied to flows > 650 km/s). See _upwind_step_pui_ for
+    full documentation of the PUI term.
+    """
+    _AU_KM = 1.496e8
+    _R_PUI_ON = 10.0 * _AU_KM
+    _R_PUI_SCALE = 40.0 * _AU_KM
+
+    n = len(v_dn)
+    v_up_next = np.empty(n, dtype=np.float64)
+
+    for i in range(n):
+        if i >= len(rrel) - 1:
+            continue
+
+        accel_arg   = -rrel[i]     / r_accel
+        accel_arg_p = -rrel[i + 1] / r_accel
+
+        v_up_next[i] = v_up[i] - dtdr * v_up[i] * (v_up[i] - v_dn[i])
+
+        denom    = 1.0 + alpha * (1.0 - np.exp(accel_arg))
+        v_source = v_dn[i] / denom
+        v_diff   = 0.0
+        if v_source < 650.0:
+            v_diff = alpha * v_source * (np.exp(accel_arg) - np.exp(accel_arg_p))
+        v_up_next[i] += v_dn[i] * dtdr * v_diff
+
+        # PUI deceleration
+        r_mid = rrel[i] * 695700.0 + r_boundary
+        if r_mid > _R_PUI_ON:
+            dr_km = (rrel[i + 1] - rrel[i]) * 695700.0
+            v_up_next[i] += -v_up_next[i] * (0.05 / _R_PUI_SCALE) * dr_km
+
+    return v_up_next
+
 
 
 @jit(nopython=True)

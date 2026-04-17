@@ -582,7 +582,8 @@ class CompressibleSolver:
         return self.U
     
     def solve(self, t_grid, v_bc_func, rho_bc_func, T_bc_func, 
-              num_particles=0, particle_injection_rate=None, particle_release_rate=None):
+              num_particles=0, particle_injection_rate=None, particle_release_rate=None,
+              v_init=None, rho_init=None, T_init=None):
         """
         Run simulation over time grid.
         
@@ -602,6 +603,15 @@ class CompressibleSolver:
             Particle injection times (seconds)
         particle_release_rate : array or dict, optional
             Particle release times (seconds)
+        v_init : ndarray or None, optional
+            Initial velocity profile (m/s), shape (nr,). If None, use
+            power-law scaling from boundary values.
+        rho_init : ndarray or None, optional
+            Initial density profile (kg/m³), shape (nr,). If None, use
+            1/r² scaling from boundary value.
+        T_init : ndarray or None, optional
+            Initial temperature profile (K), shape (nr,). If None, use
+            adiabatic scaling from boundary value.
             
         Returns
         -------
@@ -616,23 +626,26 @@ class CompressibleSolver:
             print(f"  Reconstruction: {self.reconstruction}")
             print(f"  Time integration: {self.time_integration}")
         
-        # Initialize with power-law scaling
-        v0 = v_bc_func(t_grid[0])
-        rho0 = rho_bc_func(t_grid[0])
-        T0 = T_bc_func(t_grid[0])
-        
-        r0 = self.r[0]
-        v_init = np.ones_like(self.r) * v0
-        rho_init = np.zeros_like(self.r)
-        T_init = np.zeros_like(self.r)
-        alpha = 2 * (self.gamma - 1)
-        
-        for i, r in enumerate(self.r):
-            r_ratio = r0 / r
-            rho_init[i] = rho0 * r_ratio**2
-            T_init[i] = T0 * r_ratio**alpha
-        
-        self._set_initial_conditions(rho_init, v_init, T_init)
+        # Initialize state: use provided profiles or power-law scaling
+        if v_init is not None and rho_init is not None and T_init is not None:
+            self._set_initial_conditions(rho_init, v_init, T_init)
+        else:
+            v0 = v_bc_func(t_grid[0])
+            rho0 = rho_bc_func(t_grid[0])
+            T0 = T_bc_func(t_grid[0])
+            
+            r0 = self.r[0]
+            v_def = np.ones_like(self.r) * v0
+            rho_def = np.zeros_like(self.r)
+            T_def = np.zeros_like(self.r)
+            alpha = 2 * (self.gamma - 1)
+            
+            for i, r in enumerate(self.r):
+                r_ratio = r0 / r
+                rho_def[i] = rho0 * r_ratio**2
+                T_def[i] = T0 * r_ratio**alpha
+            
+            self._set_initial_conditions(rho_def, v_def, T_def)
         self.time = t_grid[0]
         
         # Output arrays

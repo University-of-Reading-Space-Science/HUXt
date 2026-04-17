@@ -60,14 +60,6 @@ def convert_hdf4_to_hdf5(hdf4_path, hdf5_path):
 import surf as surf
 
 
-VALID_SOLVERS = ("huxt", "hydro", "hydro-pcm")
-
-
-def _validate_solver_name(solver):
-    """Validate supported solver names used by SURF helper functions."""
-    if solver not in VALID_SOLVERS:
-        valid = ", ".join([f"'{name}'" for name in VALID_SOLVERS])
-        raise ValueError(f"Invalid solver '{solver}'. Valid options are: {valid}.")
 
 
 def get_data_dir():
@@ -1246,7 +1238,7 @@ def set_time_dependent_boundary(vgrid_Carr, time_grid, starttime, simtime, r_min
     """
     all_lons, dlon, nlon = surf.longitude_grid()
     assert (len(vgrid_Carr[:, 0]) == nlon)
-    _validate_solver_name(solver)
+    surf.validate_solver_name(solver)
 
     # see if br boundary conditions are supplied
     do_b = False
