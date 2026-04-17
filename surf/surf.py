@@ -2070,9 +2070,9 @@ def surf_constants():
         constants: A dictionary of constants that configure SURF
     """
     nlong = 128  # Number of longitude bins for a full longitude grid [128]
-    dr = 10 * u.solRad  # Radial grid step. With v_max, this sets the model time step [1.5 Rs]
+    dr = 1.5 * u.solRad  # Radial grid step. With v_max, this sets the model time step [1.5 Rs]
     nlat = 45  # Number of latitude bins for a full latitude grid [45]
-    v_max = 1000 * u.km / u.s  # Maximum expected solar wind speed. Sets timestep [3000 km/s]
+    v_max = 3000 * u.km / u.s  # Maximum expected solar wind speed. Sets timestep [3000 km/s]
 
     # CONSTANTS - DON'T CHANGE
     twopi = 2.0 * np.pi
@@ -2154,9 +2154,12 @@ def solve_chunked(model, cme_list, chunk_simtime, streak_carr=np.array([]) * u.r
         tg_last = time_grid(last_chunk_len, model.dt_scale)
         if tg_last['nt_out'] == 0:
             n_chunks -= 1
+    # Add 1 for a dedicated spin-up chunk (simtime=0, buffer only)
+    n_chunks += 1
     if verbose:
-        print(f"solve_chunked: splitting {total_simtime.to(u.day):.1f} into "
-              f"{n_chunks} chunk(s) of up to {chunk_simtime.to(u.day):.1f}")
+        print(f"solve_chunked: 1 spin-up + {n_chunks - 1} data chunk(s) "
+              f"of up to {chunk_simtime.to(u.day):.1f} "
+              f"(total {total_simtime.to(u.day):.1f})")
 
     # ------------------------------------------------------------------
     # Ensure we have the full input time series (including spin-up)
@@ -2200,33 +2203,51 @@ def solve_chunked(model, cme_list, chunk_simtime, streak_carr=np.array([]) * u.r
     ideal_elapsed = 0.0 * u.s   # tracks ideal chunk boundaries for splitting
 
     for ic in range(n_chunks):
-        ideal_remaining = total_simtime - ideal_elapsed
-        this_chunk = min(chunk_simtime, ideal_remaining)
-        ideal_end = ideal_elapsed + this_chunk
+        is_spinup = (ic == 0)
 
-        if model.compressible:
-            # Compressible solver: start from last actual output time so that
-            # there is no evolution gap between state capture and restart.
-            chunk_start = t_elapsed
-            model.simtime = (ideal_end - chunk_start).to(u.s)
+        if is_spinup:
+            # First chunk is spin-up only: run the buffer period with
+            # simtime=0 so no model output is produced.
+            this_chunk = 0.0 * u.s
+            ideal_end = 0.0 * u.s
+            chunk_start = 0.0 * u.s
+            model.simtime = 0.0 * u.s
+            if verbose:
+                print(f"  spin-up: buffertime = {full_buffertime.to(u.day):.2f}")
         else:
-            # HUXt-family solvers: iter_count-based output — ideal boundaries
-            # are fine and avoid any time_out alignment issues.
-            chunk_start = ideal_elapsed
-            model.simtime = this_chunk
+            ideal_remaining = total_simtime - ideal_elapsed
+            this_chunk = min(chunk_simtime, ideal_remaining)
+            ideal_end = ideal_elapsed + this_chunk
 
-        if verbose:
-            print(f"  chunk {ic + 1}/{n_chunks}: "
-                  f"t = {chunk_start.to(u.day):.2f} .. "
-                  f"{ideal_end.to(u.day):.2f}")
+            if model.compressible:
+                # Compressible solver: start from last actual output time so
+                # there is no evolution gap between state capture and restart.
+                chunk_start = t_elapsed
+                model.simtime = (ideal_end - chunk_start).to(u.s)
+            else:
+                # HUXt-family solvers: iter_count-based output — ideal
+                # boundaries avoid time_out alignment issues.
+                chunk_start = ideal_elapsed
+                model.simtime = this_chunk
+
+            if verbose:
+                print(f"  chunk {ic}/{n_chunks - 1}: "
+                      f"t = {chunk_start.to(u.day):.2f} .. "
+                      f"{ideal_end.to(u.day):.2f}")
 
         # --- Configure the model for this chunk ---
 
-        if model.compressible:
+        if is_spinup:
+            # Spin-up produces no output time steps
+            model.nt_out = 0
+            model.dt_out = full_dt_out
+            model.time_out = np.array([]) * model.dt.unit
+        elif model.compressible:
             # Compressible solver: slice the full run's output time grid so
             # that snapshot times match a single long solve() call exactly.
             dt_half = 0.5 * model.dt
-            if state is None:
+            if ic == 1:
+                # First data chunk after spin-up: include t=0 output
                 mask = (full_time_out < ideal_end + dt_half)
             else:
                 mask = ((full_time_out > chunk_start + dt_half) &
@@ -2323,25 +2344,28 @@ def solve_chunked(model, cme_list, chunk_simtime, streak_carr=np.array([]) * u.r
         model.solve(cme_list, streak_carr=streak_carr)
 
         # Collect output — offset time_out by elapsed time
-        v_chunks.append(model.v_grid.value.copy())
-        time_out_chunks.append((model.time_out + chunk_start).copy())
-        if model.compressible:
-            rho_chunks.append(model.rho_grid.value.copy())
-            temp_chunks.append(model.temp_grid.value.copy())
-        if model.track_b and hasattr(model, 'b_grid'):
-            b_chunks.append(model.b_grid.copy())
+        if model.nt_out > 0:
+            v_chunks.append(model.v_grid.value.copy())
+            time_out_chunks.append((model.time_out + chunk_start).copy())
+            if model.compressible:
+                rho_chunks.append(model.rho_grid.value.copy())
+                temp_chunks.append(model.temp_grid.value.copy())
+            if model.track_b and hasattr(model, 'b_grid'):
+                b_chunks.append(model.b_grid.copy())
 
         # Get the final state for restarting the next chunk
         state = model.get_final_state()
-        # Track actual elapsed time for chunk boundary placement.
-        if model.compressible and model.nt_out > 0:
-            # Compressible: next chunk must start from where the state was
-            # actually captured (last output time) to avoid evolution gaps.
-            t_elapsed = chunk_start + model.time_out[-1].to(u.s)
-        else:
-            # HUXt: iter_count-based output timing — ideal boundaries are fine.
-            t_elapsed = ideal_end
-        ideal_elapsed = ideal_end
+
+        if not is_spinup:
+            # Track actual elapsed time for chunk boundary placement.
+            if model.compressible and model.nt_out > 0:
+                # Compressible: next chunk must start from where the state
+                # was captured (last output time) to avoid evolution gaps.
+                t_elapsed = chunk_start + model.time_out[-1].to(u.s)
+            else:
+                # HUXt: iter_count-based output — ideal boundaries are fine.
+                t_elapsed = ideal_end
+            ideal_elapsed = ideal_end
 
     # --- Concatenate all chunks ---
     model.simtime = full_simtime

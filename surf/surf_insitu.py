@@ -1301,21 +1301,31 @@ def omniSURF_reconstruction(start_time, end_time,
     
     if solver == 'huxt':
         for t in range(nt):
-            vcarr_rmin[:, t], bcarr_rmin[:, t] = surfIN.map_v_boundary_inwards(
-                vcarr_215[:, t], 
-                ref_r, 
+            mapped = surfIN.map_v_boundary_inwards(
+                vcarr_215[:, t],
+                ref_r,
                 rmin,
                 b_orig=bcarr_215[:, t]
             )
+            if isinstance(mapped, tuple):
+                vcarr_rmin[:, t], bcarr_rmin[:, t] = mapped
+            else:
+                vcarr_rmin[:, t] = mapped
+                bcarr_rmin[:, t] = np.nan
     else:
         for t in range(nt):
-            vcarr_rmin[:, t], bcarr_rmin[:, t] = surfIN.map_v_boundary_inwards(
-                vcarr_215[:, t], 
-                ref_r, 
+            mapped = surfIN.map_v_boundary_inwards(
+                vcarr_215[:, t],
+                ref_r,
                 rmin,
                 b_orig=bcarr_215[:, t],
                 acc_profile='huxt', gamma=1.5
             )
+            if isinstance(mapped, tuple):
+                vcarr_rmin[:, t], bcarr_rmin[:, t] = mapped
+            else:
+                vcarr_rmin[:, t] = mapped
+                bcarr_rmin[:, t] = np.nan
     
     # Apply CNN correction to backmapped data
     vcarr_rmin_cnn = correct_inner_vlon_cnn_onnx(vcarr_rmin)
@@ -1432,4 +1442,135 @@ def omniSURF_reconstruction(start_time, end_time,
             solver=solver, track_cmes=False
         )
     
+    return model
+
+
+def omniSURF_1au_out(start_time, end_time,
+                     rmax=230*u.solRad,
+                     dt_scale=4, dt=1*u.day,
+                     omni_input=None,
+                     run_2d=False,
+                     solver='hydro'):
+    """
+    Create a SURF solar wind simulation starting from ~1 AU using OMNI observations.
+
+    Similar to omniSURF_reconstruction but uses 215 Rs as the inner boundary
+    directly (no backmapping, no CNN correction) and takes density and
+    temperature from the in-situ OMNI measurements.
+
+    Parameters
+    ----------
+    start_time : datetime.datetime
+        Start time of the reconstruction interval.
+    end_time : datetime.datetime
+        End time of the reconstruction interval.
+    rmax : astropy.units.Quantity, optional
+        Outer boundary radius. Default is 230 solar radii.
+    dt_scale : int, optional
+        Time step scaling factor for SURF. Default is 4.
+    dt : astropy.units.Quantity, optional
+        Time resolution for the Carrington map. Default is 1 day.
+    omni_input : pandas.DataFrame, optional
+        Pre-loaded OMNI data with ICMEs removed. If None, OMNI data will be
+        downloaded and ICMEs removed automatically.
+    run_2d : bool, optional
+        If False (default), runs a 1D radial simulation at Earth's longitude.
+        If True, runs a full 2D simulation across all longitudes.
+    solver : str, optional
+        Solver type. Default is 'hydro'. Valid options:
+        - 'huxt': first-order HUXt advection solver
+        - 'huxt-pui': first-order HUXt advection solver with pick-up ions
+        - 'hydro': second-order compressible HLLC+PLM solver
+        - 'hydro-pcm': compressible HLLC+PCM solver
+
+    Returns
+    -------
+    model : surf.SURF
+        Initialized (but not yet solved) SURF model object with time-dependent
+        boundary conditions. Call model.solve([]) to run the simulation.
+    """
+    surf.validate_solver_name(solver)
+
+    rmin = 215 * u.solRad
+
+    # If no OMNI data provided, download it and remove ICMEs
+    if omni_input is None:
+        dl_starttime = start_time - datetime.timedelta(days=28)
+        dl_endtime = end_time + datetime.timedelta(days=28)
+
+        omni = get_omni(dl_starttime, dl_endtime)
+        omni_input = removeICMEs(omni, icme_list='CaneRichardson')
+
+    # Generate Carrington map with density and temperature from OMNI
+    need_compressible = _is_compressible_solver(solver)
+    if need_compressible:
+        time_grid, vcarr_215, bcarr_215, rhocarr_215, tcarr_215 = generate_vCarr_from_OMNI(
+            start_time, end_time,
+            omni_input=omni_input,
+            dt=dt,
+            corot_type='both',
+            compressible=True
+        )
+    else:
+        time_grid, vcarr_215, bcarr_215 = generate_vCarr_from_OMNI(
+            start_time, end_time,
+            omni_input=omni_input,
+            dt=dt,
+            corot_type='both',
+            compressible=False
+        )
+
+    # Use the velocities at 215 Rs directly — no backmapping or CNN correction
+    vcarr = vcarr_215.value  # km/s
+
+    # Handle density and temperature for compressible solvers
+    rhogrid_carr = np.nan
+    tempgrid_carr = np.nan
+
+    if need_compressible:
+        # rhocarr_215 is already in kg/m³ from generate_vCarr_from_OMNI
+        rhogrid_carr = rhocarr_215
+        tempgrid_carr = tcarr_215
+
+    # Calculate simulation time from start to end
+    simtime = (Time(end_time).mjd - Time(start_time).mjd) * u.day
+
+    # Get Earth latitude
+    Elat = surfIN.get_earth_lat(start_time)
+
+    # Create SURF model with time-dependent boundary
+    if run_2d:
+        model = surfIN.set_time_dependent_boundary(
+            vgrid_Carr=vcarr * u.km/u.s,
+            time_grid=time_grid,
+            starttime=start_time,
+            simtime=simtime,
+            bgrid_Carr=bcarr_215,
+            rhogrid_Carr=rhogrid_carr,
+            tempgrid_Carr=tempgrid_carr,
+            r_min=rmin,
+            r_max=rmax,
+            dt_scale=dt_scale,
+            latitude=Elat,
+            frame='synodic',
+            solver=solver, track_cmes=False
+        )
+    else:
+        model = surfIN.set_time_dependent_boundary(
+            vgrid_Carr=vcarr * u.km/u.s,
+            time_grid=time_grid,
+            starttime=start_time,
+            simtime=simtime,
+            bgrid_Carr=bcarr_215,
+            rhogrid_Carr=rhogrid_carr,
+            tempgrid_Carr=tempgrid_carr,
+            r_min=rmin,
+            r_max=rmax,
+            dt_scale=dt_scale,
+            latitude=Elat,
+            frame='synodic',
+            lon_out=0*u.rad,
+            solver=solver, track_cmes=False
+        )
+
     return model
