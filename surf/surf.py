@@ -2070,9 +2070,9 @@ def surf_constants():
         constants: A dictionary of constants that configure SURF
     """
     nlong = 128  # Number of longitude bins for a full longitude grid [128]
-    dr = 1.5 * u.solRad  # Radial grid step. With v_max, this sets the model time step [1.5 Rs]
+    dr = 10 * u.solRad  # Radial grid step. With v_max, this sets the model time step [1.5 Rs]
     nlat = 45  # Number of latitude bins for a full latitude grid [45]
-    v_max = 3000 * u.km / u.s  # Maximum expected solar wind speed. Sets timestep [3000 km/s]
+    v_max = 1000 * u.km / u.s  # Maximum expected solar wind speed. Sets timestep [3000 km/s]
 
     # CONSTANTS - DON'T CHANGE
     twopi = 2.0 * np.pi
@@ -2237,7 +2237,13 @@ def solve_chunked(model, cme_list, chunk_simtime, streak_carr=np.array([]) * u.r
 
         # --- Configure the model for this chunk ---
 
-        if is_spinup:
+        if is_spinup and model.compressible:
+            # Compressible spin-up: capture one snapshot at t=0 so
+            # get_final_state() can retrieve the post-spin-up profiles.
+            model.nt_out = 1
+            model.dt_out = full_dt_out
+            model.time_out = np.array([0.0]) * model.dt.unit
+        elif is_spinup:
             # Spin-up produces no output time steps
             model.nt_out = 0
             model.dt_out = full_dt_out
@@ -2344,7 +2350,7 @@ def solve_chunked(model, cme_list, chunk_simtime, streak_carr=np.array([]) * u.r
         model.solve(cme_list, streak_carr=streak_carr)
 
         # Collect output — offset time_out by elapsed time
-        if model.nt_out > 0:
+        if model.nt_out > 0 and not is_spinup:
             v_chunks.append(model.v_grid.value.copy())
             time_out_chunks.append((model.time_out + chunk_start).copy())
             if model.compressible:
@@ -3011,10 +3017,15 @@ def solve_radial_compressible(v_bc_kms, rho_bc_kgm3, T_bc_K, model_time, time_ou
     r_grid_m = r_grid * KM_TO_M
     
     # Create output time grid for solver - include spin-up snapshots
-    spinup_time_seconds = time_out_seconds[0] - model_time_seconds[0]
-    n_spinup_snaps = max(5, int(spinup_time_seconds / 86400))  # At least 5, or ~1 per day
-    spinup_sampled = np.linspace(model_time_seconds[0], time_out_seconds[0], n_spinup_snaps, endpoint=False)
-    t_grid_combined = np.concatenate([spinup_sampled, time_out_seconds])
+    if len(time_out_seconds) == 0:
+        # No output times requested (spin-up only chunk) - just run over model time range
+        spinup_sampled = np.array([])
+        t_grid_combined = model_time_seconds
+    else:
+        spinup_time_seconds = time_out_seconds[0] - model_time_seconds[0]
+        n_spinup_snaps = max(5, int(spinup_time_seconds / 86400))  # At least 5, or ~1 per day
+        spinup_sampled = np.linspace(model_time_seconds[0], time_out_seconds[0], n_spinup_snaps, endpoint=False)
+        t_grid_combined = np.concatenate([spinup_sampled, time_out_seconds])
     
     # Boundary condition functions (MUST return plain floats, no units)
     def v_bc_func(t):

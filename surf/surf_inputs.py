@@ -60,8 +60,6 @@ def convert_hdf4_to_hdf5(hdf4_path, hdf5_path):
 import surf as surf
 
 
-
-
 def get_data_dir():
     """Get path to output directory for figures and animations"""
     data_dir = Path(user_data_dir("surf", "")) / "data" / 'boundary_conditions'
@@ -566,11 +564,24 @@ def map_v_boundary_inwards(v_orig, r_orig, r_new, b_orig=np.nan, acc_profile='hu
     # making boundaries periodic
     v_new = np.interp(lon, phis_new, v0, period=2 * np.pi)
 
-    if np.isfinite(b_orig).any():
-        b_new = np.interp(lon, phis_new, b_orig, period=2 * np.pi)
+    # If b_orig is explicitly supplied, always return a 2-tuple so callers
+    # that unpack (v_new, b_new) do not fail on scalar or all-NaN inputs.
+    b_requested = True
+    if np.isscalar(b_orig):
+        try:
+            b_requested = not np.isnan(b_orig)
+        except TypeError:
+            b_requested = True
+
+    if b_requested:
+        b_orig_values = np.asanyarray(b_orig)
+        if b_orig_values.ndim > 0 and np.isfinite(b_orig_values).any():
+            b_new = np.interp(lon, phis_new, b_orig_values, period=2 * np.pi)
+        else:
+            b_new = np.full(len(v_new), np.nan)
         return v_new, b_new
-    else:
-        return v_new
+
+    return v_new
 
 
 def map_vmap_inwards(v_map, v_map_lat, v_map_long, r_orig, r_new, b_map=np.nan):
@@ -1209,7 +1220,7 @@ def set_time_dependent_boundary(vgrid_Carr, time_grid, starttime, simtime, r_min
                                 dt_scale=50, latitude=0 * u.deg, frame='sidereal', lon_start=0 * u.rad,
                                 lon_stop=2 * np.pi * u.rad, lon_out=np.nan, bgrid_Carr=np.nan, 
                                 rhogrid_Carr=np.nan, tempgrid_Carr=np.nan, track_cmes=True,
-                                accel_limit=True, solver='huxt'):
+                                accel_limit=True, solver='upwind'):
     """
     A function to compute an explicitly time dependent inner boundary condition for HUXt, rather than due to
     synodic/sidereal rotation of static coronal structure.
@@ -1232,13 +1243,11 @@ def set_time_dependent_boundary(vgrid_Carr, time_grid, starttime, simtime, r_min
         tempgrid_Carr: input temperature (K) as a function of Carrington longitude and time
         track_cmes: Bool, whether to track CMEs through the simulation.
         accel_limit: Bool, whether to turn off the acceleration for fluid elements with speeds >650 km/s
-        solver: String, numerical solver. Valid options are 'huxt', 'hydro', and 'hydro-pcm'.
     returns:
         model: A HUXt instance initialised with the fully time dependent boundary conditions.
     """
     all_lons, dlon, nlon = surf.longitude_grid()
     assert (len(vgrid_Carr[:, 0]) == nlon)
-    surf.validate_solver_name(solver)
 
     # see if br boundary conditions are supplied
     do_b = False
