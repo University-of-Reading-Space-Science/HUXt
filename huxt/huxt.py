@@ -799,7 +799,15 @@ class HUXt:
             # centered on simulation longitude
             lon_start = lon_out - simlon - dlondt
             lon_stop = lon_out + bufferlon
-            lonint = np.arange(lon_start, lon_stop, dlondt)
+
+            # IMPROVED: Use linspace instead of arange to guarantee exact size match
+            num_points = model_time.size
+            lonint = np.linspace(lon_start, lon_stop, num_points, endpoint=False)
+
+            # Size verification check (can be removed after testing)
+            assert lonint.size == model_time.size, \
+                f"Size mismatch: lonint ({lonint.size}) != model_time ({model_time.size})"
+
             # Rectify so that it is between 0-2 pi
             loninit = zerototwopi(lonint)
             # Interpolate the inner boundary speed to this higher resolution
@@ -807,6 +815,12 @@ class HUXt:
                               period=2 * np.pi)
             # convert from cr longitude to timesolve
             vinput = np.flipud(vinit)
+
+            # Additional safety check
+            if vinput.size != self.input_v_ts.shape[0]:
+                raise ValueError(f"vinput size ({vinput.size}) does not match "
+                                 f"input_v_ts rows ({self.input_v_ts.shape[0]})")
+
             # Store the input series
             self.input_v_ts[:, i] = vinput
 
@@ -815,6 +829,12 @@ class HUXt:
                                   period=2 * np.pi)
                 # convert from cr longitude to timesolve
                 binput = np.flipud(binit)
+
+                # Additional safety check for b field
+                if binput.size != self.input_b_ts.shape[0]:
+                    raise ValueError(f"binput size ({binput.size}) does not match "
+                                     f"input_b_ts rows ({self.input_b_ts.shape[0]})")
+
                 # Store the input series
                 self.input_b_ts[:, i] = binput
 

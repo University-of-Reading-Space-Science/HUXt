@@ -1,4 +1,10 @@
 # HUXt Changelog
+## V5.0.3
+## Bug Fixes
+- Fixed a bug in `huxt.HUXt.ts_from_vlong` where floating point errors could cause the incorrect 
+  number of time steps to be returned.
+- Some references to the previous `accel_limit` feature hadn't been from from huxt_inputs. This 
+  is now fixed.
 # V5.0.2
 ## Bug Fixes
 - Fixed a bug in `huxt.load_HUXt_run()`, where the CME label was not being correctly loaded. See 

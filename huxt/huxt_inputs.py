@@ -1200,8 +1200,7 @@ def consolidate_cme_lists(cmelist_list, t_thresh=0.1 * day, lon_thresh=10 * deg,
 def set_time_dependent_boundary(vgrid_carr, time_grid, starttime, simtime, r_min=215 * solRad,
                                 r_max=1290 * solRad, dt_scale=50, latitude=0 * deg,
                                 frame='sidereal', lon_start=0 * rad, lon_stop=2 * np.pi * rad,
-                                lon_out=np.nan, bgrid_carr=np.nan, track_cmes=True,
-                                accel_limit=True):
+                                lon_out=np.nan, bgrid_carr=np.nan, track_cmes=True):
     """
     A function to compute an explicitly time dependent inner boundary condition for HUXt,
     rather than due to
@@ -1222,7 +1221,6 @@ def set_time_dependent_boundary(vgrid_carr, time_grid, starttime, simtime, r_min
         lon_stop: Longitude of the other edge of the longitudinal domain of HUXt
         bgrid_carr: input magnetic polarity as a function of Carrington longitude and time
         track_cmes: Bool, whether to track CMEs through the simulation.
-        accel_limit: Bool, whether to turn off the acceleration for speeds >650 km/s
     returns:
         model: A HUXt instance initialised with the fully time dependent boundary conditions.
     """
@@ -1245,8 +1243,7 @@ def set_time_dependent_boundary(vgrid_carr, time_grid, starttime, simtime, r_min
                        r_min=r_min, r_max=r_max,
                        simtime=simtime, dt_scale=dt_scale,
                        cr_num=cr, cr_lon_init=cr_lon_init,
-                       frame='synodic', track_cmes=track_cmes,
-                       accel_limit=accel_limit)
+                       frame='synodic', track_cmes=track_cmes)
     else:
         model = h.HUXt(v_boundary=np.ones(nlon) * 400 * km_per_s,
                        lon_start=lon_start, lon_stop=lon_stop,
@@ -1254,8 +1251,7 @@ def set_time_dependent_boundary(vgrid_carr, time_grid, starttime, simtime, r_min
                        r_min=r_min, r_max=r_max,
                        simtime=simtime, dt_scale=dt_scale,
                        cr_num=cr, cr_lon_init=cr_lon_init,
-                       frame=frame, track_cmes=track_cmes,
-                       accel_limit=accel_limit)
+                       frame=frame, track_cmes=track_cmes)
 
     # extract the values from the model class
     buffertime = model.buffertime  # standard buffer time seems insufficient
@@ -1337,8 +1333,7 @@ def set_time_dependent_boundary(vgrid_carr, time_grid, starttime, simtime, r_min
                            input_v_ts=input_ambient_ts,
                            input_b_ts=input_ambient_ts_b,
                            input_t_ts=model_time,
-                           track_cmes=track_cmes,
-                           accel_limit=accel_limit)
+                           track_cmes=track_cmes)
         else:  # multiple longitudes
             model = h.HUXt(v_boundary=np.ones(128) * 400 * km_per_s,
                            simtime=simtime,
@@ -1350,8 +1345,7 @@ def set_time_dependent_boundary(vgrid_carr, time_grid, starttime, simtime, r_min
                            input_v_ts=input_ambient_ts,
                            input_b_ts=input_ambient_ts_b,
                            input_t_ts=model_time,
-                           track_cmes=track_cmes,
-                           accel_limit=accel_limit)
+                           track_cmes=track_cmes)
 
     else:
         # set up the model class without B
@@ -1365,8 +1359,7 @@ def set_time_dependent_boundary(vgrid_carr, time_grid, starttime, simtime, r_min
                            lon_out=lon_out,
                            input_v_ts=input_ambient_ts,
                            input_t_ts=model_time,
-                           track_cmes=track_cmes,
-                           accel_limit=accel_limit)
+                           track_cmes=track_cmes)
 
         else:  # multiple longitudes
             model = h.HUXt(v_boundary=np.ones(128) * 400 * km_per_s,
@@ -1378,8 +1371,7 @@ def set_time_dependent_boundary(vgrid_carr, time_grid, starttime, simtime, r_min
                            lon_start=lon_start, lon_stop=lon_stop,
                            input_v_ts=input_ambient_ts,
                            input_t_ts=model_time,
-                           track_cmes=track_cmes,
-                           accel_limit=accel_limit)
+                           track_cmes=track_cmes)
 
     return model
 

@@ -17,3 +17,5 @@
 .DS_Store
 
 /huxt.egg-info
+
+/dist
