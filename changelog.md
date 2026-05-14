@@ -1,5 +1,8 @@
 # HUXt Changelog
 ## V5.0.3
+
+## Additions
+- Updated dependencies to the latest versions.
 ## Bug Fixes
 - Fixed a bug in `huxt.HUXt.ts_from_vlong` where floating point errors could cause the incorrect 
   number of time steps to be returned.

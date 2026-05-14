@@ -2174,4 +2174,4 @@ def bgrid_from_hcs(hcs_particles_r, input_b_ts, model_time, time_out, r_grid, lo
 
 def get_version():
     """ Returns the version of the HUXt package."""
-    return "5.0.2"
+    return "5.0.3"
