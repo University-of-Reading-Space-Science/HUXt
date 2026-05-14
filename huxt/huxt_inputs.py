@@ -1021,7 +1021,7 @@ def import_cone2bc_parameters(filename):
     n_cme = int(data[13].split('=')[1].split(',')[0])
 
     if n_cme == 0:
-        print('Warning: No CMEs in conefile: ' + filename)
+        print('Warning: No CMEs in conefile: ' + str(filename))
         return {}
 
     # Pull out the rows corresponding to the CME parameters

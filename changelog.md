@@ -8,6 +8,8 @@
   number of time steps to be returned.
 - Some references to the previous `accel_limit` feature hadn't been from from huxt_inputs. This 
   is now fixed.
+- Fixed bug huxt_inputs related to a warning on cone cme files that was due to now using pathlib 
+  rather than strings for paths.
 # V5.0.2
 ## Bug Fixes
 - Fixed a bug in `huxt.load_HUXt_run()`, where the CME label was not being correctly loaded. See 
